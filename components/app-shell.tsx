@@ -35,7 +35,7 @@ export function AppShell({
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-950">
+    <div className="dark flex h-screen overflow-hidden bg-slate-950">
       <Sidebar userRole={role} onLogout={handleLogout} />
 
       <div className="flex flex-1 flex-col overflow-hidden">

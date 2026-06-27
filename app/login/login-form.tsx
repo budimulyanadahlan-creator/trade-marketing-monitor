@@ -13,7 +13,7 @@ export function LoginForm() {
   return (
     <form action={formAction} className="space-y-4">
       {state.error && (
-        <div className="flex items-center gap-2 rounded-md border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-400">
+        <div className="flex items-center gap-2 rounded-md border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-600 dark:text-rose-400">
           <AlertCircle className="h-4 w-4 flex-shrink-0" />
           <span>{state.error}</span>
         </div>
