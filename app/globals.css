@@ -1,0 +1,93 @@
+@import "tailwindcss";
+
+@theme inline {
+  /* Design tokens */
+  --color-background: #0f172a; /* slate-900 */
+  --color-foreground: #f8fafc; /* slate-50 */
+
+  --color-primary: #10b981; /* emerald-500 */
+  --color-primary-foreground: #ffffff;
+  --color-primary-hover: #059669; /* emerald-600 */
+
+  --color-danger: #f43f5e; /* rose-500 */
+  --color-danger-foreground: #ffffff;
+  --color-danger-hover: #e11d48; /* rose-600 */
+
+  --color-warning: #f59e0b; /* amber-500 */
+
+  /* Surface layers */
+  --color-surface: rgba(255, 255, 255, 0.04);
+  --color-surface-border: rgba(255, 255, 255, 0.08);
+  --color-surface-hover: rgba(255, 255, 255, 0.08);
+
+  /* Muted */
+  --color-muted: #1e293b; /* slate-800 */
+  --color-muted-foreground: #94a3b8; /* slate-400 */
+
+  /* Sidebar */
+  --color-sidebar: #0a1020;
+  --color-sidebar-foreground: #e2e8f0; /* slate-200 */
+  --color-sidebar-border: rgba(255, 255, 255, 0.06);
+  --color-sidebar-active: rgba(16, 185, 129, 0.15);
+
+  /* Input */
+  --color-input: rgba(255, 255, 255, 0.06);
+  --color-input-border: rgba(255, 255, 255, 0.12);
+  --color-ring: #10b981;
+
+  /* Card (glassmorphism) */
+  --color-card: rgba(255, 255, 255, 0.04);
+  --color-card-border: rgba(255, 255, 255, 0.08);
+
+  /* Text */
+  --color-text-primary: #f8fafc;
+  --color-text-secondary: #94a3b8;
+  --color-text-muted: #64748b;
+
+  /* Font */
+  --font-sans: var(--font-inter);
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Border radius */
+  --radius: 0.5rem;
+  --radius-sm: 0.25rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+}
+
+* {
+  border-color: var(--color-surface-border);
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Glassmorphism card base */
+.glass-card {
+  background: var(--color-card);
+  border: 1px solid var(--color-card-border);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
