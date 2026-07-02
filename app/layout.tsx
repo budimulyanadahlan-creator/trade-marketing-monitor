@@ -11,6 +11,11 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "Trade Marketing Monitor",
   description: "Campaign budget management for Trade Marketing & Marketing teams",
+  icons: {
+    icon: "/marmot-icon.jpg",
+    shortcut: "/marmot-icon.jpg",
+    apple: "/marmot-icon.jpg",
+  },
 };
 
 export default function RootLayout({

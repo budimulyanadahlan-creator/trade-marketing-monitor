@@ -34,14 +34,14 @@ export default async function CampaignsPage() {
   const distributorRegionExempt =
     isDistributor && REGION_EXEMPT_DEPTS.includes(deptName ?? "");
 
-  // Distributors only see campaigns from the Sales department
-  let salesDeptIds: string[] = [];
+  // Distributors only see campaigns from the Sales and Trade Marketing departments
+  let visibleDeptIds: string[] = [];
   if (isDistributor) {
-    const { data: salesDepts } = await supabase
-      .from("departments")
-      .select("id")
-      .ilike("name", "sales");
-    salesDeptIds = salesDepts?.map((d) => d.id) ?? [];
+    const { data: allDepts } = await supabase.from("departments").select("id, name");
+    const allowedDeptNames = ["sales", "trade marketing"];
+    visibleDeptIds = (allDepts ?? [])
+      .filter((d) => allowedDeptNames.includes((d.name ?? "").toLowerCase()))
+      .map((d) => d.id);
   }
 
   // Fetch campaigns with joined display names
@@ -64,8 +64,8 @@ export default async function CampaignsPage() {
 
   if (isDistributor) {
     campaignQuery = campaignQuery.eq("status", "approved");
-    if (salesDeptIds.length > 0) {
-      campaignQuery = campaignQuery.in("department_id", salesDeptIds);
+    if (visibleDeptIds.length > 0) {
+      campaignQuery = campaignQuery.in("department_id", visibleDeptIds);
     }
     if (!distributorRegionExempt && profile?.region_id) {
       campaignQuery = campaignQuery.eq("region_id", profile.region_id);

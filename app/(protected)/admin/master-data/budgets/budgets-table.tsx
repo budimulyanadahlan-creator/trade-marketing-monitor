@@ -83,6 +83,13 @@ function MasterBudgetDialog({
 
         <form action={formAction} className="space-y-4">
           {budget && <input type="hidden" name="id" value={budget.id} />}
+          {isEdit && budget && (
+            <input
+              type="hidden"
+              name="promotion_category_id"
+              value={budget.promotion_category_id}
+            />
+          )}
 
           {state.error && (
             <div className="flex items-center gap-2 rounded-md border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-400">

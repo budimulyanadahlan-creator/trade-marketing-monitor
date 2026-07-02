@@ -19,14 +19,14 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { Plus, ExternalLink, Pencil, CheckSquare, Download } from "lucide-react";
+import { Plus, ExternalLink, Pencil, CheckSquare, Download, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate, formatIDR } from "@/lib/utils";
 import { getStatusConfig } from "@/lib/campaign-status";
 import { BudgetProgress } from "@/components/budget-progress";
 import { CampaignFormModal } from "./campaign-form-modal";
-import { createDistributorReceiptAction } from "@/app/actions/campaigns";
-import type { UserRole, CampaignRow } from "@/types/database";
+import { createDistributorReceiptAction, deleteCampaignAdminAction } from "@/app/actions/campaigns";
+import type { UserRole, CampaignRow, CampaignStatus } from "@/types/database";
 
 type CampaignWithJoins = CampaignRow & {
   department: { name: string } | null;
@@ -74,12 +74,22 @@ export function CampaignsClient({
   const [checklistCampaign, setChecklistCampaign] = useState<CampaignWithJoins | null>(null);
   const [checklistNotes, setChecklistNotes] = useState("");
   const [checklistLoading, setChecklistLoading] = useState(false);
+
+  const [deleteCampaign, setDeleteCampaign] = useState<CampaignWithJoins | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+
   const [localReceiptedIds, setLocalReceiptedIds] = useState<Set<string>>(
     new Set(receiptedCampaignIds)
   );
 
   const isDistributor = userRole === "distributor";
+  const isAdminOrSuperadmin = userRole === "admin" || userRole === "superadmin";
   const masterData = { departments, brands, regions, channels, categories, actionApprovals, vendors, masterBudgets, lockedRegionId };
+
+  function canAdminDelete(status: CampaignStatus): boolean {
+    if (userRole === "superadmin") return true;
+    return status === "draft" || status === "rejected";
+  }
 
   function openEdit(campaign: CampaignWithJoins) {
     setEditingCampaign(campaign);
@@ -89,6 +99,19 @@ export function CampaignsClient({
   function handleModalClose(open: boolean) {
     setModalOpen(open);
     if (!open) setEditingCampaign(null);
+  }
+
+  async function handleDelete() {
+    if (!deleteCampaign) return;
+    setDeleteLoading(true);
+    const result = await deleteCampaignAdminAction(deleteCampaign.id);
+    setDeleteLoading(false);
+    if (result.error) {
+      toast.error(result.error);
+    } else {
+      toast.success("SKP berhasil dihapus");
+      setDeleteCampaign(null);
+    }
   }
 
   async function handleChecklist() {
@@ -126,7 +149,11 @@ export function CampaignsClient({
         )}
       </div>
 
-      <div className="rounded-xl border border-white/8 bg-white/2 overflow-hidden">
+      <div
+        className="rounded-xl border border-white/8 bg-white/2 overflow-x-auto"
+        style={{ transform: "scaleY(-1)" }}
+      >
+        <div style={{ transform: "scaleY(-1)" }}>
         <Table>
           <TableHeader>
             <TableRow className="border-white/8 hover:bg-transparent">
@@ -231,6 +258,17 @@ export function CampaignsClient({
                             Diterima
                           </Button>
                         )}
+                        {isAdminOrSuperadmin && canAdminDelete(campaign.status as CampaignStatus) && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 w-7 p-0 border-red-500/30 text-red-400 hover:bg-red-500/10 hover:text-red-300"
+                            title="Hapus SKP"
+                            onClick={() => setDeleteCampaign(campaign)}
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        )}
                         {(campaign.status === "draft" || campaign.status === "rejected") && (
                           <Button
                             variant="outline"
@@ -279,7 +317,49 @@ export function CampaignsClient({
             )}
           </TableBody>
         </Table>
+        </div>
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog
+        open={!!deleteCampaign}
+        onOpenChange={(open) => { if (!open) setDeleteCampaign(null); }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Hapus SKP</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <p className="text-sm text-slate-400">
+              Anda akan menghapus SKP:
+            </p>
+            <p className="font-medium text-slate-100">
+              {deleteCampaign?.skp_number
+                ? `${deleteCampaign.skp_number} — ${deleteCampaign.name}`
+                : deleteCampaign?.name}
+            </p>
+            <p className="text-sm text-red-400">
+              Tindakan ini tidak dapat dibatalkan. Semua data terkait (file, riwayat approval, realisasi) akan ikut terhapus.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteCampaign(null)}
+              disabled={deleteLoading}
+            >
+              Batal
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDelete}
+              disabled={deleteLoading}
+            >
+              {deleteLoading ? "Menghapus..." : "Hapus"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Checklist Diterima Modal */}
       <Dialog

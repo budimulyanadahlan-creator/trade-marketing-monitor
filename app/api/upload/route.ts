@@ -66,7 +66,10 @@ export async function POST(request: NextRequest) {
   }
 
   const adminClient = createAdminClient();
-  const storagePath = `${user.id}/${campaignId}/${Date.now()}-${file.name}`;
+  const safeFileName = file.name
+    .replace(/[^a-zA-Z0-9._-]/g, "_")
+    .replace(/_+/g, "_");
+  const storagePath = `${user.id}/${campaignId}/${Date.now()}-${safeFileName}`;
 
   const arrayBuffer = await file.arrayBuffer();
   const buffer = new Uint8Array(arrayBuffer);

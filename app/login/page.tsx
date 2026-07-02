@@ -9,7 +9,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { BarChart3, Moon, Sun } from "lucide-react";
+import { Moon, Sun } from "lucide-react";
+import Image from "next/image";
 
 export default function LoginPage() {
   const [isDark, setIsDark] = useState(true);
@@ -57,18 +58,30 @@ export default function LoginPage() {
 
         <div className="relative w-full max-w-sm">
           {/* Logo / Brand */}
-          <div className="mb-8 flex flex-col items-center gap-3">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-500/15 border border-emerald-500/30">
-              <BarChart3 className="h-7 w-7 text-emerald-600 dark:text-emerald-400" />
+          <div className="mb-8 flex flex-col items-center gap-4">
+            {/* Marmot mascot icon */}
+            <div className="flex h-24 w-24 items-center justify-center rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-md p-2">
+              <Image
+                src="/marmot-icon.jpg"
+                alt="Marmot Icon"
+                width={80}
+                height={80}
+                className="object-contain dark:invert"
+                priority
+              />
             </div>
-            <div className="text-center">
-              <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">
-                Trade Marketing Monitor
-              </h1>
-              <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-                Campaign Budget Management System
-              </p>
-            </div>
+            {/* MARMOT text logo */}
+            <Image
+              src="/marmot-logo.png"
+              alt="MARMOT"
+              width={180}
+              height={48}
+              className="object-contain"
+              priority
+            />
+            <p className="text-sm text-slate-500 dark:text-slate-400">
+              Trade Marketing Monitor
+            </p>
           </div>
 
           <Card className="dark:border-white/8 dark:bg-slate-900/80 backdrop-blur-xl shadow-2xl">

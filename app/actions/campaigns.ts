@@ -327,3 +327,44 @@ export async function deleteDraftCampaignAction(
     return { error: e instanceof Error ? e.message : "Terjadi kesalahan" };
   }
 }
+
+// ============================================================
+// DELETE BY ADMIN / SUPERADMIN
+// ============================================================
+
+const ADMIN_DELETABLE_STATUSES: CampaignStatus[] = ["draft", "rejected"];
+
+export async function deleteCampaignAdminAction(
+  id: string
+): Promise<{ error?: string }> {
+  try {
+    const { supabase, profile } = await requireActiveUser();
+
+    if (!["admin", "superadmin"].includes(profile.role)) {
+      return { error: "Tidak memiliki izin untuk menghapus SKP" };
+    }
+
+    const { data: campaign, error: fetchError } = await supabase
+      .from("campaigns")
+      .select("status, name")
+      .eq("id", id)
+      .single();
+
+    if (fetchError || !campaign) return { error: "SKP tidak ditemukan" };
+
+    if (
+      profile.role === "admin" &&
+      !ADMIN_DELETABLE_STATUSES.includes(campaign.status as CampaignStatus)
+    ) {
+      return { error: "Admin hanya dapat menghapus SKP berstatus Draft atau Ditolak" };
+    }
+
+    const { error } = await supabase.from("campaigns").delete().eq("id", id);
+    if (error) return { error: error.message };
+
+    revalidatePath("/campaigns");
+    return {};
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Terjadi kesalahan" };
+  }
+}
