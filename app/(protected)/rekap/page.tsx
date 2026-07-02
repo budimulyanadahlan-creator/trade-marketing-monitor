@@ -94,7 +94,6 @@ export default async function RekapPage({
 
   if (isDistributor) {
     query = query.eq("status", "approved");
-    if (profile.region_id) query = query.eq("region_id", profile.region_id);
 
     // Restrict to Sales and Trade Marketing departments
     const { data: allDepts } = await supabase.from("departments").select("id, name");

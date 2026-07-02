@@ -67,9 +67,6 @@ export default async function CampaignsPage() {
     if (visibleDeptIds.length > 0) {
       campaignQuery = campaignQuery.in("department_id", visibleDeptIds);
     }
-    if (!distributorRegionExempt && profile?.region_id) {
-      campaignQuery = campaignQuery.eq("region_id", profile.region_id);
-    }
   }
 
   const { data: campaigns } = await campaignQuery;
