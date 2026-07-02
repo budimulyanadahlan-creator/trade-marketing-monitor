@@ -34,3 +34,10 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+### Required environment variables (Vercel Production)
+
+In addition to the Supabase vars, set these for email notifications (see `.env.local.example`):
+
+- `RESEND_API_KEY`, `EMAIL_FROM`, `NEXT_PUBLIC_APP_URL` — used by `lib/email.ts` for instant + digest notification emails. Without `RESEND_API_KEY`, both are silently skipped.
+- `CRON_SECRET` — protects `app/api/cron/*` routes. Vercel Cron (configured in `vercel.json`) calls them with `Authorization: Bearer $CRON_SECRET`; requests without a matching header are rejected with 401.
