@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { sendPasswordResetNotificationEmail } from "@/lib/email";
 import { z } from "zod";
 import type { UserRole } from "@/types/database";
 
@@ -313,7 +314,7 @@ export async function resetUserPasswordAction(
   const supabase = await createClient();
   const { data: target } = await supabase
     .from("users")
-    .select("role")
+    .select("role, full_name")
     .eq("id", parsed.data.id)
     .single();
 
@@ -330,6 +331,24 @@ export async function resetUserPasswordAction(
   });
 
   if (error) return { error: error.message };
+
+  try {
+    const { data: targetAuthUser } = await adminClient.auth.admin.getUserById(
+      parsed.data.id
+    );
+    if (targetAuthUser.user?.email) {
+      await sendPasswordResetNotificationEmail({
+        to: { email: targetAuthUser.user.email, name: target.full_name },
+      });
+    }
+  } catch (emailError) {
+    if (process.env.NODE_ENV === "development") {
+      console.warn(
+        "[Email] Gagal mengirim notifikasi reset password:",
+        emailError
+      );
+    }
+  }
 
   revalidatePath("/admin/users");
   return { success: true };

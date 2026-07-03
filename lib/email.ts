@@ -100,6 +100,70 @@ export async function sendSkpPendingDigestEmail(opts: SkpPendingDigestEmailOptio
   }
 }
 
+export interface PasswordResetNotificationEmailOptions {
+  to: { email: string; name: string };
+}
+
+export async function sendPasswordResetNotificationEmail(
+  opts: PasswordResetNotificationEmailOptions
+) {
+  if (!process.env.RESEND_API_KEY) {
+    if (process.env.NODE_ENV === "development") {
+      console.warn("[Email] RESEND_API_KEY not set — skipping password reset notification");
+    }
+    return;
+  }
+
+  await resend.emails.send({
+    from: FROM_EMAIL,
+    to: opts.to.email,
+    subject: "Password Anda Telah Direset",
+    html: buildPasswordResetNotificationHtml({ recipientName: opts.to.name }),
+  });
+}
+
+function buildPasswordResetNotificationHtml(opts: { recipientName: string }) {
+  return `<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Password Anda Telah Direset</title>
+</head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:32px 16px;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:10px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);">
+          <!-- Header -->
+          <tr>
+            <td style="background:#1e3a8a;padding:28px 36px;">
+              <p style="margin:0;color:#93c5fd;font-size:12px;text-transform:uppercase;letter-spacing:1px;font-weight:600;">Trade Marketing Monitor</p>
+              <h1 style="margin:8px 0 0;color:#ffffff;font-size:22px;font-weight:700;">Password Anda Telah Direset</h1>
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="padding:32px 36px;">
+              <p style="margin:0 0 16px;color:#374151;font-size:15px;">Halo, <strong>${opts.recipientName}</strong>,</p>
+              <p style="margin:0 0 16px;color:#374151;font-size:15px;">Password akun Anda baru saja direset oleh administrator. Silakan hubungi admin Anda untuk mendapatkan password baru.</p>
+              <p style="margin:0;color:#374151;font-size:15px;">Jika Anda tidak merasa meminta perubahan ini, segera hubungi administrator.</p>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 36px;border-top:1px solid #e5e7eb;background:#f9fafb;">
+              <p style="margin:0;color:#9ca3af;font-size:12px;">Email ini dikirim otomatis oleh sistem Trade Marketing Monitor. Mohon tidak membalas email ini.</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
 function buildSkpPendingDigestHtml(opts: {
   recipientName: string;
   items: (PendingSkpItem & { dateFormatted: string })[];
