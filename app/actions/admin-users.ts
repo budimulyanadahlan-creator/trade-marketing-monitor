@@ -268,6 +268,73 @@ export async function deleteUserAction(
   return {};
 }
 
+const resetPasswordSchema = z
+  .object({
+    id: z.string().uuid("User ID tidak valid"),
+    password: z.string().min(8, "Password minimal 8 karakter"),
+    confirmPassword: z.string().min(8, "Konfirmasi password minimal 8 karakter"),
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    message: "Password dan konfirmasi password tidak cocok",
+    path: ["confirmPassword"],
+  });
+
+export type ResetPasswordState = { error?: string; success?: boolean };
+
+export async function resetUserPasswordAction(
+  _prevState: ResetPasswordState,
+  formData: FormData
+): Promise<ResetPasswordState> {
+  let actorRole: UserRole;
+  let actorId: string;
+  try {
+    const actor = await getCurrentAdminProfile();
+    actorRole = actor.role;
+    actorId = actor.userId;
+  } catch {
+    return { error: "Unauthorized" };
+  }
+
+  const raw = {
+    id: formData.get("id"),
+    password: formData.get("password"),
+    confirmPassword: formData.get("confirmPassword"),
+  };
+
+  const parsed = resetPasswordSchema.safeParse(raw);
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Input tidak valid" };
+  }
+
+  if (parsed.data.id === actorId) {
+    return { error: "Tidak bisa mereset password akun sendiri." };
+  }
+
+  const supabase = await createClient();
+  const { data: target } = await supabase
+    .from("users")
+    .select("role")
+    .eq("id", parsed.data.id)
+    .single();
+
+  if (!target) return { error: "User tidak ditemukan." };
+  if (roleRank[target.role as UserRole] >= roleRank[actorRole]) {
+    return {
+      error: `Anda tidak bisa mereset password user dengan role ${target.role}.`,
+    };
+  }
+
+  const adminClient = createAdminClient();
+  const { error } = await adminClient.auth.admin.updateUserById(parsed.data.id, {
+    password: parsed.data.password,
+  });
+
+  if (error) return { error: error.message };
+
+  revalidatePath("/admin/users");
+  return { success: true };
+}
+
 export async function toggleUserActiveAction(
   userId: string,
   isActive: boolean

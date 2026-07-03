@@ -13,6 +13,7 @@ import { CreateUserDialog } from "./create-user-dialog";
 import { EditUserDialog } from "./edit-user-dialog";
 import { DeleteUserButton } from "./delete-user-button";
 import { ToggleActiveButton } from "./toggle-active-button";
+import { ResetPasswordDialog } from "./reset-password-dialog";
 import { formatDate } from "@/lib/utils";
 import type { UserRole, UserRow, DepartmentRow, RegionRow } from "@/types/database";
 
@@ -173,6 +174,12 @@ export default async function AdminUsersPage() {
                         <ToggleActiveButton
                           userId={u.id}
                           isActive={u.is_active}
+                          disabled={!canManage}
+                          disabledReason={disabledReason}
+                        />
+                        <ResetPasswordDialog
+                          userId={u.id}
+                          userName={u.full_name}
                           disabled={!canManage}
                           disabledReason={disabledReason}
                         />
