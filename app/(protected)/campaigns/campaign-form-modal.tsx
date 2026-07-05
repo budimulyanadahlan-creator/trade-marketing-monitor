@@ -383,7 +383,7 @@ function Step3({
   const rawSalesProjection = data.sales_projection;
   const numSalesProjection = Number(rawSalesProjection.replace(/\D/g, "")) || 0;
   const costRatio =
-    numSalesProjection > 0
+    numBudget > 0 && numSalesProjection > 0
       ? ((numBudget / numSalesProjection) * 100).toFixed(1)
       : null;
 
@@ -486,14 +486,18 @@ function Step3({
         )}
       </div>
 
-      {costRatio !== null && (
-        <div className="rounded-md border border-white/10 bg-white/3 px-4 py-2.5 flex items-center justify-between">
-          <span className="text-sm text-slate-400">Cost Ratio</span>
+      <div className="rounded-md border border-white/10 bg-white/3 px-4 py-2.5 flex items-center justify-between">
+        <span className="text-sm text-slate-400">Cost Ratio</span>
+        {costRatio !== null ? (
           <span className="text-sm font-semibold text-emerald-400">
             {costRatio}%
           </span>
-        </div>
-      )}
+        ) : (
+          <span className="text-xs text-slate-500">
+            Isi Budget & Sales Projection untuk melihat Cost Ratio
+          </span>
+        )}
+      </div>
 
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">
