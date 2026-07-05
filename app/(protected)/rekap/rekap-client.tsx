@@ -499,7 +499,7 @@ export function RekapClient({
                       </TableCell>
                       {!isDistributor && (
                         <TableCell className="text-right font-mono text-xs">
-                          {c.sales_projection > 0 ? (
+                          {c.requested_budget > 0 && c.sales_projection > 0 ? (
                             <span className="text-sky-400">
                               {((c.requested_budget / c.sales_projection) * 100).toFixed(1)}%
                             </span>

@@ -217,7 +217,7 @@ export async function GET(request: NextRequest) {
           ? parseFloat(((c.actual_spent / c.requested_budget) * 100).toFixed(2))
           : 0;
       const costRatio =
-        c.sales_projection > 0
+        c.requested_budget > 0 && c.sales_projection > 0
           ? parseFloat(((c.requested_budget / c.sales_projection) * 100).toFixed(2))
           : null;
       const invoiceNumbers = realizations.map((r) => r.invoice_number).join(", ");
