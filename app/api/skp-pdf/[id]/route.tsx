@@ -518,7 +518,9 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     }
     if (role === "finance") return true;
     if (role === "distributor") {
-      return campaign.region_id === profile.region_id;
+      // Distributors are not region-locked (see migration 025) — RLS already
+      // limits their campaign visibility to approved Sales/Trade Marketing SKPs.
+      return true;
     }
     return false;
   })();
