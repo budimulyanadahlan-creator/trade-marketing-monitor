@@ -127,10 +127,8 @@ const submitSchema = z.object({
   store_id: z.string().optional().nullable(),
   objective: z.string().optional().nullable(),
   mechanism: z.string().min(1, "Mekanisme harus diisi"),
-  avg_sales_3months: z.coerce.number().min(1, "Rata-rata penjualan 3 bulan terakhir harus diisi"),
-  requested_budget: z.coerce
-    .number()
-    .min(1, "Budget harus lebih dari 0"),
+  avg_sales_3months: z.coerce.number().min(0).optional().default(0),
+  requested_budget: z.coerce.number().min(0).optional().default(0),
   sales_projection: z.coerce.number().min(0).optional().default(0),
   start_date: z.string().min(1, "Tanggal mulai harus diisi"),
   end_date: z.string().min(1, "Tanggal selesai harus diisi"),

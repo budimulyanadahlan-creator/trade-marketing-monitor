@@ -440,7 +440,7 @@ function Step3({
       )}
 
       <div className="space-y-1.5">
-        <Label htmlFor="c-avg-sales">Rata-Rata Penjualan 3 Bulan Terakhir (IDR) *</Label>
+        <Label htmlFor="c-avg-sales">Rata-Rata Penjualan 3 Bulan Terakhir (IDR) (Opsional)</Label>
         <Input
           id="c-avg-sales"
           type="text"
@@ -455,7 +455,7 @@ function Step3({
       </div>
 
       <div className="space-y-1.5">
-        <Label htmlFor="c-budget">Budget (IDR) *</Label>
+        <Label htmlFor="c-budget">Budget (IDR) (Opsional)</Label>
         <Input
           id="c-budget"
           type="text"
@@ -470,7 +470,7 @@ function Step3({
       </div>
 
       <div className="space-y-1.5">
-        <Label htmlFor="c-sales-proj">Sales Projection (IDR) *</Label>
+        <Label htmlFor="c-sales-proj">Sales Projection (IDR) (Opsional)</Label>
         <Input
           id="c-sales-proj"
           type="text"
@@ -610,12 +610,6 @@ function validateStep3(
 ): string | null {
   if (pendingFiles.length === 0 && existingFiles.length === 0)
     return "Minimal 1 file SKP harus diupload";
-  const avgSales = Number(data.avg_sales_3months.replace(/\D/g, ""));
-  if (!avgSales || avgSales <= 0) return "Rata-rata penjualan 3 bulan terakhir harus diisi";
-  const budget = Number(data.requested_budget.replace(/\D/g, ""));
-  if (!budget || budget <= 0) return "Budget harus lebih dari 0";
-  const salesProjection = Number(data.sales_projection.replace(/\D/g, ""));
-  if (!salesProjection || salesProjection <= 0) return "Sales Projection harus diisi";
   if (!data.start_date) return "Tanggal mulai harus diisi";
   if (!data.end_date) return "Tanggal selesai harus diisi";
   if (data.end_date < data.start_date)
