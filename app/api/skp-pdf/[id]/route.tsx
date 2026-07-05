@@ -14,7 +14,6 @@ import {
   renderToBuffer,
 } from "@react-pdf/renderer";
 import { PDFDocument } from "pdf-lib";
-import type { UserRole } from "@/types/database";
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
@@ -450,8 +449,6 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Akun tidak aktif" }, { status: 403 });
   }
 
-  const role = profile.role as UserRole;
-
   // Fetch campaign with all joins
   const { data: campaignRaw, error: campaignError } = await supabase
     .from("campaigns")
@@ -510,24 +507,10 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     );
   }
 
-  // Role-based access check
-  const canAccess = (() => {
-    if (role === "admin" || role === "superadmin") return true;
-    if (role === "user" || role === "manager") {
-      return campaign.created_by === user.id;
-    }
-    if (role === "finance") return true;
-    if (role === "distributor") {
-      // Distributors are not region-locked (see migration 025) — RLS already
-      // limits their campaign visibility to approved Sales/Trade Marketing SKPs.
-      return true;
-    }
-    return false;
-  })();
-
-  if (!canAccess) {
-    return NextResponse.json({ error: "Akses ditolak" }, { status: 403 });
-  }
+  // Access control is delegated to RLS: the campaign fetch above runs under
+  // the user's session, so any row that came back is one the user may see
+  // (owner/dept for user & manager, all for staff, approved-only for
+  // distributor). Anyone who can see an approved SKP may download its PDF.
 
   // Fetch approval history + levels + creator — admin client bypasses RLS
   const supabaseAdmin = createAdminClient();
