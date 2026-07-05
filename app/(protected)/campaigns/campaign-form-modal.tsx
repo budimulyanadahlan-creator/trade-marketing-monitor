@@ -546,17 +546,19 @@ function Step3({
         {existingFiles.map((f) => (
           <div
             key={f.id}
-            className="flex items-center gap-3 rounded-md border border-white/8 bg-white/3 px-3 py-2"
+            className="flex items-start gap-3 rounded-md border border-white/8 bg-white/3 px-3 py-2"
           >
-            <FileText className="h-4 w-4 text-slate-400 flex-shrink-0" />
-            <span className="text-sm text-slate-300 flex-1 truncate">{f.file_name}</span>
-            <span className="text-xs text-slate-500">
-              {(f.file_size / 1024).toFixed(0)} KB
-            </span>
+            <FileText className="h-4 w-4 text-slate-400 flex-shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm text-slate-300 break-all line-clamp-2">{f.file_name}</p>
+              <span className="text-xs text-slate-500">
+                {(f.file_size / 1024).toFixed(0)} KB
+              </span>
+            </div>
             <button
               type="button"
               onClick={() => onRemoveExisting(f.id)}
-              className="text-slate-500 hover:text-rose-400 transition-colors"
+              className="text-slate-500 hover:text-rose-400 transition-colors flex-shrink-0 mt-0.5"
             >
               <X className="h-3.5 w-3.5" />
             </button>
@@ -567,19 +569,21 @@ function Step3({
         {pendingFiles.map((pf) => (
           <div
             key={pf.localId}
-            className="flex items-center gap-3 rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2"
+            className="flex items-start gap-3 rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2"
           >
-            <FileText className="h-4 w-4 text-amber-400 flex-shrink-0" />
-            <span className="text-sm text-slate-300 flex-1 truncate">
-              {pf.file.name}
-            </span>
-            <span className="text-xs text-slate-500">
-              {(pf.file.size / 1024).toFixed(0)} KB
-            </span>
+            <FileText className="h-4 w-4 text-amber-400 flex-shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm text-slate-300 break-all line-clamp-2">
+                {pf.file.name}
+              </p>
+              <span className="text-xs text-slate-500">
+                {(pf.file.size / 1024).toFixed(0)} KB
+              </span>
+            </div>
             <button
               type="button"
               onClick={() => onRemovePending(pf.localId)}
-              className="text-slate-500 hover:text-rose-400 transition-colors"
+              className="text-slate-500 hover:text-rose-400 transition-colors flex-shrink-0 mt-0.5"
             >
               <X className="h-3.5 w-3.5" />
             </button>
@@ -938,7 +942,7 @@ export function CampaignFormModal({
           )}
 
           {/* Navigation */}
-          <div className="flex items-center justify-between mt-6 pt-4 border-t border-white/8">
+          <div className="flex items-center mt-6 pt-4 border-t border-white/8">
             <div className="flex gap-2">
               {step > 1 && (
                 <Button
@@ -954,7 +958,7 @@ export function CampaignFormModal({
               )}
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex flex-1 justify-center gap-2">
               <Button
                 type="button"
                 variant="outline"
