@@ -1,12 +1,22 @@
 import { notFound } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { computeAARemainingBudget } from "@/lib/campaign-status";
 import { CampaignDetailClient } from "./campaign-detail-client";
-import type { CampaignRow, CampaignFileRow, ApprovalHistoryRow, RealizationRow, DistributorReceiptRow, UserRole } from "@/types/database";
+import type { CampaignRow, CampaignFileRow, ApprovalHistoryRow, RealizationRow, DistributorReceiptRow, UserRole, CampaignStatus } from "@/types/database";
 
 export type ClaimDocument = {
   documentTypeId: string;
   name: string;
   isFulfilled: boolean;
+};
+
+// Info budget AA untuk approver: dihitung server-side saat halaman dimuat.
+// Hanya dikirim ke client untuk role approver — angka sisa tidak boleh
+// sampai ke pengaju/distributor.
+export type AABudgetInfo = {
+  remaining: number;
+  exceeded: boolean;
+  shortfall: number;
 };
 
 type ApprovalHistoryWithActor = ApprovalHistoryRow & {
@@ -145,6 +155,57 @@ export default async function CampaignDetailPage({ params }: Props) {
     }
   }
 
+  // Budget AA untuk approver: sisa terkini + selisih jika campaign melebihi.
+  // Berlaku di semua level approval (submitted→L1 sampai L4→final).
+  const PENDING_APPROVAL_STATUSES: CampaignStatus[] = [
+    "submitted",
+    "approved_l1",
+    "approved_l2",
+    "approved_l3",
+    "approved_l4",
+  ];
+  const isApproverRole = ["manager", "admin", "superadmin"].includes(userRole);
+  let aaBudgetInfo: AABudgetInfo | null = null;
+
+  if (
+    isApproverRole &&
+    campaign.action_approval_id &&
+    PENDING_APPROVAL_STATUSES.includes(campaign.status)
+  ) {
+    // Admin client: total komitmen harus mencakup campaign semua user,
+    // sedangkan RLS bisa membatasi visibilitas untuk role manager.
+    const admin = createAdminClient();
+    const [{ data: aa }, { data: aaCampaigns }] = await Promise.all([
+      admin
+        .from("action_approvals")
+        .select("target_budget")
+        .eq("id", campaign.action_approval_id)
+        .single(),
+      admin
+        .from("campaigns")
+        .select("id, requested_budget, status")
+        .eq("action_approval_id", campaign.action_approval_id),
+    ]);
+
+    if (aa) {
+      const remaining = computeAARemainingBudget(
+        aa.target_budget ?? 0,
+        (aaCampaigns ?? []) as {
+          id: string;
+          requested_budget: number | null;
+          status: CampaignStatus;
+        }[],
+        campaign.id
+      );
+      const shortfall = campaign.requested_budget - remaining;
+      aaBudgetInfo = {
+        remaining,
+        exceeded: shortfall > 0,
+        shortfall: Math.max(shortfall, 0),
+      };
+    }
+  }
+
   // Master data only needed if editable
   const isEditable =
     campaign.status === "draft" || campaign.status === "rejected";
@@ -195,6 +256,7 @@ export default async function CampaignDetailPage({ params }: Props) {
       realizations={realizations}
       distributorReceipts={distributorReceipts}
       claimDocuments={claimDocuments}
+      aaBudgetInfo={aaBudgetInfo}
       isEditable={isEditable}
       userRole={userRole}
       departments={departments ?? []}

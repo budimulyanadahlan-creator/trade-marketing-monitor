@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   COMMITTED_CAMPAIGN_STATUSES,
+  computeAARemainingBudget,
   groupCampaignsByCommitment,
   isCommittedStatus,
   sumCommittedBudgetByAA,
@@ -93,5 +94,45 @@ describe("groupCampaignsByCommitment", () => {
     expect(result.notCommittedTotal).toBe(0);
     expect(result.committed).toHaveLength(1);
     expect(result.notCommitted).toHaveLength(1);
+  });
+});
+
+describe("computeAARemainingBudget", () => {
+  it("sisa = target dikurangi total campaign berstatus komitmen saja", () => {
+    const remaining = computeAARemainingBudget(1000, [
+      { id: "c1", requested_budget: 600, status: "approved_l1" },
+      { id: "c2", requested_budget: 100, status: "paid" },
+      { id: "c3", requested_budget: 900, status: "rejected" },
+      { id: "c4", requested_budget: 900, status: "submitted" },
+    ]);
+    expect(remaining).toBe(300);
+  });
+
+  it("campaign yang sedang direview dikeluarkan dari komitmen jika sudah berstatus komitmen", () => {
+    const remaining = computeAARemainingBudget(
+      1000,
+      [
+        { id: "c-self", requested_budget: 800, status: "approved_l2" },
+        { id: "c-other", requested_budget: 100, status: "approved" },
+      ],
+      "c-self"
+    );
+    expect(remaining).toBe(900);
+  });
+
+  it("bisa negatif saat komitmen melebihi target", () => {
+    const remaining = computeAARemainingBudget(1000, [
+      { id: "c1", requested_budget: 1104509314, status: "approved" },
+    ]);
+    expect(remaining).toBe(1000 - 1104509314);
+  });
+
+  it("tanpa campaign, sisa = target penuh; requested_budget null dianggap 0", () => {
+    expect(computeAARemainingBudget(500, [])).toBe(500);
+    expect(
+      computeAARemainingBudget(500, [
+        { id: "c1", requested_budget: null, status: "ongoing" },
+      ])
+    ).toBe(500);
   });
 });

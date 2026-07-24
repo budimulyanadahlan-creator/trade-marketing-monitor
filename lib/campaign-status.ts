@@ -34,6 +34,25 @@ export function sumCommittedBudgetByAA(
   }, {});
 }
 
+// Sisa budget AA = target − total komitmen. Campaign yang sedang direview
+// (excludeCampaignId) dikeluarkan dari total agar tidak dihitung terhadap
+// dirinya sendiri saat sudah berstatus komitmen.
+export function computeAARemainingBudget(
+  targetBudget: number,
+  campaigns: readonly {
+    id: string;
+    requested_budget: number | null;
+    status: CampaignStatus;
+  }[],
+  excludeCampaignId?: string
+): number {
+  const committedTotal = campaigns.reduce((sum, c) => {
+    if (c.id === excludeCampaignId || !isCommittedStatus(c.status)) return sum;
+    return sum + (c.requested_budget ?? 0);
+  }, 0);
+  return targetBudget - committedTotal;
+}
+
 export function groupCampaignsByCommitment<
   T extends { requested_budget: number | null; status: CampaignStatus },
 >(

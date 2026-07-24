@@ -54,7 +54,7 @@ import type {
   UserRole,
   CampaignStatus,
 } from "@/types/database";
-import type { ClaimDocument } from "./page";
+import type { AABudgetInfo, ClaimDocument } from "./page";
 
 type RealizationWithCreator = RealizationRow & {
   creator: { full_name: string } | null;
@@ -85,6 +85,7 @@ interface Props {
   realizations: RealizationWithCreator[];
   distributorReceipts: DistributorReceiptWithReceiver[];
   claimDocuments: ClaimDocument[];
+  aaBudgetInfo: AABudgetInfo | null;
   isEditable: boolean;
   userRole: UserRole;
   departments: { id: string; name: string }[];
@@ -699,6 +700,7 @@ export function CampaignDetailClient({
   realizations,
   distributorReceipts,
   claimDocuments,
+  aaBudgetInfo,
   isEditable,
   userRole,
   departments,
@@ -831,6 +833,53 @@ export function CampaignDetailClient({
           </p>
         </div>
       </div>
+
+      {/* AA budget info for approvers (all levels, informational — never blocks) */}
+      {aaBudgetInfo && (
+        <div
+          className={`rounded-xl border p-6 ${
+            aaBudgetInfo.exceeded
+              ? "border-rose-500/30 bg-rose-500/10"
+              : "border-white/8 bg-white/2"
+          }`}
+        >
+          <h2 className="text-sm font-semibold text-slate-300 mb-3 uppercase tracking-wider">
+            Budget Action Approval
+          </h2>
+          <dl>
+            <DetailRow label="AA" value={campaign.action_approval?.name} />
+            <DetailRow
+              label="Sisa Budget AA Saat Ini"
+              value={
+                <span
+                  className={`font-semibold ${
+                    aaBudgetInfo.remaining < 0
+                      ? "text-rose-400"
+                      : "text-emerald-400"
+                  }`}
+                >
+                  {formatIDR(aaBudgetInfo.remaining)}
+                </span>
+              }
+            />
+          </dl>
+          {aaBudgetInfo.exceeded && (
+            <div className="mt-4 flex items-start gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 p-4">
+              <TriangleAlert className="h-4 w-4 text-rose-400 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-sm font-semibold text-rose-400">
+                  Budget yang diajukan melebihi sisa budget AA sebesar{" "}
+                  {formatIDR(aaBudgetInfo.shortfall)}
+                </p>
+                <p className="mt-1 text-xs text-slate-400">
+                  Persetujuan tetap dapat dilakukan — pastikan Anda menyetujui
+                  dengan sadar konsekuensinya.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Rejection notice */}
       {campaign.status === "rejected" &&
