@@ -5,7 +5,7 @@ import { ActionApprovalsTable } from "./action-approvals-table";
 export default async function ActionApprovalsPage() {
   const supabase = await createClient();
 
-  const [aaResult, { data: masterBudgets }, { data: brands }, { data: campaignBudgets }] =
+  const [aaResult, { data: masterBudgets }, { data: brands }, { data: aaCampaigns }] =
     await Promise.all([
       supabase
         .from("action_approvals")
@@ -20,13 +20,22 @@ export default async function ActionApprovalsPage() {
       supabase.from("brands").select("id, name").eq("is_active", true).order("name"),
       supabase
         .from("campaigns")
-        .select("action_approval_id, requested_budget, status")
-        .not("action_approval_id", "is", null),
+        .select(
+          "id, name, action_approval_id, requested_budget, status, brand:brands(name), region:regions(name)"
+        )
+        .not("action_approval_id", "is", null)
+        .order("created_at", { ascending: false }),
     ]);
 
   const { data: actionApprovals } = aaResult;
 
-  const budgetByAA = sumCommittedBudgetByAA(campaignBudgets ?? []);
+  const budgetByAA = sumCommittedBudgetByAA(aaCampaigns ?? []);
+
+  const campaignsByAA: Record<string, NonNullable<typeof aaCampaigns>> = {};
+  for (const campaign of aaCampaigns ?? []) {
+    if (!campaign.action_approval_id) continue;
+    (campaignsByAA[campaign.action_approval_id] ??= []).push(campaign);
+  }
 
   const actionApprovalsWithBudget = (actionApprovals ?? []).map((aa) => ({
     ...aa,
@@ -38,6 +47,7 @@ export default async function ActionApprovalsPage() {
       actionApprovals={actionApprovalsWithBudget}
       masterBudgets={masterBudgets ?? []}
       brands={brands ?? []}
+      campaignsByAA={campaignsByAA}
     />
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useState, useTransition } from "react";
+import { Fragment, useActionState, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { saveActionApprovalAction, deleteActionApprovalAction } from "@/app/actions/action-approvals";
 import {
@@ -23,10 +23,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { AlertCircle, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { AlertCircle, ChevronRight, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate, formatIDR } from "@/lib/utils";
 import { DatePicker } from "@/components/ui/date-picker";
+import { getStatusConfig, groupCampaignsByCommitment } from "@/lib/campaign-status";
+import type { CampaignStatus } from "@/types/database";
 
 type MasterBudgetOption = {
   id: string;
@@ -36,6 +38,15 @@ type MasterBudgetOption = {
 };
 
 type BrandOption = { id: string; name: string };
+
+type AACampaign = {
+  id: string;
+  name: string;
+  requested_budget: number | null;
+  status: CampaignStatus;
+  brand: { name: string } | null;
+  region: { name: string } | null;
+};
 
 type ActionApprovalWithJoins = {
   id: string;
@@ -263,15 +274,145 @@ function DeleteButton({ id, name }: { id: string; name: string }) {
   );
 }
 
+function CampaignGroup({
+  title,
+  campaigns,
+  subtotal,
+}: {
+  title: string;
+  campaigns: AACampaign[];
+  subtotal: number;
+}) {
+  return (
+    <div className="rounded-lg border border-white/8 overflow-hidden">
+      <div className="flex items-center justify-between bg-white/4 px-4 py-2">
+        <span className="text-xs font-semibold uppercase tracking-wide text-slate-300">
+          {title} ({campaigns.length})
+        </span>
+        <span className="text-xs font-medium text-slate-300">
+          Subtotal: {formatIDR(subtotal)}
+        </span>
+      </div>
+      {campaigns.length > 0 ? (
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-white/8 text-left text-xs text-slate-500">
+              <th className="px-4 py-2 font-medium">Nama Campaign</th>
+              <th className="px-4 py-2 font-medium">Brand</th>
+              <th className="px-4 py-2 font-medium">Region</th>
+              <th className="px-4 py-2 font-medium">Status</th>
+              <th className="px-4 py-2 font-medium text-right">Requested Budget</th>
+            </tr>
+          </thead>
+          <tbody>
+            {campaigns.map((c) => {
+              const statusCfg = getStatusConfig(c.status);
+              return (
+                <tr key={c.id} className="border-b border-white/6 last:border-b-0">
+                  <td className="px-4 py-2 text-slate-200">{c.name}</td>
+                  <td className="px-4 py-2 text-slate-400">{c.brand?.name ?? "—"}</td>
+                  <td className="px-4 py-2 text-slate-400">{c.region?.name ?? "—"}</td>
+                  <td className="px-4 py-2">
+                    <span
+                      className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${statusCfg.className}`}
+                    >
+                      {statusCfg.label}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2 text-right text-slate-300">
+                    {formatIDR(c.requested_budget ?? 0)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      ) : (
+        <p className="px-4 py-3 text-sm text-slate-500">Tidak ada campaign.</p>
+      )}
+    </div>
+  );
+}
+
+function AADrilldown({
+  aa,
+  campaigns,
+}: {
+  aa: ActionApprovalWithJoins;
+  campaigns: AACampaign[];
+}) {
+  if (campaigns.length === 0) {
+    return (
+      <div className="px-6 py-6 text-center text-sm text-slate-500">
+        Belum ada campaign terhubung.
+      </div>
+    );
+  }
+
+  const { committed, notCommitted, committedTotal, notCommittedTotal } =
+    groupCampaignsByCommitment(campaigns);
+
+  return (
+    <div className="space-y-3 px-6 py-4">
+      <CampaignGroup
+        title="Memotong budget"
+        campaigns={committed}
+        subtotal={committedTotal}
+      />
+      <CampaignGroup
+        title="Tidak memotong budget"
+        campaigns={notCommitted}
+        subtotal={notCommittedTotal}
+      />
+      <div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1 rounded-lg border border-white/8 bg-white/4 px-4 py-2.5 text-sm">
+        <span className="text-slate-400">Target Budget</span>
+        <span className="font-medium text-slate-200">{formatIDR(aa.target_budget)}</span>
+        <span className="text-slate-500">−</span>
+        <span className="text-slate-400">Subtotal Komitmen</span>
+        <span className="font-medium text-slate-200">{formatIDR(committedTotal)}</span>
+        <span className="text-slate-500">=</span>
+        <span className="text-slate-400">Budget Tersisa</span>
+        <span className={`font-semibold ${budgetTersisaClass(aa)}`}>
+          {formatIDR(aa.target_budget - committedTotal)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function budgetTersisaClass(aa: ActionApprovalWithJoins) {
+  return aa.budget_tersisa < 0
+    ? "text-rose-400"
+    : aa.budget_tersisa <= aa.target_budget * 0.2
+    ? "text-amber-400"
+    : "text-emerald-400";
+}
+
 export function ActionApprovalsTable({
   actionApprovals,
   masterBudgets,
   brands,
+  campaignsByAA,
 }: {
   actionApprovals: ActionApprovalWithJoins[];
   masterBudgets: MasterBudgetOption[];
   brands: BrandOption[];
+  campaignsByAA: Record<string, AACampaign[]>;
 }) {
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+
+  function toggleExpanded(id: string) {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -293,6 +434,7 @@ export function ActionApprovalsTable({
         <Table>
           <TableHeader>
             <TableRow className="border-white/8 hover:bg-transparent">
+              <TableHead className="w-8" />
               <TableHead>Nama Action Approval</TableHead>
               <TableHead>Brand</TableHead>
               <TableHead>Periode</TableHead>
@@ -304,52 +446,82 @@ export function ActionApprovalsTable({
           </TableHeader>
           <TableBody>
             {actionApprovals.length > 0 ? (
-              actionApprovals.map((aa) => (
-                <TableRow key={aa.id}>
-                  <TableCell className="font-medium">{aa.name}</TableCell>
-                  <TableCell className="text-slate-400">
-                    {aa.brand?.name ?? "—"}
-                  </TableCell>
-                  <TableCell className="text-xs text-slate-400">
-                    {formatDate(aa.start_date)} — {formatDate(aa.end_date)}
-                  </TableCell>
-                  <TableCell className="text-slate-300">
-                    {formatIDR(aa.target_budget)}
-                  </TableCell>
-                  <TableCell className={
-                    aa.budget_tersisa < 0
-                      ? "text-rose-400 font-medium"
-                      : aa.budget_tersisa <= aa.target_budget * 0.2
-                      ? "text-amber-400 font-medium"
-                      : "text-emerald-400"
-                  }>
-                    {formatIDR(aa.budget_tersisa)}
-                  </TableCell>
-                  <TableCell className="text-slate-400 text-xs">
-                    {formatDate(aa.created_at)}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      <ActionApprovalDialog
-                        actionApproval={aa}
-                        masterBudgets={masterBudgets}
-                        brands={brands}
-                        trigger={
-                          <Button variant="outline" size="sm">
-                            <Pencil className="h-3 w-3" />
-                            Edit
-                          </Button>
-                        }
-                      />
-                      <DeleteButton id={aa.id} name={aa.name} />
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))
+              actionApprovals.map((aa) => {
+                const isExpanded = expandedIds.has(aa.id);
+                return (
+                  <Fragment key={aa.id}>
+                    <TableRow>
+                      <TableCell className="pr-0">
+                        <button
+                          type="button"
+                          onClick={() => toggleExpanded(aa.id)}
+                          aria-expanded={isExpanded}
+                          aria-label={`${isExpanded ? "Tutup" : "Lihat"} rincian campaign ${aa.name}`}
+                          className="flex h-6 w-6 items-center justify-center rounded-md text-slate-400 hover:bg-white/8 hover:text-slate-200"
+                        >
+                          <ChevronRight
+                            className={`h-4 w-4 transition-transform ${isExpanded ? "rotate-90" : ""}`}
+                          />
+                        </button>
+                      </TableCell>
+                      <TableCell className="font-medium">{aa.name}</TableCell>
+                      <TableCell className="text-slate-400">
+                        {aa.brand?.name ?? "—"}
+                      </TableCell>
+                      <TableCell className="text-xs text-slate-400">
+                        {formatDate(aa.start_date)} — {formatDate(aa.end_date)}
+                      </TableCell>
+                      <TableCell className="text-slate-300">
+                        {formatIDR(aa.target_budget)}
+                      </TableCell>
+                      <TableCell>
+                        <button
+                          type="button"
+                          onClick={() => toggleExpanded(aa.id)}
+                          className={`cursor-pointer underline-offset-4 hover:underline ${budgetTersisaClass(aa)} ${
+                            aa.budget_tersisa <= aa.target_budget * 0.2 ? "font-medium" : ""
+                          }`}
+                        >
+                          {formatIDR(aa.budget_tersisa)}
+                        </button>
+                      </TableCell>
+                      <TableCell className="text-slate-400 text-xs">
+                        {formatDate(aa.created_at)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <ActionApprovalDialog
+                            actionApproval={aa}
+                            masterBudgets={masterBudgets}
+                            brands={brands}
+                            trigger={
+                              <Button variant="outline" size="sm">
+                                <Pencil className="h-3 w-3" />
+                                Edit
+                              </Button>
+                            }
+                          />
+                          <DeleteButton id={aa.id} name={aa.name} />
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                    {isExpanded && (
+                      <TableRow className="border-white/8 bg-white/2 hover:bg-white/2">
+                        <TableCell colSpan={8} className="p-0">
+                          <AADrilldown
+                            aa={aa}
+                            campaigns={campaignsByAA[aa.id] ?? []}
+                          />
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </Fragment>
+                );
+              })
             ) : (
               <TableRow>
                 <TableCell
-                  colSpan={7}
+                  colSpan={8}
                   className="text-center py-12 text-slate-500"
                 >
                   Belum ada Action Approval. Tambah Action Approval pertama Anda.

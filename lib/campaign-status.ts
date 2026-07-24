@@ -34,6 +34,31 @@ export function sumCommittedBudgetByAA(
   }, {});
 }
 
+export function groupCampaignsByCommitment<
+  T extends { requested_budget: number | null; status: CampaignStatus },
+>(
+  campaigns: readonly T[]
+): {
+  committed: T[];
+  notCommitted: T[];
+  committedTotal: number;
+  notCommittedTotal: number;
+} {
+  const committed: T[] = [];
+  const notCommitted: T[] = [];
+  for (const c of campaigns) {
+    (isCommittedStatus(c.status) ? committed : notCommitted).push(c);
+  }
+  const total = (list: T[]) =>
+    list.reduce((sum, c) => sum + (c.requested_budget ?? 0), 0);
+  return {
+    committed,
+    notCommitted,
+    committedTotal: total(committed),
+    notCommittedTotal: total(notCommitted),
+  };
+}
+
 export const statusConfig: Record<
   CampaignStatus,
   { label: string; className: string }
