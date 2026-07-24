@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
   Dialog,
@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { saveDraftCampaignAction, submitCampaignAction } from "@/app/actions/campaigns";
+import { checkAABudgetExceededAction } from "@/app/actions/aa-budget";
 import { formatIDR } from "@/lib/utils";
 import type { CampaignFileRow } from "@/types/database";
 
@@ -366,6 +367,7 @@ function Step3({
   existingFiles,
   onRemoveExisting,
   masterBudgets,
+  overBudget,
 }: {
   data: FormData;
   onChange: (patch: Partial<FormData>) => void;
@@ -375,6 +377,7 @@ function Step3({
   existingFiles: CampaignFileRow[];
   onRemoveExisting: (id: string) => void;
   masterBudgets?: { id: string; promotion_category_id: string; fiscal_year: number; quarter: number; total_amount: number }[];
+  overBudget: boolean;
 }) {
   const rawAvgSales = data.avg_sales_3months;
   const numAvgSales = Number(rawAvgSales.replace(/\D/g, "")) || 0;
@@ -466,6 +469,15 @@ function Step3({
         />
         {numBudget > 0 && (
           <p className="text-xs text-slate-400 pl-1">{formatIDR(numBudget)}</p>
+        )}
+        {overBudget && (
+          <div className="flex items-start gap-2 rounded-md border border-amber-500/25 bg-amber-500/8 px-3 py-2">
+            <AlertCircle className="h-4 w-4 text-amber-400 flex-shrink-0 mt-0.5" />
+            <p className="text-xs text-amber-400">
+              Pengajuan ini melebihi sisa budget Action Approval yang dipilih.
+              Anda tetap bisa mengajukan — keputusan akhir ada di approver.
+            </p>
+          </div>
         )}
       </div>
 
@@ -675,6 +687,34 @@ export function CampaignFormModal({
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [overBudget, setOverBudget] = useState(false);
+
+  // Cek over-budget AA di server (respons hanya boolean — angka sisa tidak
+  // pernah dikirim ke client). Debounce mengikuti ketikan requested budget.
+  const numRequestedBudget =
+    Number(formData.requested_budget.replace(/\D/g, "")) || 0;
+  const checkedAAId = formData.action_approval_id;
+  const checkedCampaignId = formData.id ?? null;
+
+  useEffect(() => {
+    if (!open || !checkedAAId || numRequestedBudget <= 0) {
+      setOverBudget(false);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      const result = await checkAABudgetExceededAction({
+        action_approval_id: checkedAAId,
+        requested_budget: numRequestedBudget,
+        campaign_id: checkedCampaignId,
+      });
+      if (!cancelled) setOverBudget(result.exceeded);
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [open, checkedAAId, checkedCampaignId, numRequestedBudget]);
 
   const patch = useCallback((p: Partial<FormData>) => {
     setFormData((prev) => ({ ...prev, ...p }));
@@ -938,6 +978,7 @@ export function CampaignFormModal({
               existingFiles={existingFiles}
               onRemoveExisting={removeExisting}
               masterBudgets={masterBudgets}
+              overBudget={overBudget}
             />
           )}
 
