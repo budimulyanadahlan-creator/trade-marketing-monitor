@@ -1,3 +1,4 @@
+import { sumCommittedBudgetByAA } from "@/lib/campaign-status";
 import { createClient } from "@/lib/supabase/server";
 import { ActionApprovalsTable } from "./action-approvals-table";
 
@@ -19,17 +20,13 @@ export default async function ActionApprovalsPage() {
       supabase.from("brands").select("id, name").eq("is_active", true).order("name"),
       supabase
         .from("campaigns")
-        .select("action_approval_id, requested_budget")
+        .select("action_approval_id, requested_budget, status")
         .not("action_approval_id", "is", null),
     ]);
 
   const { data: actionApprovals } = aaResult;
 
-  const budgetByAA = (campaignBudgets ?? []).reduce<Record<string, number>>((acc, c) => {
-    if (!c.action_approval_id) return acc;
-    acc[c.action_approval_id] = (acc[c.action_approval_id] ?? 0) + (c.requested_budget ?? 0);
-    return acc;
-  }, {});
+  const budgetByAA = sumCommittedBudgetByAA(campaignBudgets ?? []);
 
   const actionApprovalsWithBudget = (actionApprovals ?? []).map((aa) => ({
     ...aa,

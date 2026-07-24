@@ -1,5 +1,39 @@
 import type { CampaignStatus } from "@/types/database";
 
+// Status yang memotong Budget Tersisa AA: budget dianggap ter-commit sejak
+// approval pertama (L1), bukan sejak submit. draft/submitted/rejected/cancelled
+// tidak memotong. Dipakai halaman admin AA, pengecekan form, dan layar approval.
+export const COMMITTED_CAMPAIGN_STATUSES: readonly CampaignStatus[] = [
+  "approved_l1",
+  "approved_l2",
+  "approved_l3",
+  "approved_l4",
+  "approved",
+  "ongoing",
+  "claim_submitted",
+  "paid",
+  "completed",
+];
+
+export function isCommittedStatus(status: CampaignStatus): boolean {
+  return COMMITTED_CAMPAIGN_STATUSES.includes(status);
+}
+
+export function sumCommittedBudgetByAA(
+  campaigns: readonly {
+    action_approval_id: string | null;
+    requested_budget: number | null;
+    status: CampaignStatus;
+  }[]
+): Record<string, number> {
+  return campaigns.reduce<Record<string, number>>((acc, c) => {
+    if (!c.action_approval_id || !isCommittedStatus(c.status)) return acc;
+    acc[c.action_approval_id] =
+      (acc[c.action_approval_id] ?? 0) + (c.requested_budget ?? 0);
+    return acc;
+  }, {});
+}
+
 export const statusConfig: Record<
   CampaignStatus,
   { label: string; className: string }
