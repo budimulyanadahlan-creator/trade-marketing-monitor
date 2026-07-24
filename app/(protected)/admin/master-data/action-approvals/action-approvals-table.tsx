@@ -181,7 +181,7 @@ function ActionApprovalDialog({
               name="target_budget"
               type="number"
               min="0"
-              step="1000"
+              step="1"
               defaultValue={actionApproval?.target_budget ?? 0}
               required
               disabled={isPending}
