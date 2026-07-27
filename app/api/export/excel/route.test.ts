@@ -69,6 +69,7 @@ function baseCampaign(overrides: Partial<Record<string, unknown>> = {}) {
     promotion_category: null,
     action_approval: null,
     vendor: null,
+    distributor: null,
     realizations: [],
     ...overrides,
   };
@@ -107,5 +108,28 @@ describe("GET /api/export/excel — Cost Ratio", () => {
     ]);
 
     expect(rows[0]["Cost Ratio (%)"]).toBe(50);
+  });
+});
+
+describe("GET /api/export/excel — Distributor", () => {
+  it("fills the Distributor column after Vendor when a distributor is set", async () => {
+    const rows = await extractRows([
+      baseCampaign({
+        vendor: { name: "Vendor A" },
+        distributor: { name: "Distributor B" },
+      }),
+    ]);
+
+    expect(rows[0]["Vendor"]).toBe("Vendor A");
+    expect(rows[0]["Distributor"]).toBe("Distributor B");
+    expect(Object.keys(rows[0]).indexOf("Distributor")).toBe(
+      Object.keys(rows[0]).indexOf("Vendor") + 1
+    );
+  });
+
+  it("leaves Distributor blank when not set", async () => {
+    const rows = await extractRows([baseCampaign()]);
+
+    expect(rows[0]["Distributor"]).toBe("");
   });
 });

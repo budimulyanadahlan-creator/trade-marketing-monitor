@@ -41,6 +41,7 @@ const CAMPAIGN_SELECT = `
   promotion_category:promotion_categories(name, account_code),
   action_approval:action_approvals(name),
   vendor:vendors(name),
+  distributor:distributors(name),
   realizations(invoice_number, amount, realization_date)
 `;
 
@@ -71,6 +72,7 @@ type CampaignRow = {
   promotion_category: JoinedPromoCategory;
   action_approval: JoinedName;
   vendor: JoinedName;
+  distributor: JoinedName;
   realizations: RealizationEntry[];
 };
 
@@ -179,6 +181,7 @@ export async function GET(request: NextRequest) {
         "Promo Category": c.promotion_category?.name ?? "",
         "Kode Akun": c.promotion_category?.account_code ?? "",
         "ID Store": c.store_id ?? "",
+        Distributor: c.distributor?.name ?? "",
         "Budget (IDR)": c.requested_budget,
         "Sales Projection (IDR)": c.sales_projection,
         "Realisasi (IDR)": c.actual_spent,
@@ -199,6 +202,7 @@ export async function GET(request: NextRequest) {
       { wch: 22 }, // Promo Category
       { wch: 12 }, // Kode Akun
       { wch: 15 }, // ID Store
+      { wch: 20 }, // Distributor
       { wch: 18 }, // Budget
       { wch: 20 }, // Sales Projection
       { wch: 18 }, // Realisasi
@@ -235,6 +239,7 @@ export async function GET(request: NextRequest) {
         "ID Store": c.store_id ?? "",
         "Action Approval (AA)": c.action_approval?.name ?? "",
         Vendor: c.vendor?.name ?? "",
+        Distributor: c.distributor?.name ?? "",
         Objective: c.objective ?? "",
         Mekanisme: c.mechanism ?? "",
         "Budget (IDR)": c.requested_budget,
@@ -256,6 +261,7 @@ export async function GET(request: NextRequest) {
       { wch: 18 }, { wch: 18 }, // No. SKP, No. AA Reference
       { wch: 30 }, { wch: 15 }, { wch: 20 }, { wch: 15 }, { wch: 8 },
       { wch: 20 }, { wch: 12 }, { wch: 15 }, { wch: 25 }, { wch: 20 },
+      { wch: 20 }, // Distributor
       { wch: 30 }, { wch: 30 }, { wch: 18 }, { wch: 18 }, { wch: 12 },
       { wch: 18 }, { wch: 12 }, { wch: 18 }, { wch: 14 }, { wch: 14 },
       { wch: 14 }, { wch: 14 }, { wch: 10 }, { wch: 35 }, { wch: 14 },

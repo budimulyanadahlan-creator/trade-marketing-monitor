@@ -38,6 +38,7 @@ export type RekapCampaign = {
   promotion_category: { name: string; account_code: string } | null;
   action_approval: { name: string } | null;
   vendor: { name: string } | null;
+  distributor: { name: string } | null;
   realizations: { id: string; invoice_number: string; amount: number; realization_date: string }[];
 };
 
@@ -53,6 +54,7 @@ const CAMPAIGN_SELECT = `
   promotion_category:promotion_categories(name, account_code),
   action_approval:action_approvals(name),
   vendor:vendors(name),
+  distributor:distributors(name),
   realizations(id, invoice_number, amount, realization_date)
 `;
 

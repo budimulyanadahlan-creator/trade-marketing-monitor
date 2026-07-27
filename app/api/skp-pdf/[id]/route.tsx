@@ -305,6 +305,7 @@ type SkpData = {
   promotion_category: string;
   action_approval: string;
   vendor: string;
+  distributor: string;
   objective: string;
   mechanism: string;
   requested_budget: number;
@@ -366,6 +367,7 @@ function SkpPDF({ data }: { data: SkpData }) {
             <InfoRow label="Channel" value={data.channel} />
             <InfoRow label="Kategori Promosi" value={data.promotion_category} />
             <InfoRow label="Vendor" value={data.vendor} />
+            <InfoRow label="Distributor" value={data.distributor} />
             <InfoRow label="Objective" value={data.objective} />
             <InfoRow label="Mekanisme" value={data.mechanism} />
             <InfoRow
@@ -465,7 +467,8 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       channel:channels(name),
       promotion_category:promotion_categories(name, account_code),
       action_approval:action_approvals(name),
-      vendor:vendors(name)
+      vendor:vendors(name),
+      distributor:distributors(name)
     `
     )
     .eq("id", id)
@@ -497,6 +500,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     promotion_category: { name: string; account_code: string } | null;
     action_approval: { name: string } | null;
     vendor: { name: string } | null;
+    distributor: { name: string } | null;
   };
 
   // Only generate PDF for fully-approved campaigns
@@ -623,6 +627,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       : "—",
     action_approval: campaign.action_approval?.name ?? "—",
     vendor: campaign.vendor?.name ?? "—",
+    distributor: campaign.distributor?.name ?? "—",
     objective: campaign.objective ?? "—",
     mechanism: campaign.mechanism ?? "—",
     requested_budget: campaign.requested_budget,

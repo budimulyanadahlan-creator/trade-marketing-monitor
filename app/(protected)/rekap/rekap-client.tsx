@@ -156,7 +156,7 @@ export function RekapClient({
   const [currentPage, setCurrentPage] = useState(1);
 
   const receiptedSet = new Set(receiptedCampaignIds);
-  const colSpan = isDistributor ? 14 : 19;
+  const colSpan = isDistributor ? 15 : 20;
   const totalPages = Math.max(1, Math.ceil(campaigns.length / PAGE_SIZE));
   const paginated = campaigns.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
@@ -410,6 +410,7 @@ export function RekapClient({
                 <TableHead className="text-slate-400 min-w-[130px]">Promo Cat.</TableHead>
                 <TableHead className="text-slate-400">ID Store</TableHead>
                 {!isDistributor && <TableHead className="text-slate-400 min-w-[160px]">AA</TableHead>}
+                <TableHead className="text-slate-400">Distributor</TableHead>
                 <TableHead className="text-slate-400 text-right">Budget (IDR)</TableHead>
                 <TableHead className="text-slate-400 text-right">Sales Proj. (IDR)</TableHead>
                 {!isDistributor && <TableHead className="text-slate-400 text-right">Cost Ratio</TableHead>}
@@ -491,6 +492,9 @@ export function RekapClient({
                           {c.action_approval?.name ?? "—"}
                         </TableCell>
                       )}
+                      <TableCell className="text-slate-400 text-xs">
+                        {c.distributor?.name ?? "—"}
+                      </TableCell>
                       <TableCell className="text-right text-slate-300 font-mono text-xs">
                         {formatIDR(c.requested_budget)}
                       </TableCell>
