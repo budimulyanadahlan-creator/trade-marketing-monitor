@@ -11,6 +11,7 @@ const tabs = [
   { href: "/admin/master-data/channels", label: "Channel" },
   { href: "/admin/master-data/categories", label: "Kategori Promosi" },
   { href: "/admin/master-data/vendors", label: "Vendor" },
+  { href: "/admin/master-data/distributors", label: "Distributor" },
   { href: "/admin/master-data/budgets", label: "Master Budget" },
   { href: "/admin/master-data/action-approvals", label: "Action Approval" },
   { href: "/admin/master-data/approvers", label: "Approver" },

@@ -76,6 +76,14 @@ export type VendorRow = {
   created_at: string;
 };
 
+export type DistributorRow = {
+  id: string;
+  name: string;
+  contact: string | null;
+  is_active: boolean;
+  created_at: string;
+};
+
 export type MasterBudgetRow = {
   id: string;
   promotion_category_id: string;
@@ -298,6 +306,12 @@ export type Database = {
         Row: VendorRow;
         Insert: { id?: string; name: string; contact?: string | null; service_category?: string | null; is_active?: boolean; created_at?: string };
         Update: Partial<Omit<VendorRow, "id" | "created_at">>;
+        Relationships: [];
+      };
+      distributors: {
+        Row: DistributorRow;
+        Insert: { id?: string; name: string; contact?: string | null; is_active?: boolean; created_at?: string };
+        Update: Partial<Omit<DistributorRow, "id" | "created_at">>;
         Relationships: [];
       };
       master_budgets: {

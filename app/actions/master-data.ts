@@ -535,6 +535,91 @@ export async function deleteVendorAction(
 }
 
 // ============================================================
+// DISTRIBUTORS
+// ============================================================
+
+const distributorSchema = z.object({
+  id: z.string().uuid().optional(),
+  name: z.string().min(1, "Nama distributor harus diisi"),
+  contact: z.string().optional().or(z.literal("")),
+});
+
+export type SaveDistributorState = { error?: string; success?: boolean };
+
+export async function saveDistributorAction(
+  _prevState: SaveDistributorState,
+  formData: FormData
+): Promise<SaveDistributorState> {
+  try {
+    const { supabase } = await requireAdmin();
+
+    const parsed = distributorSchema.safeParse({
+      id: formData.get("id") || undefined,
+      name: formData.get("name"),
+      contact: formData.get("contact") || undefined,
+    });
+
+    if (!parsed.success) {
+      return { error: parsed.error.issues[0]?.message ?? "Input tidak valid" };
+    }
+
+    const { id, ...data } = parsed.data;
+    const payload = {
+      name: data.name,
+      contact: data.contact || null,
+    };
+
+    if (id) {
+      const { error } = await supabase
+        .from("distributors")
+        .update(payload)
+        .eq("id", id);
+      if (error) return { error: error.message };
+    } else {
+      const { error } = await supabase.from("distributors").insert(payload);
+      if (error) return { error: error.message };
+    }
+
+    revalidatePath("/admin/master-data/distributors");
+    return { success: true };
+  } catch {
+    return { error: "Anda tidak memiliki akses." };
+  }
+}
+
+export async function toggleDistributorActiveAction(
+  id: string,
+  isActive: boolean
+): Promise<{ error?: string }> {
+  try {
+    const { supabase } = await requireAdmin();
+    const { error } = await supabase
+      .from("distributors")
+      .update({ is_active: isActive })
+      .eq("id", id);
+    if (error) return { error: error.message };
+    revalidatePath("/admin/master-data/distributors");
+    return {};
+  } catch {
+    return { error: "Anda tidak memiliki akses." };
+  }
+}
+
+export async function deleteDistributorAction(
+  id: string
+): Promise<{ error?: string }> {
+  try {
+    const { supabase } = await requireAdmin();
+    const { error } = await supabase.from("distributors").delete().eq("id", id);
+    if (error) return { error: error.message };
+    revalidatePath("/admin/master-data/distributors");
+    return {};
+  } catch {
+    return { error: "Anda tidak memiliki akses." };
+  }
+}
+
+// ============================================================
 // APPROVAL LEVELS
 // ============================================================
 
