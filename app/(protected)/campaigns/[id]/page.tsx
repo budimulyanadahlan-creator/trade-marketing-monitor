@@ -31,6 +31,7 @@ type CampaignWithJoins = CampaignRow & {
   promotion_category: { name: string; account_code: string } | null;
   action_approval: { name: string } | null;
   vendor: { name: string } | null;
+  distributor: { name: string } | null;
 };
 
 interface Props {
@@ -64,7 +65,8 @@ export default async function CampaignDetailPage({ params }: Props) {
       channel:channels(name),
       promotion_category:promotion_categories(name, account_code),
       action_approval:action_approvals(name),
-      vendor:vendors(name)
+      vendor:vendors(name),
+      distributor:distributors(name)
     `
     )
     .eq("id", id)
@@ -218,6 +220,7 @@ export default async function CampaignDetailPage({ params }: Props) {
     { data: categories },
     { data: actionApprovals },
     { data: vendors },
+    { data: distributors },
     { data: masterBudgets },
   ] = isEditable
     ? await Promise.all([
@@ -232,12 +235,14 @@ export default async function CampaignDetailPage({ params }: Props) {
           .order("name"),
         supabase.from("action_approvals").select("id, name, brand_id, start_date, end_date, target_budget").order("name"),
         supabase.from("vendors").select("id, name").eq("is_active", true).order("name"),
+        supabase.from("distributors").select("id, name").eq("is_active", true).order("name"),
         supabase
           .from("master_budgets")
           .select("id, promotion_category_id, fiscal_year, quarter, total_amount")
           .order("fiscal_year", { ascending: false }),
       ])
     : [
+        { data: [] },
         { data: [] },
         { data: [] },
         { data: [] },
@@ -266,6 +271,7 @@ export default async function CampaignDetailPage({ params }: Props) {
       categories={categories ?? []}
       actionApprovals={actionApprovals ?? []}
       vendors={vendors ?? []}
+      distributors={distributors ?? []}
       masterBudgets={masterBudgets ?? []}
     />
   );

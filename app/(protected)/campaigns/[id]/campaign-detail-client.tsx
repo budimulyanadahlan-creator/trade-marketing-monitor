@@ -72,6 +72,7 @@ type CampaignWithJoins = CampaignRow & {
   promotion_category: { name: string; account_code: string } | null;
   action_approval: { name: string } | null;
   vendor: { name: string } | null;
+  distributor: { name: string } | null;
 };
 
 type ApprovalHistoryWithActor = ApprovalHistoryRow & {
@@ -102,6 +103,7 @@ interface Props {
     target_budget: number;
   }[];
   vendors: { id: string; name: string }[];
+  distributors: { id: string; name: string }[];
   masterBudgets: { id: string; promotion_category_id: string; fiscal_year: number; quarter: number; total_amount: number }[];
 }
 
@@ -710,6 +712,7 @@ export function CampaignDetailClient({
   categories,
   actionApprovals,
   vendors,
+  distributors,
   masterBudgets,
 }: Props) {
   const [editOpen, setEditOpen] = useState(false);
@@ -761,6 +764,7 @@ export function CampaignDetailClient({
     promotion_category_id: campaign.promotion_category_id ?? "",
     action_approval_id: campaign.action_approval_id ?? "",
     vendor_id: campaign.vendor_id ?? "",
+    distributor_id: campaign.distributor_id ?? "",
     objective: campaign.objective ?? "",
     mechanism: campaign.mechanism ?? "",
     avg_sales_3months: campaign.avg_sales_3months ? String(campaign.avg_sales_3months) : "",
@@ -936,6 +940,7 @@ export function CampaignDetailClient({
           />
           <DetailRow label="AA" value={campaign.action_approval?.name} />
           <DetailRow label="Vendor" value={campaign.vendor?.name} />
+          <DetailRow label="Distributor" value={campaign.distributor?.name} />
           <DetailRow label="Objective" value={campaign.objective} />
           <DetailRow label="Mekanisme" value={campaign.mechanism || null} />
         </dl>
@@ -1178,6 +1183,7 @@ export function CampaignDetailClient({
           categories={categories}
           actionApprovals={actionApprovals}
           vendors={vendors}
+          distributors={distributors}
           masterBudgets={masterBudgets}
         />
       )}

@@ -42,6 +42,7 @@ interface FormData {
   promotion_category_id: string;
   action_approval_id: string;
   vendor_id: string;
+  distributor_id: string;
   store_id: string;
   objective: string;
   mechanism: string;
@@ -78,6 +79,7 @@ interface CampaignFormModalProps {
   categories: { id: string; name: string; type: string; account_code: string }[];
   actionApprovals: { id: string; name: string; brand_id: string | null; start_date: string; end_date: string; target_budget: number }[];
   vendors: { id: string; name: string }[];
+  distributors: { id: string; name: string }[];
   masterBudgets?: MasterBudgetInfo[];
   /** When set, region dropdown is locked to this single region (Sales dept users). */
   lockedRegionId?: string | null;
@@ -230,6 +232,7 @@ function Step2({
   categories,
   actionApprovals,
   vendors,
+  distributors,
 }: {
   data: FormData;
   onChange: (patch: Partial<FormData>) => void;
@@ -237,6 +240,7 @@ function Step2({
   categories: { id: string; name: string; type: string; account_code: string }[];
   actionApprovals: { id: string; name: string }[];
   vendors: { id: string; name: string }[];
+  distributors: { id: string; name: string }[];
 }) {
   const selectedCategory = categories.find((c) => c.id === data.promotion_category_id);
   const showStoreId = selectedCategory
@@ -319,6 +323,22 @@ function Step2({
           {vendors.map((v) => (
             <option key={v.id} value={v.id}>
               {v.name}
+            </option>
+          ))}
+        </Select>
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="c-distributor">Distributor</Label>
+        <Select
+          id="c-distributor"
+          value={data.distributor_id}
+          onChange={(e) => onChange({ distributor_id: e.target.value })}
+        >
+          <option value="">— Pilih Distributor (opsional) —</option>
+          {distributors.map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.name}
             </option>
           ))}
         </Select>
@@ -648,6 +668,7 @@ const EMPTY_FORM: FormData = {
   promotion_category_id: "",
   action_approval_id: "",
   vendor_id: "",
+  distributor_id: "",
   store_id: "",
   objective: "",
   mechanism: "",
@@ -670,6 +691,7 @@ export function CampaignFormModal({
   categories,
   actionApprovals,
   vendors,
+  distributors,
   masterBudgets,
   lockedRegionId,
 }: CampaignFormModalProps) {
@@ -796,6 +818,7 @@ export function CampaignFormModal({
         promotion_category_id: formData.promotion_category_id || null,
         action_approval_id: formData.action_approval_id || null,
         vendor_id: formData.vendor_id || null,
+        distributor_id: formData.distributor_id || null,
         store_id: formData.store_id || null,
         objective: formData.objective || null,
         mechanism: formData.mechanism || null,
@@ -904,6 +927,7 @@ export function CampaignFormModal({
         promotion_category_id: formData.promotion_category_id,
         action_approval_id: formData.action_approval_id || null,
         vendor_id: formData.vendor_id || null,
+        distributor_id: formData.distributor_id || null,
         store_id: formData.store_id || null,
         objective: formData.objective || null,
         mechanism: formData.mechanism,
@@ -966,6 +990,7 @@ export function CampaignFormModal({
               categories={categories}
               actionApprovals={actionApprovals}
               vendors={vendors}
+              distributors={distributors}
             />
           )}
           {step === 3 && (

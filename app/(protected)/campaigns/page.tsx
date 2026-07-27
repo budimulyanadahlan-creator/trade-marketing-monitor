@@ -57,6 +57,7 @@ export default async function CampaignsPage() {
       promotion_category:promotion_categories(name, account_code),
       action_approval:action_approvals(name),
       vendor:vendors(name),
+      distributor:distributors(name),
       realizations(id)
     `
     )
@@ -98,6 +99,7 @@ export default async function CampaignsPage() {
     { data: categories },
     { data: actionApprovals },
     { data: vendors },
+    { data: distributors },
     { data: masterBudgets },
   ] = await Promise.all([
     supabase.from("departments").select("id, name").order("name"),
@@ -114,6 +116,7 @@ export default async function CampaignsPage() {
       .select("id, name, brand_id, start_date, end_date, target_budget")
       .order("name"),
     supabase.from("vendors").select("id, name").eq("is_active", true).order("name"),
+    supabase.from("distributors").select("id, name").eq("is_active", true).order("name"),
     supabase
       .from("master_budgets")
       .select("id, promotion_category_id, fiscal_year, quarter, total_amount")
@@ -131,6 +134,7 @@ export default async function CampaignsPage() {
       categories={categories ?? []}
       actionApprovals={actionApprovals ?? []}
       vendors={vendors ?? []}
+      distributors={distributors ?? []}
       masterBudgets={masterBudgets ?? []}
       lockedRegionId={lockedRegionId}
       receiptedCampaignIds={receiptedCampaignIds}

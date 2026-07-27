@@ -7,7 +7,7 @@ vi.mock("@/lib/supabase/server", () => ({
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/email", () => ({ sendSkpSubmittedEmail: vi.fn() }));
 
-import { submitCampaignAction } from "./campaigns";
+import { saveDraftCampaignAction, submitCampaignAction } from "./campaigns";
 import { createClient } from "@/lib/supabase/server";
 
 // -------------------------------------------------------
@@ -77,5 +77,114 @@ describe("submitCampaignAction — optional numeric fields", () => {
     // If schema validation rejected the 0 values, we'd get a validation message here
     // instead of the (later) file-count check message.
     expect(result.error).toBe("Minimal 1 dokumen SKP harus diupload sebelum mengajukan");
+  });
+});
+
+// -------------------------------------------------------
+// distributor_id
+// -------------------------------------------------------
+
+function makeInsertChain(captured: { payload?: unknown }) {
+  return {
+    insert: vi.fn().mockImplementation((p: unknown) => {
+      captured.payload = p;
+      return {
+        select: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({ data: { id: uuid }, error: null }),
+      };
+    }),
+  };
+}
+
+function makeUpdateChain(captured: { payload?: unknown }) {
+  const chain = {
+    update: vi.fn().mockImplementation((p: unknown) => {
+      captured.payload = p;
+      return chain;
+    }),
+    eq: vi.fn().mockImplementation(() => chain),
+    then: (resolve: (v: { error: null }) => void) => resolve({ error: null }),
+  };
+  return chain;
+}
+
+describe("distributor_id disimpan mengikuti pola vendor_id", () => {
+  it("saveDraftCampaignAction menyertakan distributor_id di payload insert", async () => {
+    const captured: { payload?: Record<string, unknown> } = {};
+    const mockClient = {
+      auth: {
+        getUser: vi.fn().mockResolvedValue({ data: { user: { id: "user-1" } } }),
+      },
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "users")
+          return makeQueryChain({ role: "user", is_active: true, department_id: null, region_id: null });
+        if (table === "campaigns") return makeInsertChain(captured);
+        return {};
+      }),
+    };
+    (createClient as ReturnType<typeof vi.fn>).mockResolvedValue(mockClient);
+
+    const result = await saveDraftCampaignAction({
+      name: "Draft SKP",
+      department_id: uuid,
+      brand_id: uuid,
+      region_id: uuid,
+      distributor_id: uuid,
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(captured.payload).toMatchObject({ distributor_id: uuid });
+  });
+
+  it("submitCampaignAction menyertakan distributor_id di payload update", async () => {
+    const captured: { payload?: Record<string, unknown> } = {};
+    const mockClient = {
+      auth: {
+        getUser: vi.fn().mockResolvedValue({ data: { user: { id: "user-1" } } }),
+      },
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "users")
+          return makeQueryChain({ role: "user", is_active: true, department_id: null, region_id: null });
+        if (table === "campaign_files") return makeFileCountChain(1);
+        if (table === "campaigns") return makeUpdateChain(captured);
+        if (table === "approval_history")
+          return { insert: vi.fn().mockResolvedValue({ error: null }) };
+        return {};
+      }),
+    };
+    (createClient as ReturnType<typeof vi.fn>).mockResolvedValue(mockClient);
+
+    const result = await submitCampaignAction(
+      baseSubmitData({ distributor_id: uuid }) as Parameters<typeof submitCampaignAction>[0]
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(captured.payload).toMatchObject({ distributor_id: uuid });
+  });
+
+  it("distributor_id boleh kosong: tersimpan sebagai null", async () => {
+    const captured: { payload?: Record<string, unknown> } = {};
+    const mockClient = {
+      auth: {
+        getUser: vi.fn().mockResolvedValue({ data: { user: { id: "user-1" } } }),
+      },
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "users")
+          return makeQueryChain({ role: "user", is_active: true, department_id: null, region_id: null });
+        if (table === "campaigns") return makeInsertChain(captured);
+        return {};
+      }),
+    };
+    (createClient as ReturnType<typeof vi.fn>).mockResolvedValue(mockClient);
+
+    const result = await saveDraftCampaignAction({
+      name: "Draft tanpa distributor",
+      department_id: uuid,
+      brand_id: uuid,
+      region_id: uuid,
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(captured.payload).toMatchObject({ distributor_id: null });
   });
 });

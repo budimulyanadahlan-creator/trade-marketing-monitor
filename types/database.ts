@@ -147,6 +147,7 @@ export type CampaignRow = {
   channel_id: string | null;
   promotion_category_id: string | null;
   vendor_id: string | null;
+  distributor_id: string | null;
   store_id: string | null;
   objective: string | null;
   mechanism: string;
@@ -432,6 +433,13 @@ export type Database = {
             columns: ["vendor_id"];
             isOneToOne: false;
             referencedRelation: "vendors";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "campaigns_distributor_id_fkey";
+            columns: ["distributor_id"];
+            isOneToOne: false;
+            referencedRelation: "distributors";
             referencedColumns: ["id"];
           },
           {

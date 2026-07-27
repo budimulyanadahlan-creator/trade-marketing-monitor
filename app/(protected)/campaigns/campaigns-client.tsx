@@ -36,6 +36,7 @@ type CampaignWithJoins = CampaignRow & {
   promotion_category: { name: string; account_code: string } | null;
   action_approval: { name: string } | null;
   vendor: { name: string } | null;
+  distributor: { name: string } | null;
   realizations: { id: string }[] | null;
 };
 
@@ -49,6 +50,7 @@ interface Props {
   categories: { id: string; name: string; type: string; account_code: string }[];
   actionApprovals: { id: string; name: string; brand_id: string | null; start_date: string; end_date: string; target_budget: number }[];
   vendors: { id: string; name: string }[];
+  distributors: { id: string; name: string }[];
   masterBudgets: { id: string; promotion_category_id: string; fiscal_year: number; quarter: number; total_amount: number }[];
   lockedRegionId?: string | null;
   receiptedCampaignIds?: string[];
@@ -64,6 +66,7 @@ export function CampaignsClient({
   categories,
   actionApprovals,
   vendors,
+  distributors,
   masterBudgets,
   lockedRegionId,
   receiptedCampaignIds = [],
@@ -84,7 +87,7 @@ export function CampaignsClient({
 
   const isDistributor = userRole === "distributor";
   const isAdminOrSuperadmin = userRole === "admin" || userRole === "superadmin";
-  const masterData = { departments, brands, regions, channels, categories, actionApprovals, vendors, masterBudgets, lockedRegionId };
+  const masterData = { departments, brands, regions, channels, categories, actionApprovals, vendors, distributors, masterBudgets, lockedRegionId };
 
   function canAdminDelete(status: CampaignStatus): boolean {
     if (userRole === "superadmin") return true;
@@ -411,6 +414,7 @@ export function CampaignsClient({
           promotion_category_id: editingCampaign.promotion_category_id ?? "",
           action_approval_id: editingCampaign.action_approval_id ?? "",
           vendor_id: editingCampaign.vendor_id ?? "",
+          distributor_id: editingCampaign.distributor_id ?? "",
           store_id: editingCampaign.store_id ?? "",
           objective: editingCampaign.objective ?? "",
           mechanism: editingCampaign.mechanism ?? "",
