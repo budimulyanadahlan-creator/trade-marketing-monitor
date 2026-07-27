@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { AlertCircle, Loader2, Pencil } from "lucide-react";
 import { toast } from "sonner";
-import type { UserRole, RegionRow, Department } from "@/types/database";
+import type { UserRole, RegionRow, Department, DistributorRow } from "@/types/database";
 
 const roleRank: Record<UserRole, number> = {
   distributor: 0,
@@ -43,13 +43,15 @@ interface Props {
     role: UserRole;
     department_id: string | null;
     region_id: string | null;
+    distributor_id: string | null;
   };
   departments: Department[];
   regions: RegionRow[];
+  distributors: Pick<DistributorRow, "id" | "name">[];
   actorRole: UserRole;
 }
 
-export function EditUserDialog({ user, departments, regions, actorRole }: Props) {
+export function EditUserDialog({ user, departments, regions, distributors, actorRole }: Props) {
   const [open, setOpen] = useState(false);
   const [selectedRole, setSelectedRole] = useState<UserRole>(user.role);
   const [selectedDepartmentId, setSelectedDepartmentId] = useState(user.department_id ?? "");
@@ -189,6 +191,25 @@ export function EditUserDialog({ user, departments, regions, actorRole }: Props)
               >
                 <option value="">— Pilih Departemen —</option>
                 {departments.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
+
+          {isDistributor && (
+            <div className="space-y-1.5">
+              <Label htmlFor="eu-distributor">Perusahaan Distributor</Label>
+              <Select
+                id="eu-distributor"
+                name="distributor_id"
+                defaultValue={user.distributor_id ?? ""}
+                disabled={isPending}
+              >
+                <option value="">— Pilih Distributor (opsional) —</option>
+                {distributors.map((d) => (
                   <option key={d.id} value={d.id}>
                     {d.name}
                   </option>

@@ -31,6 +31,7 @@ export type UserRow = {
   full_name: string;
   department_id: string | null;
   region_id: string | null;
+  distributor_id: string | null;
   role: UserRole;
   is_active: boolean;
   created_at: string;
@@ -256,6 +257,7 @@ export type Database = {
           full_name: string;
           department_id?: string | null;
           region_id?: string | null;
+          distributor_id?: string | null;
           role?: UserRole;
           is_active?: boolean;
           created_at?: string;
@@ -265,6 +267,7 @@ export type Database = {
           full_name?: string;
           department_id?: string | null;
           region_id?: string | null;
+          distributor_id?: string | null;
           role?: UserRole;
           is_active?: boolean;
           updated_at?: string;
@@ -275,6 +278,13 @@ export type Database = {
             columns: ["department_id"];
             isOneToOne: false;
             referencedRelation: "departments";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "users_distributor_id_fkey";
+            columns: ["distributor_id"];
+            isOneToOne: false;
+            referencedRelation: "distributors";
             referencedColumns: ["id"];
           }
         ];

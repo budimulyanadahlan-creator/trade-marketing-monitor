@@ -15,11 +15,12 @@ import { DeleteUserButton } from "./delete-user-button";
 import { ToggleActiveButton } from "./toggle-active-button";
 import { ResetPasswordDialog } from "./reset-password-dialog";
 import { formatDate } from "@/lib/utils";
-import type { UserRole, UserRow, DepartmentRow, RegionRow } from "@/types/database";
+import type { UserRole, UserRow, DepartmentRow, RegionRow, DistributorRow } from "@/types/database";
 
 type UserWithDepartment = UserRow & {
   departments: Pick<DepartmentRow, "name"> | null;
   regions: Pick<RegionRow, "name"> | null;
+  distributors: Pick<DistributorRow, "name"> | null;
 };
 
 const roleRank: Record<UserRole, number> = {
@@ -78,7 +79,7 @@ export default async function AdminUsersPage() {
 
   const { data: rawUsers } = await supabase
     .from("users")
-    .select("*, departments(name), regions(name)")
+    .select("*, departments(name), regions(name), distributors(name)")
     .order("created_at", { ascending: false });
 
   const users = rawUsers as UserWithDepartment[] | null;
@@ -94,6 +95,12 @@ export default async function AdminUsersPage() {
     .eq("is_active", true)
     .order("name");
 
+  const { data: distributors } = await supabase
+    .from("distributors")
+    .select("id, name")
+    .eq("is_active", true)
+    .order("name");
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -103,7 +110,12 @@ export default async function AdminUsersPage() {
             {users?.length ?? 0} user terdaftar
           </p>
         </div>
-        <CreateUserDialog departments={departments ?? []} regions={regions ?? []} actorRole={actorRole} />
+        <CreateUserDialog
+          departments={departments ?? []}
+          regions={regions ?? []}
+          distributors={distributors ?? []}
+          actorRole={actorRole}
+        />
       </div>
 
       <div className="rounded-xl border border-white/8 bg-white/2 overflow-hidden">
@@ -165,9 +177,11 @@ export default async function AdminUsersPage() {
                               role: u.role,
                               department_id: u.department_id ?? null,
                               region_id: u.region_id ?? null,
+                              distributor_id: u.distributor_id ?? null,
                             }}
                             departments={departments ?? []}
                             regions={regions ?? []}
+                            distributors={distributors ?? []}
                             actorRole={actorRole}
                           />
                         )}

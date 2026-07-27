@@ -29,6 +29,11 @@ const createUserSchema = z.object({
     .uuid("Region tidak valid")
     .optional()
     .or(z.literal("")),
+  distributor_id: z
+    .string()
+    .uuid("Distributor tidak valid")
+    .optional()
+    .or(z.literal("")),
   role: z.enum(["user", "manager", "finance", "admin", "superadmin", "distributor"]),
 });
 
@@ -80,6 +85,7 @@ export async function createUserAction(
     full_name: formData.get("full_name"),
     department_id: formData.get("department_id") || undefined,
     region_id: formData.get("region_id") || undefined,
+    distributor_id: formData.get("distributor_id") || undefined,
     role: formData.get("role"),
   };
 
@@ -137,6 +143,8 @@ export async function createUserAction(
     full_name: parsed.data.full_name,
     department_id: parsed.data.department_id || null,
     region_id: parsed.data.region_id || null,
+    distributor_id:
+      parsed.data.role === "distributor" ? parsed.data.distributor_id || null : null,
     role: parsed.data.role as UserRole,
     is_active: true,
   });
@@ -156,6 +164,7 @@ const updateUserSchema = z.object({
   role: z.enum(["user", "manager", "finance", "admin", "superadmin", "distributor"]),
   department_id: z.string().uuid().optional().or(z.literal("")),
   region_id: z.string().uuid().optional().or(z.literal("")),
+  distributor_id: z.string().uuid().optional().or(z.literal("")),
 });
 
 export type UpdateUserState = { error?: string; success?: boolean };
@@ -178,6 +187,7 @@ export async function updateUserAction(
     role: formData.get("role"),
     department_id: formData.get("department_id") || undefined,
     region_id: formData.get("region_id") || undefined,
+    distributor_id: formData.get("distributor_id") || undefined,
   };
 
   const parsed = updateUserSchema.safeParse(raw);
@@ -225,6 +235,8 @@ export async function updateUserAction(
       role: parsed.data.role as UserRole,
       department_id: parsed.data.department_id || null,
       region_id: parsed.data.region_id || null,
+      distributor_id:
+        parsed.data.role === "distributor" ? parsed.data.distributor_id || null : null,
     })
     .eq("id", parsed.data.id);
 

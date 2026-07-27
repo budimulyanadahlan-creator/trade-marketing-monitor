@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/dialog";
 import { AlertCircle, Loader2, UserPlus } from "lucide-react";
 import { toast } from "sonner";
-import type { Department, UserRole, RegionRow } from "@/types/database";
+import type { Department, UserRole, RegionRow, DistributorRow } from "@/types/database";
 
 const roleRank: Record<UserRole, number> = {
   distributor: 0,
@@ -40,10 +40,11 @@ const allRoles: { value: UserRole; label: string }[] = [
 interface CreateUserDialogProps {
   departments: Department[];
   regions: RegionRow[];
+  distributors: Pick<DistributorRow, "id" | "name">[];
   actorRole: UserRole;
 }
 
-export function CreateUserDialog({ departments, regions, actorRole }: CreateUserDialogProps) {
+export function CreateUserDialog({ departments, regions, distributors, actorRole }: CreateUserDialogProps) {
   const assignableRoles = allRoles.filter(
     (r) => roleRank[r.value] < roleRank[actorRole]
   );
@@ -211,6 +212,20 @@ export function CreateUserDialog({ departments, regions, actorRole }: CreateUser
                 {departments.map((dept) => (
                   <option key={dept.id} value={dept.id}>
                     {dept.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
+
+          {isDistributor && (
+            <div className="space-y-1.5">
+              <Label htmlFor="distributor_id">Perusahaan Distributor</Label>
+              <Select id="distributor_id" name="distributor_id" disabled={isPending}>
+                <option value="">— Pilih Distributor (opsional) —</option>
+                {distributors.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
                   </option>
                 ))}
               </Select>
