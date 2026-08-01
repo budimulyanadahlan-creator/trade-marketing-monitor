@@ -48,7 +48,7 @@ interface Props {
   regions: { id: string; name: string }[];
   channels: { id: string; name: string }[];
   categories: { id: string; name: string; type: string; account_code: string }[];
-  actionApprovals: { id: string; name: string; brand_id: string | null; start_date: string; end_date: string; target_budget: number }[];
+  actionApprovals: { id: string; name: string; brand_id: string | null; start_date: string; end_date: string; target_budget: number; master_budget: { promotion_category_id: string } | null }[];
   vendors: { id: string; name: string }[];
   distributors: { id: string; name: string }[];
   masterBudgets: { id: string; promotion_category_id: string; fiscal_year: number; quarter: number; total_amount: number }[];

@@ -233,7 +233,7 @@ export default async function CampaignDetailPage({ params }: Props) {
           .select("id, name, type, account_code")
           .eq("is_active", true)
           .order("name"),
-        supabase.from("action_approvals").select("id, name, brand_id, start_date, end_date, target_budget").order("name"),
+        supabase.from("action_approvals").select("id, name, brand_id, start_date, end_date, target_budget, master_budget:master_budgets(promotion_category_id)").order("name"),
         supabase.from("vendors").select("id, name").eq("is_active", true).order("name"),
         supabase.from("distributors").select("id, name").eq("is_active", true).order("name"),
         supabase

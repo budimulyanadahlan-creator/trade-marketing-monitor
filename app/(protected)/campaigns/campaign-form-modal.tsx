@@ -77,7 +77,7 @@ interface CampaignFormModalProps {
   regions: { id: string; name: string }[];
   channels: { id: string; name: string }[];
   categories: { id: string; name: string; type: string; account_code: string }[];
-  actionApprovals: { id: string; name: string; brand_id: string | null; start_date: string; end_date: string; target_budget: number }[];
+  actionApprovals: { id: string; name: string; brand_id: string | null; start_date: string; end_date: string; target_budget: number; master_budget: { promotion_category_id: string } | null }[];
   vendors: { id: string; name: string }[];
   distributors: { id: string; name: string }[];
   masterBudgets?: MasterBudgetInfo[];
@@ -238,7 +238,7 @@ function Step2({
   onChange: (patch: Partial<FormData>) => void;
   channels: { id: string; name: string }[];
   categories: { id: string; name: string; type: string; account_code: string }[];
-  actionApprovals: { id: string; name: string }[];
+  actionApprovals: { id: string; name: string; master_budget: { promotion_category_id: string } | null }[];
   vendors: { id: string; name: string }[];
   distributors: { id: string; name: string }[];
 }) {
@@ -246,6 +246,29 @@ function Step2({
   const showStoreId = selectedCategory
     ? STORE_ID_CATEGORY_CODES.includes(selectedCategory.account_code)
     : false;
+
+  // AA hanya boleh memotong budget kategori promosi yang sama; AA yang sudah
+  // terpasang di campaign tetap ditampilkan agar tidak hilang saat edit.
+  const matchingAAs = actionApprovals.filter(
+    (a) =>
+      a.master_budget?.promotion_category_id === data.promotion_category_id ||
+      a.id === data.action_approval_id
+  );
+
+  function handleCategoryChange(categoryId: string) {
+    const matches = actionApprovals.filter(
+      (a) => a.master_budget?.promotion_category_id === categoryId
+    );
+    const currentStillValid = matches.some((a) => a.id === data.action_approval_id);
+    onChange({
+      promotion_category_id: categoryId,
+      action_approval_id: currentStillValid
+        ? data.action_approval_id
+        : matches.length === 1
+          ? matches[0].id
+          : "",
+    });
+  }
 
   return (
     <div className="space-y-4">
@@ -270,7 +293,7 @@ function Step2({
         <Select
           id="c-cat"
           value={data.promotion_category_id}
-          onChange={(e) => onChange({ promotion_category_id: e.target.value })}
+          onChange={(e) => handleCategoryChange(e.target.value)}
           placeholder="— Pilih Kategori Promosi —"
         >
           {categories.map((c) => (
@@ -302,14 +325,24 @@ function Step2({
           id="c-prog"
           value={data.action_approval_id}
           onChange={(e) => onChange({ action_approval_id: e.target.value })}
+          disabled={!data.promotion_category_id}
         >
           <option value="">— Pilih AA (opsional) —</option>
-          {actionApprovals.map((p) => (
+          {matchingAAs.map((p) => (
             <option key={p.id} value={p.id}>
               {p.name}
             </option>
           ))}
         </Select>
+        {!data.promotion_category_id ? (
+          <p className="text-xs text-slate-500">
+            Pilih Kategori Promosi terlebih dahulu.
+          </p>
+        ) : matchingAAs.length === 0 ? (
+          <p className="text-xs text-slate-500">
+            Belum ada AA untuk kategori promosi ini.
+          </p>
+        ) : null}
       </div>
 
       <div className="space-y-1.5">

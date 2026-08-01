@@ -101,6 +101,7 @@ interface Props {
     start_date: string;
     end_date: string;
     target_budget: number;
+    master_budget: { promotion_category_id: string } | null;
   }[];
   vendors: { id: string; name: string }[];
   distributors: { id: string; name: string }[];
