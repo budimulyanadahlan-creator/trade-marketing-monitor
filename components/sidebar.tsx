@@ -11,6 +11,7 @@ import {
   Database,
   LogOut,
   TableProperties,
+  Wallet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { UserRole } from "@/types/database";
@@ -46,6 +47,12 @@ const navItems: NavItem[] = [
     label: "Rekap",
     icon: <TableProperties className="h-4 w-4" />,
     roles: ["admin", "finance", "superadmin", "distributor"],
+  },
+  {
+    href: "/monitoring-budget",
+    label: "Monitoring Budget",
+    icon: <Wallet className="h-4 w-4" />,
+    roles: ["admin", "superadmin"],
   },
   {
     href: "/admin/users",
