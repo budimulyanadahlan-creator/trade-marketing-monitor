@@ -445,6 +445,12 @@ export function buildRealisasiDrilldown({
   return result;
 }
 
+// Data drill-down aktif (mode + item per key kategori+bulan), dipakai
+// halaman web dan (lewat lib/monitoring-budget-data.ts) endpoint export.
+export type MonitoringDrilldown =
+  | { mode: "komitmen"; data: Record<string, DrilldownCampaignItem[]> }
+  | { mode: "realisasi"; data: Record<string, DrilldownInvoiceItem[]> };
+
 export type MonitoringMode = "komitmen" | "realisasi";
 
 // Menentukan mode tampilan dari parameter URL (`mode`); default ke

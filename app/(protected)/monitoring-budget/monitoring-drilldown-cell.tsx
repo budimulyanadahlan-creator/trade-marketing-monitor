@@ -12,11 +12,10 @@ import { cn, formatDate, formatIDR } from "@/lib/utils";
 import type {
   DrilldownCampaignItem,
   DrilldownInvoiceItem,
+  MonitoringDrilldown,
 } from "@/lib/monitoring-budget";
 
-export type MonitoringDrilldown =
-  | { mode: "komitmen"; data: Record<string, DrilldownCampaignItem[]> }
-  | { mode: "realisasi"; data: Record<string, DrilldownInvoiceItem[]> };
+export type { MonitoringDrilldown };
 
 function KomitmenList({ items }: { items: DrilldownCampaignItem[] }) {
   return (

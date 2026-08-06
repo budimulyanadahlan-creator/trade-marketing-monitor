@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import Link from "next/link";
+import { Sheet } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -124,6 +126,7 @@ export function MonitoringTable({
   periodSelector,
   modeToggle,
   drilldown,
+  exportHref,
 }: {
   aggregate: MonitoringAggregate;
   mode: MonitoringMode;
@@ -131,6 +134,7 @@ export function MonitoringTable({
   periodSelector: ReactNode;
   modeToggle: ReactNode;
   drilldown: MonitoringDrilldown;
+  exportHref: string;
 }) {
   const { fiscalYear, quarter, monthLabels, tpRows, cpRows, uncategorized } =
     aggregate;
@@ -162,6 +166,13 @@ export function MonitoringTable({
         <div className="flex flex-wrap items-start gap-3">
           {modeToggle}
           {periodSelector}
+          <Link
+            href={exportHref}
+            className="flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm font-medium text-emerald-400 hover:bg-emerald-500/20 transition-colors"
+          >
+            <Sheet className="h-4 w-4" />
+            Export Excel
+          </Link>
         </div>
       </div>
 
