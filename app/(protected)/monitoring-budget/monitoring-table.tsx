@@ -11,6 +11,7 @@ import { cn, formatIDR } from "@/lib/utils";
 import type {
   MissingStartDateSummary,
   MonitoringAggregate,
+  MonitoringMode,
   MonitoringRow,
   MonitoringTotals,
 } from "@/lib/monitoring-budget";
@@ -98,18 +99,30 @@ function TotalsRow({
 
 export function MonitoringTable({
   aggregate,
+  mode,
   missingStartDate,
   periodSelector,
+  modeToggle,
 }: {
   aggregate: MonitoringAggregate;
+  mode: MonitoringMode;
   missingStartDate: MissingStartDateSummary;
   periodSelector: ReactNode;
+  modeToggle: ReactNode;
 }) {
   const { fiscalYear, quarter, monthLabels, tpRows, cpRows, uncategorized } =
     aggregate;
   const periodLabel = `Q${quarter} FY${fiscalYear} • ${monthLabels[0]} – ${monthLabels[2]}`;
   const isEmpty =
     tpRows.length === 0 && cpRows.length === 0 && uncategorized === null;
+  const modeLabel =
+    mode === "realisasi"
+      ? "Mode Realisasi (invoice)"
+      : "Mode Komitmen (SKP disetujui)";
+  const emptyStateLabel =
+    mode === "realisasi"
+      ? "Belum ada budget maupun realisasi invoice di kuartal ini."
+      : "Belum ada budget maupun SKP komitmen di kuartal ini.";
 
   return (
     <div className="space-y-5">
@@ -121,13 +134,16 @@ export function MonitoringTable({
           </h1>
           <p className="text-slate-400 text-sm">
             {periodLabel}
-            <span className="text-slate-600"> • Mode Komitmen (SKP disetujui)</span>
+            <span className="text-slate-600"> • {modeLabel}</span>
           </p>
         </div>
-        {periodSelector}
+        <div className="flex flex-wrap items-start gap-3">
+          {modeToggle}
+          {periodSelector}
+        </div>
       </div>
 
-      {missingStartDate.count > 0 && (
+      {mode === "komitmen" && missingStartDate.count > 0 && (
         <div className="rounded-md border border-amber-500/20 bg-amber-500/8 px-4 py-2.5 text-sm text-amber-300">
           {missingStartDate.count} SKP komitmen senilai{" "}
           {formatIDR(missingStartDate.total)} tidak punya tanggal mulai
@@ -170,7 +186,7 @@ export function MonitoringTable({
                     colSpan={7}
                     className="text-center text-slate-500 py-12"
                   >
-                    Belum ada budget maupun SKP komitmen di kuartal ini.
+                    {emptyStateLabel}
                   </TableCell>
                 </TableRow>
               ) : (

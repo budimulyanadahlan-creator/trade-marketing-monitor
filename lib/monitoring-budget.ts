@@ -148,23 +148,20 @@ function addRow(acc: MonitoringTotals, row: MonitoringRow): void {
   acc.variance = acc.budget - acc.total;
 }
 
-export function aggregateMonitoringBudget({
+function buildAggregateFromSpending({
   fiscalYear,
   quarter,
   categories,
   budgets,
-  campaigns,
+  spendingByCategory,
 }: {
   fiscalYear: number;
   quarter: number;
   categories: MonitoringCategory[];
   budgets: { promotion_category_id: string; total_amount: number }[];
-  campaigns: MonitoringCampaign[];
+  spendingByCategory: Map<string, [number, number, number]>;
 }): MonitoringAggregate {
   const quarterMonths = getQuarterMonths(fiscalYear, quarter);
-  const monthKeys = quarterMonths.map(
-    (m) => `${m.year}-${String(m.month).padStart(2, "0")}`
-  );
 
   const budgetByCategory = new Map<string, number>();
   for (const b of budgets) {
@@ -172,19 +169,6 @@ export function aggregateMonitoringBudget({
       b.promotion_category_id,
       (budgetByCategory.get(b.promotion_category_id) ?? 0) + b.total_amount
     );
-  }
-
-  // key kategori → [3 bucket bulan]; "" untuk tanpa kategori
-  const spendingByCategory = new Map<string, [number, number, number]>();
-  for (const c of campaigns) {
-    if (!MONITORING_COMMITTED_STATUSES.includes(c.status)) continue;
-    if (!c.start_date) continue;
-    const monthIndex = monthKeys.indexOf(c.start_date.slice(0, 7));
-    if (monthIndex === -1) continue;
-    const key = c.promotion_category_id ?? "";
-    const buckets = spendingByCategory.get(key) ?? [0, 0, 0];
-    buckets[monthIndex] += c.requested_budget ?? 0;
-    spendingByCategory.set(key, buckets);
   }
 
   function buildRow(cat: MonitoringCategory): MonitoringRow {
@@ -256,4 +240,103 @@ export function aggregateMonitoringBudget({
     totalCP,
     grandTotal,
   };
+}
+
+export function aggregateMonitoringBudget({
+  fiscalYear,
+  quarter,
+  categories,
+  budgets,
+  campaigns,
+}: {
+  fiscalYear: number;
+  quarter: number;
+  categories: MonitoringCategory[];
+  budgets: { promotion_category_id: string; total_amount: number }[];
+  campaigns: MonitoringCampaign[];
+}): MonitoringAggregate {
+  const quarterMonths = getQuarterMonths(fiscalYear, quarter);
+  const monthKeys = quarterMonths.map(
+    (m) => `${m.year}-${String(m.month).padStart(2, "0")}`
+  );
+
+  // key kategori → [3 bucket bulan]; "" untuk tanpa kategori
+  const spendingByCategory = new Map<string, [number, number, number]>();
+  for (const c of campaigns) {
+    if (!MONITORING_COMMITTED_STATUSES.includes(c.status)) continue;
+    if (!c.start_date) continue;
+    const monthIndex = monthKeys.indexOf(c.start_date.slice(0, 7));
+    if (monthIndex === -1) continue;
+    const key = c.promotion_category_id ?? "";
+    const buckets = spendingByCategory.get(key) ?? [0, 0, 0];
+    buckets[monthIndex] += c.requested_budget ?? 0;
+    spendingByCategory.set(key, buckets);
+  }
+
+  return buildAggregateFromSpending({
+    fiscalYear,
+    quarter,
+    categories,
+    budgets,
+    spendingByCategory,
+  });
+}
+
+export type MonitoringRealization = {
+  promotion_category_id: string | null;
+  amount: number | null;
+  realization_date: string;
+  // status SKP induk — dipakai untuk mengecualikan realisasi milik SKP cancelled
+  campaign_status: CampaignStatus;
+};
+
+// Mode Realisasi: jumlah nilai invoice realisasi, bucket bulan dari
+// realization_date. Realisasi milik SKP cancelled dikecualikan, konsisten
+// dengan mode Komitmen. Struktur hasil (baris, subtotal, Tanpa Kategori)
+// identik dengan aggregateMonitoringBudget — hanya sumber angka spending
+// yang berbeda.
+export function aggregateMonitoringBudgetRealisasi({
+  fiscalYear,
+  quarter,
+  categories,
+  budgets,
+  realizations,
+}: {
+  fiscalYear: number;
+  quarter: number;
+  categories: MonitoringCategory[];
+  budgets: { promotion_category_id: string; total_amount: number }[];
+  realizations: MonitoringRealization[];
+}): MonitoringAggregate {
+  const quarterMonths = getQuarterMonths(fiscalYear, quarter);
+  const monthKeys = quarterMonths.map(
+    (m) => `${m.year}-${String(m.month).padStart(2, "0")}`
+  );
+
+  const spendingByCategory = new Map<string, [number, number, number]>();
+  for (const r of realizations) {
+    if (r.campaign_status === "cancelled") continue;
+    const monthIndex = monthKeys.indexOf(r.realization_date.slice(0, 7));
+    if (monthIndex === -1) continue;
+    const key = r.promotion_category_id ?? "";
+    const buckets = spendingByCategory.get(key) ?? [0, 0, 0];
+    buckets[monthIndex] += r.amount ?? 0;
+    spendingByCategory.set(key, buckets);
+  }
+
+  return buildAggregateFromSpending({
+    fiscalYear,
+    quarter,
+    categories,
+    budgets,
+    spendingByCategory,
+  });
+}
+
+export type MonitoringMode = "komitmen" | "realisasi";
+
+// Menentukan mode tampilan dari parameter URL (`mode`); default ke
+// Komitmen jika kosong atau nilainya tidak dikenal.
+export function resolveMonitoringMode(modeParam: string | undefined): MonitoringMode {
+  return modeParam === "realisasi" ? "realisasi" : "komitmen";
 }

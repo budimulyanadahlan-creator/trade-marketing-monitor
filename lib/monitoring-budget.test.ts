@@ -4,9 +4,12 @@ import {
   getQuarterMonths,
   getQuarterDateRange,
   aggregateMonitoringBudget,
+  aggregateMonitoringBudgetRealisasi,
   resolveFiscalPeriod,
+  resolveMonitoringMode,
   summarizeMissingStartDate,
   type MonitoringCampaign,
+  type MonitoringRealization,
 } from "./monitoring-budget";
 import type { CampaignStatus } from "@/types/database";
 
@@ -224,5 +227,78 @@ describe("summarizeMissingStartDate", () => {
   it("mengembalikan nol jika semua SKP komitmen punya start_date", () => {
     const result = summarizeMissingStartDate([campaign("tp1", 100, "2026-07-01", "approved")]);
     expect(result).toEqual({ count: 0, total: 0 });
+  });
+});
+
+function realization(
+  categoryId: string | null,
+  amount: number,
+  realizationDate: string,
+  campaignStatus: CampaignStatus = "paid"
+): MonitoringRealization {
+  return {
+    promotion_category_id: categoryId,
+    amount,
+    realization_date: realizationDate,
+    campaign_status: campaignStatus,
+  };
+}
+
+describe("aggregateMonitoringBudgetRealisasi", () => {
+  it("menjumlahkan nilai invoice ke bucket bulan realization_date, mengecualikan SKP cancelled", () => {
+    const result = aggregateMonitoringBudgetRealisasi({
+      fiscalYear: 2026,
+      quarter: 2,
+      categories: CATEGORIES,
+      budgets: [{ promotion_category_id: "tp1", total_amount: 1000 }],
+      realizations: [
+        realization("tp1", 100, "2026-07-05"),
+        realization("tp1", 200, "2026-08-10"),
+        // milik SKP cancelled tidak terhitung meski realization_date di kuartal ini
+        realization("tp1", 999, "2026-08-15", "cancelled"),
+        // di luar kuartal tidak terhitung
+        realization("tp1", 999, "2026-06-30"),
+      ],
+    });
+
+    expect(result.tpRows).toHaveLength(1);
+    const row = result.tpRows[0];
+    expect(row.accountCode).toBe("TP1");
+    expect(row.months).toEqual([100, 200, 0]);
+    expect(row.total).toBe(300);
+    expect(row.budget).toBe(1000);
+    expect(row.variance).toBe(700);
+  });
+
+  it("struktur hasil (subtotal, tanpa kategori, budget 0) sama dengan mode komitmen", () => {
+    const result = aggregateMonitoringBudgetRealisasi({
+      fiscalYear: 2026,
+      quarter: 2,
+      categories: CATEGORIES,
+      budgets: [],
+      realizations: [
+        realization("tp3", 400, "2026-07-15"),
+        realization(null, 250, "2026-08-20"),
+      ],
+    });
+
+    expect(result.tpRows.map((r) => r.accountCode)).toEqual(["TP3"]);
+    expect(result.tpRows[0].budget).toBe(0);
+    expect(result.tpRows[0].variance).toBe(-400);
+    expect(result.uncategorized).not.toBeNull();
+    expect(result.uncategorized!.months).toEqual([0, 250, 0]);
+    expect(result.grandTotal.total).toBe(650);
+  });
+});
+
+describe("resolveMonitoringMode", () => {
+  it("mengembalikan 'realisasi' hanya jika parameter persis 'realisasi'", () => {
+    expect(resolveMonitoringMode("realisasi")).toBe("realisasi");
+  });
+
+  it("default ke 'komitmen' untuk parameter kosong atau tidak dikenal", () => {
+    expect(resolveMonitoringMode(undefined)).toBe("komitmen");
+    expect(resolveMonitoringMode("komitmen")).toBe("komitmen");
+    expect(resolveMonitoringMode("apapun")).toBe("komitmen");
   });
 });
