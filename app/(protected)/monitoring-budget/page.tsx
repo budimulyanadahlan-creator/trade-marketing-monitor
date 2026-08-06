@@ -4,6 +4,8 @@ import type { CampaignStatus, UserRole } from "@/types/database";
 import {
   aggregateMonitoringBudget,
   aggregateMonitoringBudgetRealisasi,
+  buildKomitmenDrilldown,
+  buildRealisasiDrilldown,
   getFiscalPeriod,
   getQuarterDateRange,
   resolveFiscalPeriod,
@@ -13,10 +15,13 @@ import {
   type MonitoringCampaign,
   type MonitoringCategory,
   type MonitoringRealization,
+  type DrilldownCampaignInput,
+  type DrilldownRealizationInput,
 } from "@/lib/monitoring-budget";
 import { MonitoringTable } from "./monitoring-table";
 import { MonitoringPeriodSelector } from "./monitoring-period-selector";
 import { MonitoringModeToggle } from "./monitoring-mode-toggle";
+import type { MonitoringDrilldown } from "./monitoring-drilldown-cell";
 
 const ALLOWED_ROLES: UserRole[] = ["admin", "superadmin"];
 
@@ -72,26 +77,36 @@ export default async function MonitoringBudgetPage({
 
   let aggregate;
   let missingStartDate = { count: 0, total: 0 };
+  let drilldown: MonitoringDrilldown;
 
   if (mode === "realisasi") {
     const { data } = await supabase
       .from("realizations")
-      .select("amount, realization_date, campaign:campaigns(promotion_category_id, status)")
+      .select(
+        "id, invoice_number, amount, realization_date, campaign:campaigns(name, promotion_category_id, status)"
+      )
       .gte("realization_date", start)
       .lt("realization_date", endExclusive);
 
-    const realizations: MonitoringRealization[] = (data ?? []).map((r) => {
-      const campaign = r.campaign as unknown as {
+    type RealizationRow = {
+      id: string;
+      invoice_number: string;
+      amount: number | null;
+      realization_date: string;
+      campaign: {
+        name: string;
         promotion_category_id: string | null;
         status: CampaignStatus;
       } | null;
-      return {
-        promotion_category_id: campaign?.promotion_category_id ?? null,
-        amount: r.amount,
-        realization_date: r.realization_date,
-        campaign_status: campaign?.status ?? "cancelled",
-      };
-    });
+    };
+    const rows = (data ?? []) as unknown as RealizationRow[];
+
+    const realizations: MonitoringRealization[] = rows.map((r) => ({
+      promotion_category_id: r.campaign?.promotion_category_id ?? null,
+      amount: r.amount,
+      realization_date: r.realization_date,
+      campaign_status: r.campaign?.status ?? "cancelled",
+    }));
 
     aggregate = aggregateMonitoringBudgetRealisasi({
       fiscalYear,
@@ -100,11 +115,28 @@ export default async function MonitoringBudgetPage({
       budgets,
       realizations,
     });
+
+    const drilldownRealizations: DrilldownRealizationInput[] = rows.map((r) => ({
+      id: r.id,
+      invoice_number: r.invoice_number,
+      campaign_name: r.campaign?.name ?? "—",
+      amount: r.amount,
+      realization_date: r.realization_date,
+      campaign_status: r.campaign?.status ?? "cancelled",
+      promotion_category_id: r.campaign?.promotion_category_id ?? null,
+    }));
+
+    drilldown = {
+      mode: "realisasi",
+      data: buildRealisasiDrilldown({ fiscalYear, quarter, realizations: drilldownRealizations }),
+    };
   } else {
     const [campaignsResult, missingStartDateResult] = await Promise.all([
       supabase
         .from("campaigns")
-        .select("promotion_category_id, requested_budget, status, start_date")
+        .select(
+          "id, skp_number, name, requested_budget, status, start_date, promotion_category_id, brand:brands(name)"
+        )
         .in("status", [...MONITORING_COMMITTED_STATUSES])
         .gte("start_date", start)
         .lt("start_date", endExclusive),
@@ -115,17 +147,45 @@ export default async function MonitoringBudgetPage({
         .is("start_date", null),
     ]);
 
+    type CampaignRow = {
+      id: string;
+      skp_number: string | null;
+      name: string;
+      requested_budget: number | null;
+      status: CampaignStatus;
+      start_date: string | null;
+      promotion_category_id: string | null;
+      brand: { name: string } | null;
+    };
+    const rows = (campaignsResult.data ?? []) as unknown as CampaignRow[];
+
     aggregate = aggregateMonitoringBudget({
       fiscalYear,
       quarter,
       categories,
       budgets,
-      campaigns: (campaignsResult.data ?? []) as MonitoringCampaign[],
+      campaigns: rows as MonitoringCampaign[],
     });
 
     missingStartDate = summarizeMissingStartDate(
       missingStartDateResult.data ?? []
     );
+
+    const drilldownCampaigns: DrilldownCampaignInput[] = rows.map((c) => ({
+      id: c.id,
+      skp_number: c.skp_number,
+      name: c.name,
+      brand_name: c.brand?.name ?? null,
+      requested_budget: c.requested_budget,
+      status: c.status,
+      start_date: c.start_date,
+      promotion_category_id: c.promotion_category_id,
+    }));
+
+    drilldown = {
+      mode: "komitmen",
+      data: buildKomitmenDrilldown({ fiscalYear, quarter, campaigns: drilldownCampaigns }),
+    };
   }
 
   return (
@@ -141,6 +201,7 @@ export default async function MonitoringBudgetPage({
         />
       }
       modeToggle={<MonitoringModeToggle mode={mode} />}
+      drilldown={drilldown}
     />
   );
 }

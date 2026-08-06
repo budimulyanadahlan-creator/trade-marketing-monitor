@@ -8,8 +8,13 @@ import {
   resolveFiscalPeriod,
   resolveMonitoringMode,
   summarizeMissingStartDate,
+  drilldownKey,
+  buildKomitmenDrilldown,
+  buildRealisasiDrilldown,
   type MonitoringCampaign,
   type MonitoringRealization,
+  type DrilldownCampaignInput,
+  type DrilldownRealizationInput,
 } from "./monitoring-budget";
 import type { CampaignStatus } from "@/types/database";
 
@@ -288,6 +293,104 @@ describe("aggregateMonitoringBudgetRealisasi", () => {
     expect(result.uncategorized).not.toBeNull();
     expect(result.uncategorized!.months).toEqual([0, 250, 0]);
     expect(result.grandTotal.total).toBe(650);
+  });
+});
+
+function drilldownCampaign(
+  id: string,
+  categoryId: string | null,
+  budget: number,
+  startDate: string | null,
+  status: CampaignStatus = "approved"
+): DrilldownCampaignInput {
+  return {
+    id,
+    skp_number: `SKP-${id}`,
+    name: `Campaign ${id}`,
+    brand_name: "Brand X",
+    requested_budget: budget,
+    status,
+    start_date: startDate,
+    promotion_category_id: categoryId,
+  };
+}
+
+describe("buildKomitmenDrilldown", () => {
+  it("mengelompokkan SKP komitmen per kategori+bulan, total cocok dengan sel agregat", () => {
+    const campaigns = [
+      drilldownCampaign("1", "tp1", 100, "2026-07-05"),
+      drilldownCampaign("2", "tp1", 200, "2026-07-20", "ongoing"),
+      drilldownCampaign("3", "tp1", 300, "2026-08-10", "paid"),
+      // status non-komitmen tidak ikut
+      drilldownCampaign("4", "tp1", 999, "2026-07-01", "cancelled"),
+      // di luar kuartal tidak ikut
+      drilldownCampaign("5", "tp1", 999, "2026-06-30"),
+      // tanpa start_date tidak ikut
+      drilldownCampaign("6", "tp1", 999, null),
+    ];
+
+    const result = buildKomitmenDrilldown({ fiscalYear: 2026, quarter: 2, campaigns });
+
+    const julKey = drilldownKey("tp1", 0);
+    expect(result[julKey]).toHaveLength(2);
+    expect(result[julKey].map((i) => i.id)).toEqual(["1", "2"]);
+    const julTotal = result[julKey].reduce((s, i) => s + i.requestedBudget, 0);
+    expect(julTotal).toBe(300); // cocok dengan row.months[0] pada test agregasi di atas
+
+    const agsKey = drilldownKey("tp1", 1);
+    expect(result[agsKey]).toHaveLength(1);
+    expect(result[agsKey][0].skpNumber).toBe("SKP-3");
+
+    // bulan tanpa item tidak punya entry
+    expect(result[drilldownKey("tp1", 2)]).toBeUndefined();
+  });
+
+  it("mengelompokkan SKP tanpa kategori di key \"\"", () => {
+    const campaigns = [drilldownCampaign("1", null, 250, "2026-08-20")];
+    const result = buildKomitmenDrilldown({ fiscalYear: 2026, quarter: 2, campaigns });
+    expect(result[drilldownKey(null, 1)]).toHaveLength(1);
+  });
+});
+
+function drilldownRealization(
+  id: string,
+  categoryId: string | null,
+  amount: number,
+  realizationDate: string,
+  campaignStatus: CampaignStatus = "paid"
+): DrilldownRealizationInput {
+  return {
+    id,
+    invoice_number: `INV-${id}`,
+    campaign_name: `Campaign ${id}`,
+    amount,
+    realization_date: realizationDate,
+    campaign_status: campaignStatus,
+    promotion_category_id: categoryId,
+  };
+}
+
+describe("buildRealisasiDrilldown", () => {
+  it("mengelompokkan invoice per kategori+bulan, mengecualikan SKP cancelled", () => {
+    const realizations = [
+      drilldownRealization("1", "tp1", 100, "2026-07-05"),
+      drilldownRealization("2", "tp1", 200, "2026-08-10"),
+      drilldownRealization("3", "tp1", 999, "2026-08-15", "cancelled"),
+      drilldownRealization("4", "tp1", 999, "2026-06-30"),
+    ];
+
+    const result = buildRealisasiDrilldown({ fiscalYear: 2026, quarter: 2, realizations });
+
+    expect(result[drilldownKey("tp1", 0)]).toHaveLength(1);
+    expect(result[drilldownKey("tp1", 0)][0].invoiceNumber).toBe("INV-1");
+    expect(result[drilldownKey("tp1", 1)]).toHaveLength(1);
+    expect(result[drilldownKey("tp1", 1)][0].amount).toBe(200);
+  });
+
+  it("mengelompokkan invoice tanpa kategori di key \"\"", () => {
+    const realizations = [drilldownRealization("1", null, 250, "2026-08-20")];
+    const result = buildRealisasiDrilldown({ fiscalYear: 2026, quarter: 2, realizations });
+    expect(result[drilldownKey(null, 1)]).toHaveLength(1);
   });
 });
 

@@ -333,6 +333,118 @@ export function aggregateMonitoringBudgetRealisasi({
   });
 }
 
+// --- Drill-down (Fase 4): daftar item pembentuk angka satu sel bulan×kategori.
+
+// Key gabungan kategori + indeks bulan (0-2) dipakai untuk mencocokkan sel
+// tabel dengan daftar itemnya. "" untuk baris "Tanpa Kategori", konsisten
+// dengan key spendingByCategory di atas.
+export function drilldownKey(categoryId: string | null, monthIndex: number): string {
+  return `${categoryId ?? ""}:${monthIndex}`;
+}
+
+export type DrilldownCampaignInput = {
+  id: string;
+  skp_number: string | null;
+  name: string;
+  brand_name: string | null;
+  requested_budget: number | null;
+  status: CampaignStatus;
+  start_date: string | null;
+  promotion_category_id: string | null;
+};
+
+export type DrilldownCampaignItem = {
+  id: string;
+  skpNumber: string | null;
+  name: string;
+  brandName: string | null;
+  requestedBudget: number;
+  startDate: string;
+};
+
+// Mode Komitmen: mengelompokkan SKP komitmen (filter identik dengan
+// aggregateMonitoringBudget) per key kategori+bulan, untuk ditampilkan di
+// dialog drill-down saat sel diklik.
+export function buildKomitmenDrilldown({
+  fiscalYear,
+  quarter,
+  campaigns,
+}: {
+  fiscalYear: number;
+  quarter: number;
+  campaigns: DrilldownCampaignInput[];
+}): Record<string, DrilldownCampaignItem[]> {
+  const monthKeys = getQuarterMonths(fiscalYear, quarter).map(
+    (m) => `${m.year}-${pad2(m.month)}`
+  );
+  const result: Record<string, DrilldownCampaignItem[]> = {};
+  for (const c of campaigns) {
+    if (!MONITORING_COMMITTED_STATUSES.includes(c.status)) continue;
+    if (!c.start_date) continue;
+    const monthIndex = monthKeys.indexOf(c.start_date.slice(0, 7));
+    if (monthIndex === -1) continue;
+    const key = drilldownKey(c.promotion_category_id, monthIndex);
+    (result[key] ??= []).push({
+      id: c.id,
+      skpNumber: c.skp_number,
+      name: c.name,
+      brandName: c.brand_name,
+      requestedBudget: c.requested_budget ?? 0,
+      startDate: c.start_date,
+    });
+  }
+  return result;
+}
+
+export type DrilldownRealizationInput = {
+  id: string;
+  invoice_number: string;
+  campaign_name: string;
+  amount: number | null;
+  realization_date: string;
+  campaign_status: CampaignStatus;
+  promotion_category_id: string | null;
+};
+
+export type DrilldownInvoiceItem = {
+  id: string;
+  invoiceNumber: string;
+  campaignName: string;
+  amount: number;
+  realizationDate: string;
+};
+
+// Mode Realisasi: mengelompokkan invoice realisasi (filter identik dengan
+// aggregateMonitoringBudgetRealisasi) per key kategori+bulan.
+export function buildRealisasiDrilldown({
+  fiscalYear,
+  quarter,
+  realizations,
+}: {
+  fiscalYear: number;
+  quarter: number;
+  realizations: DrilldownRealizationInput[];
+}): Record<string, DrilldownInvoiceItem[]> {
+  const monthKeys = getQuarterMonths(fiscalYear, quarter).map(
+    (m) => `${m.year}-${pad2(m.month)}`
+  );
+  const result: Record<string, DrilldownInvoiceItem[]> = {};
+  for (const r of realizations) {
+    if (r.campaign_status === "cancelled") continue;
+    const monthIndex = monthKeys.indexOf(r.realization_date.slice(0, 7));
+    if (monthIndex === -1) continue;
+    const key = drilldownKey(r.promotion_category_id, monthIndex);
+    (result[key] ??= []).push({
+      id: r.id,
+      invoiceNumber: r.invoice_number,
+      campaignName: r.campaign_name,
+      amount: r.amount ?? 0,
+      realizationDate: r.realization_date,
+    });
+  }
+  return result;
+}
+
 export type MonitoringMode = "komitmen" | "realisasi";
 
 // Menentukan mode tampilan dari parameter URL (`mode`); default ke

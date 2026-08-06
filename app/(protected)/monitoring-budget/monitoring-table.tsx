@@ -8,6 +8,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn, formatIDR } from "@/lib/utils";
+import { drilldownKey } from "@/lib/monitoring-budget";
 import type {
   MissingStartDateSummary,
   MonitoringAggregate,
@@ -15,6 +16,10 @@ import type {
   MonitoringRow,
   MonitoringTotals,
 } from "@/lib/monitoring-budget";
+import {
+  MonitoringDrilldownCell,
+  type MonitoringDrilldown,
+} from "./monitoring-drilldown-cell";
 
 function VarianceCell({ value }: { value: number }) {
   return (
@@ -29,7 +34,16 @@ function VarianceCell({ value }: { value: number }) {
   );
 }
 
-function CategoryRow({ row }: { row: MonitoringRow }) {
+function CategoryRow({
+  row,
+  monthLabels,
+  drilldown,
+}: {
+  row: MonitoringRow;
+  monthLabels: [string, string, string];
+  drilldown: MonitoringDrilldown;
+}) {
+  const categoryLabel = row.accountCode ? `${row.accountCode} ${row.name}` : row.name;
   return (
     <TableRow className="border-white/6 hover:bg-white/3 transition-colors">
       <TableCell className="text-slate-200 whitespace-nowrap">
@@ -48,8 +62,14 @@ function CategoryRow({ row }: { row: MonitoringRow }) {
         {formatIDR(row.budget)}
       </TableCell>
       {row.months.map((v, i) => (
-        <TableCell key={i} className="text-right text-slate-300 whitespace-nowrap">
-          {formatIDR(v)}
+        <TableCell key={i} className="text-right p-0">
+          <MonitoringDrilldownCell
+            value={v}
+            categoryLabel={categoryLabel}
+            monthLabel={monthLabels[i]}
+            drilldown={drilldown}
+            itemsKey={drilldownKey(row.categoryId, i)}
+          />
         </TableCell>
       ))}
       <TableCell className="text-right text-slate-200 font-medium whitespace-nowrap">
@@ -103,12 +123,14 @@ export function MonitoringTable({
   missingStartDate,
   periodSelector,
   modeToggle,
+  drilldown,
 }: {
   aggregate: MonitoringAggregate;
   mode: MonitoringMode;
   missingStartDate: MissingStartDateSummary;
   periodSelector: ReactNode;
   modeToggle: ReactNode;
+  drilldown: MonitoringDrilldown;
 }) {
   const { fiscalYear, quarter, monthLabels, tpRows, cpRows, uncategorized } =
     aggregate;
@@ -192,14 +214,30 @@ export function MonitoringTable({
               ) : (
                 <>
                   {tpRows.map((row) => (
-                    <CategoryRow key={row.categoryId} row={row} />
+                    <CategoryRow
+                      key={row.categoryId}
+                      row={row}
+                      monthLabels={monthLabels}
+                      drilldown={drilldown}
+                    />
                   ))}
                   <TotalsRow label="Total TP" totals={aggregate.totalTP} />
                   {cpRows.map((row) => (
-                    <CategoryRow key={row.categoryId} row={row} />
+                    <CategoryRow
+                      key={row.categoryId}
+                      row={row}
+                      monthLabels={monthLabels}
+                      drilldown={drilldown}
+                    />
                   ))}
                   <TotalsRow label="Total CP" totals={aggregate.totalCP} />
-                  {uncategorized && <CategoryRow row={uncategorized} />}
+                  {uncategorized && (
+                    <CategoryRow
+                      row={uncategorized}
+                      monthLabels={monthLabels}
+                      drilldown={drilldown}
+                    />
+                  )}
                   <TotalsRow
                     label="Total TP CP"
                     totals={aggregate.grandTotal}
