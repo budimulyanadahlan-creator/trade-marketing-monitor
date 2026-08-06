@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import {
   Table,
   TableBody,
@@ -8,6 +9,7 @@ import {
 } from "@/components/ui/table";
 import { cn, formatIDR } from "@/lib/utils";
 import type {
+  MissingStartDateSummary,
   MonitoringAggregate,
   MonitoringRow,
   MonitoringTotals,
@@ -96,8 +98,12 @@ function TotalsRow({
 
 export function MonitoringTable({
   aggregate,
+  missingStartDate,
+  periodSelector,
 }: {
   aggregate: MonitoringAggregate;
+  missingStartDate: MissingStartDateSummary;
+  periodSelector: ReactNode;
 }) {
   const { fiscalYear, quarter, monthLabels, tpRows, cpRows, uncategorized } =
     aggregate;
@@ -108,15 +114,26 @@ export function MonitoringTable({
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-slate-100 mb-1">
-          Monitoring Budget
-        </h1>
-        <p className="text-slate-400 text-sm">
-          {periodLabel}
-          <span className="text-slate-600"> • Mode Komitmen (SKP disetujui)</span>
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-100 mb-1">
+            Monitoring Budget
+          </h1>
+          <p className="text-slate-400 text-sm">
+            {periodLabel}
+            <span className="text-slate-600"> • Mode Komitmen (SKP disetujui)</span>
+          </p>
+        </div>
+        {periodSelector}
       </div>
+
+      {missingStartDate.count > 0 && (
+        <div className="rounded-md border border-amber-500/20 bg-amber-500/8 px-4 py-2.5 text-sm text-amber-300">
+          {missingStartDate.count} SKP komitmen senilai{" "}
+          {formatIDR(missingStartDate.total)} tidak punya tanggal mulai
+          program, sehingga tidak masuk tabel di kuartal manapun.
+        </div>
+      )}
 
       {/* Table */}
       <div className="rounded-lg border border-white/8 bg-white/3 overflow-hidden">

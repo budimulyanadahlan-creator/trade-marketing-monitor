@@ -4,6 +4,8 @@ import {
   getQuarterMonths,
   getQuarterDateRange,
   aggregateMonitoringBudget,
+  resolveFiscalPeriod,
+  summarizeMissingStartDate,
   type MonitoringCampaign,
 } from "./monitoring-budget";
 import type { CampaignStatus } from "@/types/database";
@@ -182,5 +184,45 @@ describe("aggregateMonitoringBudget", () => {
       campaigns: [campaign(null, 999, "2026-07-01", "cancelled")],
     });
     expect(result.uncategorized).toBeNull();
+  });
+});
+
+describe("resolveFiscalPeriod", () => {
+  it("memakai parameter fy/q dari URL jika valid", () => {
+    expect(resolveFiscalPeriod("2025", "3")).toEqual({ fiscalYear: 2025, quarter: 3 });
+  });
+
+  it("fallback ke kuartal fiskal berjalan jika parameter kosong", () => {
+    const now = new Date(2026, 7, 6); // Agustus 2026 → FY2026 Q2
+    expect(resolveFiscalPeriod(undefined, undefined, now)).toEqual({
+      fiscalYear: 2026,
+      quarter: 2,
+    });
+  });
+
+  it("fallback ke kuartal fiskal berjalan jika parameter tidak valid", () => {
+    const now = new Date(2026, 7, 6);
+    expect(resolveFiscalPeriod("abc", "9", now)).toEqual({ fiscalYear: 2026, quarter: 2 });
+    expect(resolveFiscalPeriod("2025", "0", now)).toEqual({ fiscalYear: 2026, quarter: 2 });
+    expect(resolveFiscalPeriod("2025", undefined, now)).toEqual({ fiscalYear: 2026, quarter: 2 });
+  });
+});
+
+describe("summarizeMissingStartDate", () => {
+  it("menjumlahkan jumlah dan nilai SKP komitmen tanpa start_date", () => {
+    const result = summarizeMissingStartDate([
+      campaign("tp1", 100, "", "approved"),
+      { promotion_category_id: "tp1", requested_budget: 200, status: "ongoing", start_date: null },
+      // punya start_date → tidak terhitung
+      campaign("tp1", 300, "2026-07-01", "approved"),
+      // status non-komitmen tanpa start_date → tidak terhitung
+      { promotion_category_id: "tp1", requested_budget: 999, status: "draft", start_date: null },
+    ]);
+    expect(result).toEqual({ count: 2, total: 300 });
+  });
+
+  it("mengembalikan nol jika semua SKP komitmen punya start_date", () => {
+    const result = summarizeMissingStartDate([campaign("tp1", 100, "2026-07-01", "approved")]);
+    expect(result).toEqual({ count: 0, total: 0 });
   });
 });

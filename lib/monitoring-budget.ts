@@ -19,6 +19,21 @@ const MONTH_NAMES_ID = [
   "Juli", "Agustus", "September", "Oktober", "November", "Desember",
 ];
 
+// Menentukan periode fiskal dari parameter URL (`fy`, `q`); fallback ke
+// kuartal fiskal berjalan jika parameter kosong atau tidak valid.
+export function resolveFiscalPeriod(
+  fyParam: string | undefined,
+  qParam: string | undefined,
+  now: Date = new Date()
+): FiscalPeriod {
+  const fy = fyParam ? Number(fyParam) : NaN;
+  const q = qParam ? Number(qParam) : NaN;
+  if (Number.isInteger(fy) && Number.isInteger(q) && q >= 1 && q <= 4) {
+    return { fiscalYear: fy, quarter: q };
+  }
+  return getFiscalPeriod(now);
+}
+
 export type QuarterMonth = { year: number; month: number; label: string };
 
 export function getQuarterMonths(fiscalYear: number, quarter: number): QuarterMonth[] {
@@ -90,6 +105,25 @@ export type MonitoringTotals = {
   total: number;
   variance: number;
 };
+
+export type MissingStartDateSummary = { count: number; total: number };
+
+// SKP berstatus komitmen tanpa start_date tidak bisa dipetakan ke
+// kuartal/bulan manapun — dikeluarkan dari tabel, tapi jumlah dan nilainya
+// ditampilkan sebagai catatan agar tidak hilang diam-diam.
+export function summarizeMissingStartDate(
+  campaigns: Pick<MonitoringCampaign, "status" | "requested_budget" | "start_date">[]
+): MissingStartDateSummary {
+  let count = 0;
+  let total = 0;
+  for (const c of campaigns) {
+    if (!MONITORING_COMMITTED_STATUSES.includes(c.status)) continue;
+    if (c.start_date) continue;
+    count++;
+    total += c.requested_budget ?? 0;
+  }
+  return { count, total };
+}
 
 export type MonitoringAggregate = {
   fiscalYear: number;
