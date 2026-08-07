@@ -30,7 +30,11 @@ describe("sendSkpPendingDigestEmail", () => {
   beforeEach(() => {
     mockSend.mockReset();
     mockSend.mockResolvedValue({ data: { id: "email-1" }, error: null });
-    process.env = { ...originalEnv, RESEND_API_KEY: "re_test_key" };
+    process.env = {
+      ...originalEnv,
+      RESEND_API_KEY: "re_test_key",
+      SKP_EMAIL_ENABLED: "true",
+    };
   });
 
   afterEach(() => {
@@ -44,6 +48,18 @@ describe("sendSkpPendingDigestEmail", () => {
 
   it("does not send when RESEND_API_KEY is not set", async () => {
     delete process.env.RESEND_API_KEY;
+    await sendSkpPendingDigestEmail({ to: recipients, pendingItems });
+    expect(mockSend).not.toHaveBeenCalled();
+  });
+
+  it("does not send when SKP_EMAIL_ENABLED is not set, even with a valid RESEND_API_KEY", async () => {
+    delete process.env.SKP_EMAIL_ENABLED;
+    await sendSkpPendingDigestEmail({ to: recipients, pendingItems });
+    expect(mockSend).not.toHaveBeenCalled();
+  });
+
+  it("does not send when SKP_EMAIL_ENABLED is set to a non-true value", async () => {
+    process.env.SKP_EMAIL_ENABLED = "false";
     await sendSkpPendingDigestEmail({ to: recipients, pendingItems });
     expect(mockSend).not.toHaveBeenCalled();
   });

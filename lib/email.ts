@@ -13,6 +13,13 @@ export interface SkpSubmittedEmailOptions {
 }
 
 export async function sendSkpSubmittedEmail(opts: SkpSubmittedEmailOptions) {
+  if (process.env.SKP_EMAIL_ENABLED !== "true") {
+    if (process.env.NODE_ENV === "development") {
+      console.warn("[Email] SKP_EMAIL_ENABLED is not \"true\" — skipping SKP submitted email");
+    }
+    return;
+  }
+
   if (!process.env.RESEND_API_KEY) {
     if (process.env.NODE_ENV === "development") {
       console.warn("[Email] RESEND_API_KEY not set — skipping email notification");
@@ -59,6 +66,13 @@ export interface SkpPendingDigestEmailOptions {
 }
 
 export async function sendSkpPendingDigestEmail(opts: SkpPendingDigestEmailOptions) {
+  if (process.env.SKP_EMAIL_ENABLED !== "true") {
+    if (process.env.NODE_ENV === "development") {
+      console.warn("[Email] SKP_EMAIL_ENABLED is not \"true\" — skipping SKP pending digest email");
+    }
+    return;
+  }
+
   if (!process.env.RESEND_API_KEY) {
     if (process.env.NODE_ENV === "development") {
       console.warn("[Email] RESEND_API_KEY not set — skipping digest notification");
