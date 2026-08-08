@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useState, useTransition } from "react";
+import { useActionState, useEffect, useMemo, useState, useTransition } from "react";
 import { saveChannelAction, toggleChannelActiveAction, deleteChannelAction } from "@/app/actions/master-data";
 import {
   Table,
@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchInput } from "@/components/ui/search-input";
 import {
   Dialog,
   DialogContent,
@@ -24,6 +25,7 @@ import {
 } from "@/components/ui/dialog";
 import { AlertCircle, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { filterBySearch } from "@/lib/search";
 import type { ChannelRow } from "@/types/database";
 
 function ChannelDialog({
@@ -179,19 +181,33 @@ function DeleteButton({ id, name }: { id: string; name: string }) {
 }
 
 export function ChannelsTable({ channels }: { channels: ChannelRow[] }) {
+  const [query, setQuery] = useState("");
+  const filteredChannels = useMemo(
+    () => filterBySearch(channels, query, (c) => [c.name]),
+    [channels, query]
+  );
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-slate-400">{channels.length} channel terdaftar</p>
-        <ChannelDialog
-          channel={null}
-          trigger={
-            <Button size="sm">
-              <Plus className="h-4 w-4" />
-              Tambah Channel
-            </Button>
-          }
-        />
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <p className="text-sm text-slate-400">{filteredChannels.length} channel terdaftar</p>
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          <SearchInput
+            value={query}
+            onChange={setQuery}
+            placeholder="Cari nama channel..."
+            className="w-64"
+          />
+          <ChannelDialog
+            channel={null}
+            trigger={
+              <Button size="sm">
+                <Plus className="h-4 w-4" />
+                Tambah Channel
+              </Button>
+            }
+          />
+        </div>
       </div>
 
       <div className="rounded-xl border border-white/8 bg-white/2 overflow-hidden">
@@ -204,8 +220,8 @@ export function ChannelsTable({ channels }: { channels: ChannelRow[] }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {channels.length > 0 ? (
-              channels.map((channel) => (
+            {filteredChannels.length > 0 ? (
+              filteredChannels.map((channel) => (
                 <TableRow key={channel.id}>
                   <TableCell className="font-medium">{channel.name}</TableCell>
                   <TableCell>
@@ -233,7 +249,11 @@ export function ChannelsTable({ channels }: { channels: ChannelRow[] }) {
             ) : (
               <TableRow>
                 <TableCell colSpan={3} className="text-center py-12 text-slate-500">
-                  Belum ada channel.
+                  {query.trim() ? (
+                    <>Tidak ada hasil untuk &ldquo;{query.trim()}&rdquo;</>
+                  ) : (
+                    "Belum ada channel."
+                  )}
                 </TableCell>
               </TableRow>
             )}

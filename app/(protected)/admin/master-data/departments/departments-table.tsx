@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useState, useTransition } from "react";
+import { useActionState, useEffect, useMemo, useState, useTransition } from "react";
 import {
   saveDepartmentAction,
   deleteDepartmentAction,
@@ -16,6 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchInput } from "@/components/ui/search-input";
 import {
   Dialog,
   DialogContent,
@@ -26,6 +27,7 @@ import {
 } from "@/components/ui/dialog";
 import { AlertCircle, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { filterBySearch } from "@/lib/search";
 import type { DepartmentRow } from "@/types/database";
 
 function DepartmentDialog({
@@ -169,21 +171,35 @@ export function DepartmentsTable({
 }: {
   departments: DepartmentRow[];
 }) {
+  const [query, setQuery] = useState("");
+  const filteredDepartments = useMemo(
+    () => filterBySearch(departments, query, (d) => [d.name]),
+    [departments, query]
+  );
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-sm text-slate-400">
-          {departments.length} departemen terdaftar
+          {filteredDepartments.length} departemen terdaftar
         </p>
-        <DepartmentDialog
-          department={null}
-          trigger={
-            <Button size="sm">
-              <Plus className="h-4 w-4" />
-              Tambah Departemen
-            </Button>
-          }
-        />
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          <SearchInput
+            value={query}
+            onChange={setQuery}
+            placeholder="Cari nama departemen..."
+            className="w-64"
+          />
+          <DepartmentDialog
+            department={null}
+            trigger={
+              <Button size="sm">
+                <Plus className="h-4 w-4" />
+                Tambah Departemen
+              </Button>
+            }
+          />
+        </div>
       </div>
 
       <div className="rounded-xl border border-white/8 bg-white/2 overflow-hidden">
@@ -195,8 +211,8 @@ export function DepartmentsTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {departments.length > 0 ? (
-              departments.map((dept) => (
+            {filteredDepartments.length > 0 ? (
+              filteredDepartments.map((dept) => (
                 <TableRow key={dept.id}>
                   <TableCell className="font-medium">{dept.name}</TableCell>
                   <TableCell className="text-right">
@@ -221,7 +237,11 @@ export function DepartmentsTable({
                   colSpan={2}
                   className="text-center py-12 text-slate-500"
                 >
-                  Belum ada departemen. Tambah departemen pertama Anda.
+                  {query.trim() ? (
+                    <>Tidak ada hasil untuk &ldquo;{query.trim()}&rdquo;</>
+                  ) : (
+                    "Belum ada departemen. Tambah departemen pertama Anda."
+                  )}
                 </TableCell>
               </TableRow>
             )}

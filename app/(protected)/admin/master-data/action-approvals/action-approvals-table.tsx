@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useActionState, useEffect, useState, useTransition } from "react";
+import { Fragment, useActionState, useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { saveActionApprovalAction, deleteActionApprovalAction } from "@/app/actions/action-approvals";
 import {
@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
+import { SearchInput } from "@/components/ui/search-input";
 import {
   Dialog,
   DialogContent,
@@ -28,6 +29,7 @@ import { toast } from "sonner";
 import { formatDate, formatIDR } from "@/lib/utils";
 import { DatePicker } from "@/components/ui/date-picker";
 import { getStatusConfig, groupCampaignsByCommitment } from "@/lib/campaign-status";
+import { filterBySearch } from "@/lib/search";
 import type { CampaignStatus } from "@/types/database";
 
 type MasterBudgetOption = {
@@ -400,6 +402,11 @@ export function ActionApprovalsTable({
   campaignsByAA: Record<string, AACampaign[]>;
 }) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [query, setQuery] = useState("");
+  const filteredActionApprovals = useMemo(
+    () => filterBySearch(actionApprovals, query, (aa) => [aa.name]),
+    [actionApprovals, query]
+  );
 
   function toggleExpanded(id: string) {
     setExpandedIds((prev) => {
@@ -415,19 +422,27 @@ export function ActionApprovalsTable({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-slate-400">{actionApprovals.length} action approval terdaftar</p>
-        <ActionApprovalDialog
-          actionApproval={null}
-          masterBudgets={masterBudgets}
-          brands={brands}
-          trigger={
-            <Button size="sm">
-              <Plus className="h-4 w-4" />
-              Tambah Action Approval
-            </Button>
-          }
-        />
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <p className="text-sm text-slate-400">{filteredActionApprovals.length} action approval terdaftar</p>
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          <SearchInput
+            value={query}
+            onChange={setQuery}
+            placeholder="Cari nama action approval..."
+            className="w-64"
+          />
+          <ActionApprovalDialog
+            actionApproval={null}
+            masterBudgets={masterBudgets}
+            brands={brands}
+            trigger={
+              <Button size="sm">
+                <Plus className="h-4 w-4" />
+                Tambah Action Approval
+              </Button>
+            }
+          />
+        </div>
       </div>
 
       <div className="rounded-xl border border-white/8 bg-white/2 overflow-hidden">
@@ -445,8 +460,8 @@ export function ActionApprovalsTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {actionApprovals.length > 0 ? (
-              actionApprovals.map((aa) => {
+            {filteredActionApprovals.length > 0 ? (
+              filteredActionApprovals.map((aa) => {
                 const isExpanded = expandedIds.has(aa.id);
                 return (
                   <Fragment key={aa.id}>
@@ -524,7 +539,11 @@ export function ActionApprovalsTable({
                   colSpan={8}
                   className="text-center py-12 text-slate-500"
                 >
-                  Belum ada Action Approval. Tambah Action Approval pertama Anda.
+                  {query.trim() ? (
+                    <>Tidak ada hasil untuk &ldquo;{query.trim()}&rdquo;</>
+                  ) : (
+                    "Belum ada Action Approval. Tambah Action Approval pertama Anda."
+                  )}
                 </TableCell>
               </TableRow>
             )}

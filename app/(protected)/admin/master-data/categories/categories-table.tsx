@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useState, useTransition } from "react";
+import { useActionState, useEffect, useMemo, useState, useTransition } from "react";
 import {
   savePromotionCategoryAction,
   togglePromotionCategoryActiveAction,
@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
+import { SearchInput } from "@/components/ui/search-input";
 import {
   Dialog,
   DialogContent,
@@ -30,6 +31,7 @@ import {
 import { AlertCircle, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate } from "@/lib/utils";
+import { filterBySearch } from "@/lib/search";
 import type { PromotionCategoryRow } from "@/types/database";
 
 function CategoryDialog({
@@ -228,21 +230,35 @@ export function CategoriesTable({
 }: {
   categories: PromotionCategoryRow[];
 }) {
+  const [query, setQuery] = useState("");
+  const filteredCategories = useMemo(
+    () => filterBySearch(categories, query, (c) => [c.name, c.account_code]),
+    [categories, query]
+  );
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-sm text-slate-400">
-          {categories.length} kategori terdaftar
+          {filteredCategories.length} kategori terdaftar
         </p>
-        <CategoryDialog
-          category={null}
-          trigger={
-            <Button size="sm">
-              <Plus className="h-4 w-4" />
-              Tambah Kategori
-            </Button>
-          }
-        />
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          <SearchInput
+            value={query}
+            onChange={setQuery}
+            placeholder="Cari nama atau kode akun..."
+            className="w-64"
+          />
+          <CategoryDialog
+            category={null}
+            trigger={
+              <Button size="sm">
+                <Plus className="h-4 w-4" />
+                Tambah Kategori
+              </Button>
+            }
+          />
+        </div>
       </div>
 
       <div className="rounded-xl border border-white/8 bg-white/2 overflow-hidden">
@@ -258,8 +274,8 @@ export function CategoriesTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {categories.length > 0 ? (
-              categories.map((cat) => (
+            {filteredCategories.length > 0 ? (
+              filteredCategories.map((cat) => (
                 <TableRow key={cat.id}>
                   <TableCell className="font-medium">{cat.name}</TableCell>
                   <TableCell>
@@ -305,7 +321,11 @@ export function CategoriesTable({
                   colSpan={6}
                   className="text-center py-12 text-slate-500"
                 >
-                  Belum ada kategori promosi. Tambah kategori pertama Anda.
+                  {query.trim() ? (
+                    <>Tidak ada hasil untuk &ldquo;{query.trim()}&rdquo;</>
+                  ) : (
+                    "Belum ada kategori promosi. Tambah kategori pertama Anda."
+                  )}
                 </TableCell>
               </TableRow>
             )}

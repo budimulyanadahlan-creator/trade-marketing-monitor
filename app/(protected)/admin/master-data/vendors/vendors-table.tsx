@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useState, useTransition } from "react";
+import { useActionState, useEffect, useMemo, useState, useTransition } from "react";
 import { saveVendorAction, toggleVendorActiveAction, deleteVendorAction } from "@/app/actions/master-data";
 import {
   Table,
@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchInput } from "@/components/ui/search-input";
 import {
   Dialog,
   DialogContent,
@@ -25,6 +26,7 @@ import {
 import { AlertCircle, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate } from "@/lib/utils";
+import { filterBySearch } from "@/lib/search";
 import type { VendorRow } from "@/types/database";
 
 function VendorDialog({
@@ -202,19 +204,33 @@ function DeleteButton({ id, name }: { id: string; name: string }) {
 }
 
 export function VendorsTable({ vendors }: { vendors: VendorRow[] }) {
+  const [query, setQuery] = useState("");
+  const filteredVendors = useMemo(
+    () => filterBySearch(vendors, query, (v) => [v.name]),
+    [vendors, query]
+  );
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-slate-400">{vendors.length} vendor terdaftar</p>
-        <VendorDialog
-          vendor={null}
-          trigger={
-            <Button size="sm">
-              <Plus className="h-4 w-4" />
-              Tambah Vendor
-            </Button>
-          }
-        />
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <p className="text-sm text-slate-400">{filteredVendors.length} vendor terdaftar</p>
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          <SearchInput
+            value={query}
+            onChange={setQuery}
+            placeholder="Cari nama vendor..."
+            className="w-64"
+          />
+          <VendorDialog
+            vendor={null}
+            trigger={
+              <Button size="sm">
+                <Plus className="h-4 w-4" />
+                Tambah Vendor
+              </Button>
+            }
+          />
+        </div>
       </div>
 
       <div className="rounded-xl border border-white/8 bg-white/2 overflow-hidden">
@@ -230,8 +246,8 @@ export function VendorsTable({ vendors }: { vendors: VendorRow[] }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {vendors.length > 0 ? (
-              vendors.map((vendor) => (
+            {filteredVendors.length > 0 ? (
+              filteredVendors.map((vendor) => (
                 <TableRow key={vendor.id}>
                   <TableCell className="font-medium">{vendor.name}</TableCell>
                   <TableCell className="text-slate-400">
@@ -268,7 +284,11 @@ export function VendorsTable({ vendors }: { vendors: VendorRow[] }) {
             ) : (
               <TableRow>
                 <TableCell colSpan={6} className="text-center py-12 text-slate-500">
-                  Belum ada vendor. Tambah vendor pertama Anda.
+                  {query.trim() ? (
+                    <>Tidak ada hasil untuk &ldquo;{query.trim()}&rdquo;</>
+                  ) : (
+                    "Belum ada vendor. Tambah vendor pertama Anda."
+                  )}
                 </TableCell>
               </TableRow>
             )}

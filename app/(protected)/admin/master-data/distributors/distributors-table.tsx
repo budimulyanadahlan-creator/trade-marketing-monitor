@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useState, useTransition } from "react";
+import { useActionState, useEffect, useMemo, useState, useTransition } from "react";
 import {
   saveDistributorAction,
   toggleDistributorActiveAction,
@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchInput } from "@/components/ui/search-input";
 import {
   Dialog,
   DialogContent,
@@ -29,6 +30,7 @@ import {
 import { AlertCircle, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate } from "@/lib/utils";
+import { filterBySearch } from "@/lib/search";
 import type { DistributorRow } from "@/types/database";
 
 function DistributorDialog({
@@ -195,19 +197,33 @@ function DeleteButton({ id, name }: { id: string; name: string }) {
 }
 
 export function DistributorsTable({ distributors }: { distributors: DistributorRow[] }) {
+  const [query, setQuery] = useState("");
+  const filteredDistributors = useMemo(
+    () => filterBySearch(distributors, query, (d) => [d.name]),
+    [distributors, query]
+  );
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-slate-400">{distributors.length} distributor terdaftar</p>
-        <DistributorDialog
-          distributor={null}
-          trigger={
-            <Button size="sm">
-              <Plus className="h-4 w-4" />
-              Tambah Distributor
-            </Button>
-          }
-        />
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <p className="text-sm text-slate-400">{filteredDistributors.length} distributor terdaftar</p>
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          <SearchInput
+            value={query}
+            onChange={setQuery}
+            placeholder="Cari nama distributor..."
+            className="w-64"
+          />
+          <DistributorDialog
+            distributor={null}
+            trigger={
+              <Button size="sm">
+                <Plus className="h-4 w-4" />
+                Tambah Distributor
+              </Button>
+            }
+          />
+        </div>
       </div>
 
       <div className="rounded-xl border border-white/8 bg-white/2 overflow-hidden">
@@ -222,8 +238,8 @@ export function DistributorsTable({ distributors }: { distributors: DistributorR
             </TableRow>
           </TableHeader>
           <TableBody>
-            {distributors.length > 0 ? (
-              distributors.map((distributor) => (
+            {filteredDistributors.length > 0 ? (
+              filteredDistributors.map((distributor) => (
                 <TableRow key={distributor.id}>
                   <TableCell className="font-medium">{distributor.name}</TableCell>
                   <TableCell className="text-slate-400">
@@ -259,7 +275,11 @@ export function DistributorsTable({ distributors }: { distributors: DistributorR
             ) : (
               <TableRow>
                 <TableCell colSpan={5} className="text-center py-12 text-slate-500">
-                  Belum ada distributor. Tambah distributor pertama Anda.
+                  {query.trim() ? (
+                    <>Tidak ada hasil untuk &ldquo;{query.trim()}&rdquo;</>
+                  ) : (
+                    "Belum ada distributor. Tambah distributor pertama Anda."
+                  )}
                 </TableCell>
               </TableRow>
             )}
