@@ -6,6 +6,7 @@ import Link from "next/link";
 import { ChevronDown, Sheet, X } from "lucide-react";
 import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { SearchInput } from "@/components/ui/search-input";
 import {
   Table,
   TableBody,
@@ -16,6 +17,7 @@ import {
 } from "@/components/ui/table";
 import { formatIDR, formatDate } from "@/lib/utils";
 import { getStatusConfig } from "@/lib/campaign-status";
+import { filterBySearch } from "@/lib/search";
 import type { UserRole, CampaignStatus } from "@/types/database";
 import type { RekapCampaign } from "./page";
 
@@ -48,6 +50,7 @@ interface RekapFilters {
   action_approval: string;
   date_from: string;
   date_to: string;
+  q: string;
 }
 
 interface RekapClientProps {
@@ -62,7 +65,7 @@ interface RekapClientProps {
   receiptedCampaignIds?: string[];
 }
 
-const FILTER_KEYS = ["status", "brand", "region", "department", "action_approval", "date_from", "date_to"];
+const FILTER_KEYS = ["status", "brand", "region", "department", "action_approval", "date_from", "date_to", "q"];
 const PAGE_SIZE = 20;
 
 function StatusMultiSelect({
@@ -157,10 +160,11 @@ export function RekapClient({
 
   const receiptedSet = new Set(receiptedCampaignIds);
   const colSpan = isDistributor ? 15 : 20;
-  const totalPages = Math.max(1, Math.ceil(campaigns.length / PAGE_SIZE));
-  const paginated = campaigns.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const filtered = filterBySearch(campaigns, filters.q, (c) => [c.skp_number, c.name, c.store_id]);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const paginated = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
-  useEffect(() => { setCurrentPage(1); }, [campaigns.length]);
+  useEffect(() => { setCurrentPage(1); }, [filtered.length]);
 
   function update(key: string, value: string) {
     const next = new URLSearchParams(searchParams.toString());
@@ -198,8 +202,8 @@ export function RekapClient({
   if (filters.date_to) exportParams.set("date_to", filters.date_to);
   const excelHref = `/api/export/excel?${exportParams.toString()}`;
 
-  const totalBudget = campaigns.reduce((s, c) => s + c.requested_budget, 0);
-  const totalSpent = campaigns.reduce((s, c) => s + c.actual_spent, 0);
+  const totalBudget = filtered.reduce((s, c) => s + c.requested_budget, 0);
+  const totalSpent = filtered.reduce((s, c) => s + c.actual_spent, 0);
 
   const paginationControls = totalPages > 1 ? (
     <div className="flex items-center gap-1">
@@ -253,7 +257,7 @@ export function RekapClient({
         <div>
           <h1 className="text-2xl font-bold text-slate-100 mb-1">Rekap SKP</h1>
           <p className="text-slate-400 text-sm">
-            {campaigns.length} SKP ditemukan
+            {filtered.length} SKP ditemukan
             {totalPages > 1 && (
               <span className="text-slate-600"> • hal. {currentPage}/{totalPages}</span>
             )}
@@ -279,6 +283,14 @@ export function RekapClient({
           </Link>
         </div>
       </div>
+
+      {/* Search bar */}
+      <SearchInput
+        value={filters.q}
+        onChange={(v) => update("q", v)}
+        placeholder="Cari No. SKP, nama SKP, atau ID Store..."
+        className="w-full sm:max-w-md"
+      />
 
       {/* Filter bar */}
       <div className="rounded-lg border border-white/8 bg-white/3 p-4">
@@ -365,7 +377,7 @@ export function RekapClient({
       </div>
 
       {/* Summary totals */}
-      {campaigns.length > 0 && (
+      {filtered.length > 0 && (
         <div className="flex flex-wrap gap-4 text-sm text-slate-400">
           <span>
             Total Budget:{" "}
@@ -424,13 +436,17 @@ export function RekapClient({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {campaigns.length === 0 ? (
+              {filtered.length === 0 ? (
                 <TableRow>
                   <TableCell
                     colSpan={colSpan}
                     className="text-center text-slate-500 py-12"
                   >
-                    Tidak ada data SKP yang sesuai filter.
+                    {filters.q.trim() ? (
+                      <>Tidak ada hasil untuk &ldquo;{filters.q.trim()}&rdquo;</>
+                    ) : (
+                      "Tidak ada data SKP yang sesuai filter."
+                    )}
                   </TableCell>
                 </TableRow>
               ) : (

@@ -175,6 +175,7 @@ export default async function RekapPage({
         action_approval: !isDistributor ? str(params.action_approval) : "",
         date_from: dateFrom,
         date_to: dateTo,
+        q: str(params.q),
       }}
     />
   );
