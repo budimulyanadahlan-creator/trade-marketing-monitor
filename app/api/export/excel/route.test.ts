@@ -15,7 +15,7 @@ import { createClient } from "@/lib/supabase/server";
 
 function makeChain(data: unknown) {
   const chain: Record<string, unknown> = {};
-  for (const method of ["select", "order", "eq", "in", "gte", "lte"]) {
+  for (const method of ["select", "order", "eq", "in", "gte", "lte", "or"]) {
     chain[method] = vi.fn().mockReturnValue(chain);
   }
   chain.single = vi.fn().mockResolvedValue({ data });
@@ -24,25 +24,28 @@ function makeChain(data: unknown) {
   return chain;
 }
 
-function setupMocks(campaigns: unknown[]) {
+function setupMocks(campaigns: unknown[], role: string = "admin") {
   const profileChain = makeChain({
-    role: "admin",
+    role,
     department_id: null,
     region_id: null,
     is_active: true,
   });
   const campaignsChain = makeChain(campaigns);
+  const departmentsChain = makeChain([]);
 
   const mockClient = {
     auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: "user-1" } } }) },
     from: vi.fn().mockImplementation((table: string) => {
       if (table === "users") return profileChain;
       if (table === "campaigns") return campaignsChain;
+      if (table === "departments") return departmentsChain;
       return makeChain([]);
     }),
   };
 
   (createClient as ReturnType<typeof vi.fn>).mockResolvedValue(mockClient);
+  return { campaignsChain };
 }
 
 function baseCampaign(overrides: Partial<Record<string, unknown>> = {}) {
@@ -131,5 +134,51 @@ describe("GET /api/export/excel — Distributor", () => {
     const rows = await extractRows([baseCampaign()]);
 
     expect(rows[0]["Distributor"]).toBe("");
+  });
+});
+
+describe("GET /api/export/excel — search (q)", () => {
+  it("applies an ilike OR filter across skp_number, name, store_id when q is present", async () => {
+    const { campaignsChain } = setupMocks([baseCampaign()]);
+    const req = new NextRequest("http://localhost/api/export/excel?q=abc");
+
+    await GET(req);
+
+    expect(campaignsChain.or).toHaveBeenCalledWith(
+      "skp_number.ilike.%abc%,name.ilike.%abc%,store_id.ilike.%abc%"
+    );
+  });
+
+  it("does not apply an OR filter when q is empty", async () => {
+    const { campaignsChain } = setupMocks([baseCampaign()]);
+    const req = new NextRequest("http://localhost/api/export/excel");
+
+    await GET(req);
+
+    expect(campaignsChain.or).not.toHaveBeenCalled();
+  });
+
+  it("escapes PostgREST reserved characters in q", async () => {
+    const { campaignsChain } = setupMocks([baseCampaign()]);
+    const req = new NextRequest(
+      "http://localhost/api/export/excel?q=" + encodeURIComponent("a,b.c(d)")
+    );
+
+    await GET(req);
+
+    expect(campaignsChain.or).toHaveBeenCalledWith(
+      "skp_number.ilike.%a\\,b\\.c\\(d\\)%,name.ilike.%a\\,b\\.c\\(d\\)%,store_id.ilike.%a\\,b\\.c\\(d\\)%"
+    );
+  });
+
+  it("applies the same q filter for the distributor role", async () => {
+    const { campaignsChain } = setupMocks([baseCampaign()], "distributor");
+    const req = new NextRequest("http://localhost/api/export/excel?q=abc");
+
+    await GET(req);
+
+    expect(campaignsChain.or).toHaveBeenCalledWith(
+      "skp_number.ilike.%abc%,name.ilike.%abc%,store_id.ilike.%abc%"
+    );
   });
 });

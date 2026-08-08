@@ -200,6 +200,7 @@ export function RekapClient({
   if (filters.action_approval) exportParams.set("action_approval", filters.action_approval);
   if (filters.date_from) exportParams.set("date_from", filters.date_from);
   if (filters.date_to) exportParams.set("date_to", filters.date_to);
+  if (filters.q) exportParams.set("q", filters.q);
   const excelHref = `/api/export/excel?${exportParams.toString()}`;
 
   const totalBudget = filtered.reduce((s, c) => s + c.requested_budget, 0);

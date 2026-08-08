@@ -21,6 +21,12 @@ const STATUS_LABELS: Record<CampaignStatus, string> = {
   cancelled: "Dibatalkan",
 };
 
+// Escapes PostgREST filter-syntax reserved characters (`,` `.` `(` `)` `\`)
+// so a raw search string can be safely embedded in an `.or()` filter value.
+function escapeIlikeValue(value: string): string {
+  return value.replace(/[\\,.()]/g, (c) => `\\${c}`);
+}
+
 function fmtDate(s: string | null): string {
   if (!s) return "";
   return new Date(s).toLocaleDateString("id-ID", {
@@ -106,6 +112,7 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const dateFrom = searchParams.get("date_from") ?? "";
   const dateTo = searchParams.get("date_to") ?? "";
+  const q = (searchParams.get("q") ?? "").trim();
 
   let query = supabase
     .from("campaigns")
@@ -152,6 +159,13 @@ export async function GET(request: NextRequest) {
     if (actionApprovalId) query = query.eq("action_approval_id", actionApprovalId);
     if (dateFrom) query = query.gte("start_date", dateFrom);
     if (dateTo) query = query.lte("start_date", dateTo);
+  }
+
+  if (q) {
+    const escaped = escapeIlikeValue(q);
+    query = query.or(
+      `skp_number.ilike.%${escaped}%,name.ilike.%${escaped}%,store_id.ilike.%${escaped}%`
+    );
   }
 
   const { data: rawData, error } = await query;
