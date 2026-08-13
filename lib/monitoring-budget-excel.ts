@@ -44,7 +44,9 @@ const THIN_BORDER: Partial<ExcelJS.Borders> = {
 
 const REGION_COUNT = REGION_CONTRIBUTIONS.length;
 const VARIANCE_COL = 7; // Kategori, Budget, 3 bulan, Total Actual, Variance
-const COL_COUNT = VARIANCE_COL + REGION_COUNT; // + 5 kolom alokasi budget by region
+const ALOKASI_START = VARIANCE_COL + 1; // 5 kolom Alokasi Budget by Region
+const REALISASI_START = ALOKASI_START + REGION_COUNT; // 5 kolom Realisasi By Region
+const COL_COUNT = REALISASI_START + REGION_COUNT - 1;
 
 function categoryLabel(row: MonitoringRow): string {
   return row.accountCode ? `${row.accountCode} ${row.name}` : row.name;
@@ -57,6 +59,7 @@ function rowValues(row: MonitoringRow): number[] {
     row.total,
     row.variance,
     ...row.regionAllocations.map((a) => a.amount),
+    ...row.regionActuals.map((a) => a.amount),
   ];
 }
 
@@ -84,6 +87,7 @@ function writeTotalsRow(
     totals.total,
     totals.variance,
     ...totals.regionAllocations.map((a) => a.amount),
+    ...totals.regionActuals.map((a) => a.amount),
   ]);
   row.font = { bold: true };
   for (let col = 1; col <= COL_COUNT; col++) {
@@ -106,7 +110,8 @@ export function buildMonitoringBudgetWorkbook(
     { width: 16 },
     { width: 16 },
     { width: 16 },
-    ...REGION_CONTRIBUTIONS.map(() => ({ width: 20 })),
+    ...REGION_CONTRIBUTIONS.map(() => ({ width: 20 })), // Alokasi Budget by Region
+    ...REGION_CONTRIBUTIONS.map(() => ({ width: 20 })), // Realisasi By Region
   ];
 
   // Judul
@@ -139,11 +144,20 @@ export function buildMonitoringBudgetWorkbook(
   ws.mergeCells(3, 7, 4, 7); // Variance
   headerRow1.getCell(7).value = "Variance";
 
-  // Alokasi budget by region — 5 kolom setelah Variance, murni %tetap × Budget.
+  // Alokasi Budget by Region — grup horizontal 5 kolom (target, %tetap × Budget),
+  // nama region di baris bawah (tanpa %, judul grup sudah cukup jelas).
+  ws.mergeCells(3, ALOKASI_START, 3, ALOKASI_START + REGION_COUNT - 1);
+  headerRow1.getCell(ALOKASI_START).value = "Alokasi Budget by Region";
   REGION_CONTRIBUTIONS.forEach((region, i) => {
-    const col = VARIANCE_COL + 1 + i;
-    ws.mergeCells(3, col, 4, col);
-    headerRow1.getCell(col).value = `${region.name} (${Math.round(region.percentage * 100)}%)`;
+    headerRow2.getCell(ALOKASI_START + i).value = region.name;
+  });
+
+  // Realisasi By Region — grup horizontal 5 kolom setelah Alokasi (actual,
+  // requested_budget SKP per region asli).
+  ws.mergeCells(3, REALISASI_START, 3, REALISASI_START + REGION_COUNT - 1);
+  headerRow1.getCell(REALISASI_START).value = "Realisasi By Region";
+  REGION_CONTRIBUTIONS.forEach((region, i) => {
+    headerRow2.getCell(REALISASI_START + i).value = region.name;
   });
 
   aggregate.monthLabels.forEach((label, i) => {

@@ -12,9 +12,11 @@ import {
   buildKomitmenDrilldown,
   buildRealisasiDrilldown,
   allocateBudgetByRegion,
+  summarizeExcludedRegion,
   REGION_CONTRIBUTIONS,
   type MonitoringCampaign,
   type MonitoringRealization,
+  type RegionActual,
   type DrilldownCampaignInput,
   type DrilldownRealizationInput,
 } from "./monitoring-budget";
@@ -26,17 +28,27 @@ const CATEGORIES = [
   { id: "cp1", name: "Consumer Promo", type: "CP" as const, account_code: "CP1" },
 ];
 
+function zeroActuals(): RegionActual[] {
+  return REGION_CONTRIBUTIONS.map((r) => ({ name: r.name, amount: 0 }));
+}
+
+function actualsFor(overrides: Record<string, number>): RegionActual[] {
+  return REGION_CONTRIBUTIONS.map((r) => ({ name: r.name, amount: overrides[r.name] ?? 0 }));
+}
+
 function campaign(
   categoryId: string | null,
   budget: number,
   startDate: string,
-  status: CampaignStatus = "approved"
+  status: CampaignStatus = "approved",
+  regionName: string | null = null
 ): MonitoringCampaign {
   return {
     promotion_category_id: categoryId,
     requested_budget: budget,
     status,
     start_date: startDate,
+    region_name: regionName,
   };
 }
 
@@ -146,6 +158,8 @@ describe("aggregateMonitoringBudget", () => {
       // Kedua kategori TP di sini punya budget kelipatan yang membulat pas
       // (1000 & 500), jadi hasil sum-per-baris = allocateBudgetByRegion(1500).
       regionAllocations: allocateBudgetByRegion(1500),
+      // Tidak ada campaign yang region_name-nya diisi di test ini → nol semua.
+      regionActuals: zeroActuals(),
     });
     expect(result.totalCP).toEqual({
       budget: 2000,
@@ -153,6 +167,7 @@ describe("aggregateMonitoringBudget", () => {
       total: 300,
       variance: 1700,
       regionAllocations: allocateBudgetByRegion(2000),
+      regionActuals: zeroActuals(),
     });
     expect(result.grandTotal).toEqual({
       budget: 3500,
@@ -160,6 +175,7 @@ describe("aggregateMonitoringBudget", () => {
       total: 1100,
       variance: 2400,
       regionAllocations: allocateBudgetByRegion(3500),
+      regionActuals: zeroActuals(),
     });
   });
 
@@ -199,6 +215,77 @@ describe("aggregateMonitoringBudget", () => {
       campaigns: [campaign(null, 999, "2026-07-01", "cancelled")],
     });
     expect(result.uncategorized).toBeNull();
+  });
+
+  it("menjumlahkan requested_budget SKP ke regionActuals per kategori berdasarkan region_name asli, mengecualikan region di luar 5 wilayah", () => {
+    const result = aggregateMonitoringBudget({
+      fiscalYear: 2026,
+      quarter: 2,
+      categories: CATEGORIES,
+      budgets: [{ promotion_category_id: "tp1", total_amount: 1000 }],
+      campaigns: [
+        campaign("tp1", 100, "2026-07-05", "approved", "Greater Jakarta"),
+        campaign("tp1", 50, "2026-08-10", "paid", "Greater Jakarta"),
+        campaign("tp1", 200, "2026-09-01", "completed", "West Kalimantan"),
+        // "National" bukan salah satu dari 5 wilayah tetap → dikecualikan
+        campaign("tp1", 999, "2026-07-15", "approved", "National"),
+        // region kosong → dikecualikan
+        campaign("tp1", 999, "2026-07-20", "approved", null),
+      ],
+    });
+
+    const row = result.tpRows[0];
+    expect(row.regionActuals).toEqual(actualsFor({ "Greater Jakarta": 150, "West Kalimantan": 200 }));
+    // Total Actual & months tetap menghitung semua SKP komitmen di kuartal ini,
+    // termasuk yang region-nya dikecualikan dari breakdown region.
+    expect(row.total).toBe(100 + 50 + 200 + 999 + 999);
+  });
+
+  it("regionActuals baris Tanpa Kategori & subtotal konsisten dengan sum baris kategori", () => {
+    const result = aggregateMonitoringBudget({
+      fiscalYear: 2026,
+      quarter: 2,
+      categories: CATEGORIES,
+      budgets: [],
+      campaigns: [
+        campaign("tp3", 400, "2026-07-15", "approved", "East Java & Bali"),
+        campaign(null, 250, "2026-08-20", "approved", "East Java & Bali"),
+      ],
+    });
+
+    expect(result.tpRows[0].regionActuals).toEqual(actualsFor({ "East Java & Bali": 400 }));
+    expect(result.uncategorized!.regionActuals).toEqual(actualsFor({ "East Java & Bali": 250 }));
+    // grandTotal = TP + Tanpa Kategori
+    expect(result.grandTotal.regionActuals).toEqual(actualsFor({ "East Java & Bali": 650 }));
+  });
+});
+
+describe("summarizeExcludedRegion", () => {
+  it("menjumlahkan SKP komitmen dalam kuartal yang region-nya bukan salah satu dari 5 wilayah tetap", () => {
+    const result = summarizeExcludedRegion(
+      [
+        campaign("tp1", 100, "2026-07-05", "approved", "National"),
+        campaign("tp1", 200, "2026-08-05", "approved", null),
+        // masuk salah satu dari 5 wilayah → tidak terhitung
+        campaign("tp1", 300, "2026-07-01", "approved", "Greater Jakarta"),
+        // status non-komitmen → tidak terhitung meski region National
+        campaign("tp1", 999, "2026-07-01", "draft", "National"),
+        // di luar kuartal → tidak terhitung
+        campaign("tp1", 999, "2026-06-30", "approved", "National"),
+      ],
+      2026,
+      2
+    );
+    expect(result).toEqual({ count: 2, total: 300 });
+  });
+
+  it("mengembalikan nol jika semua SKP komitmen ber-region salah satu dari 5 wilayah tetap", () => {
+    const result = summarizeExcludedRegion(
+      [campaign("tp1", 100, "2026-07-01", "approved", "Greater Jakarta")],
+      2026,
+      2
+    );
+    expect(result).toEqual({ count: 0, total: 0 });
   });
 });
 
@@ -256,11 +343,11 @@ describe("summarizeMissingStartDate", () => {
   it("menjumlahkan jumlah dan nilai SKP komitmen tanpa start_date", () => {
     const result = summarizeMissingStartDate([
       campaign("tp1", 100, "", "approved"),
-      { promotion_category_id: "tp1", requested_budget: 200, status: "ongoing", start_date: null },
+      { requested_budget: 200, status: "ongoing", start_date: null },
       // punya start_date → tidak terhitung
       campaign("tp1", 300, "2026-07-01", "approved"),
       // status non-komitmen tanpa start_date → tidak terhitung
-      { promotion_category_id: "tp1", requested_budget: 999, status: "draft", start_date: null },
+      { requested_budget: 999, status: "draft", start_date: null },
     ]);
     expect(result).toEqual({ count: 2, total: 300 });
   });
@@ -300,6 +387,7 @@ describe("aggregateMonitoringBudgetRealisasi", () => {
         // di luar kuartal tidak terhitung
         realization("tp1", 999, "2026-06-30"),
       ],
+      campaigns: [],
     });
 
     expect(result.tpRows).toHaveLength(1);
@@ -321,6 +409,7 @@ describe("aggregateMonitoringBudgetRealisasi", () => {
         realization("tp3", 400, "2026-07-15"),
         realization(null, 250, "2026-08-20"),
       ],
+      campaigns: [],
     });
 
     expect(result.tpRows.map((r) => r.accountCode)).toEqual(["TP3"]);
@@ -329,6 +418,27 @@ describe("aggregateMonitoringBudgetRealisasi", () => {
     expect(result.uncategorized).not.toBeNull();
     expect(result.uncategorized!.months).toEqual([0, 250, 0]);
     expect(result.grandTotal.total).toBe(650);
+  });
+
+  it("regionActuals selalu dari requested_budget campaigns, BUKAN dari nilai invoice realizations", () => {
+    const result = aggregateMonitoringBudgetRealisasi({
+      fiscalYear: 2026,
+      quarter: 2,
+      categories: CATEGORIES,
+      budgets: [{ promotion_category_id: "tp1", total_amount: 1000 }],
+      // invoice realisasi sengaja beda nilai & bulan dari campaigns di bawah
+      realizations: [realization("tp1", 999_999, "2026-08-10")],
+      campaigns: [
+        campaign("tp1", 150, "2026-07-05", "approved", "Greater Jakarta"),
+        campaign("tp1", 200, "2026-09-01", "paid", "West Kalimantan"),
+      ],
+    });
+
+    const row = result.tpRows[0];
+    // months/total tetap dari realizations (999_999 di Agustus)
+    expect(row.months).toEqual([0, 999_999, 0]);
+    // tapi regionActuals dari requested_budget campaigns, bukan realizations
+    expect(row.regionActuals).toEqual(actualsFor({ "Greater Jakarta": 150, "West Kalimantan": 200 }));
   });
 });
 

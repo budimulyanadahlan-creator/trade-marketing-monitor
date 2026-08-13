@@ -47,7 +47,7 @@ export default async function MonitoringBudgetPage({
   );
   const mode = resolveMonitoringMode(str(params.mode));
 
-  const { aggregate, missingStartDate, drilldown } = await loadMonitoringBudgetData(supabase, {
+  const { aggregate, missingStartDate, missingRegion, drilldown } = await loadMonitoringBudgetData(supabase, {
     fiscalYear,
     quarter,
     mode,
@@ -60,6 +60,7 @@ export default async function MonitoringBudgetPage({
       aggregate={aggregate}
       mode={mode}
       missingStartDate={missingStartDate}
+      missingRegion={missingRegion}
       periodSelector={
         <MonitoringPeriodSelector
           fiscalYear={fiscalYear}

@@ -79,6 +79,9 @@ export type MonitoringCampaign = {
   requested_budget: number | null;
   status: CampaignStatus;
   start_date: string | null;
+  // Nama region asli SKP (dari campaigns.region_id → regions.name), dipakai
+  // untuk breakdown Realisasi By Region. null jika region tak ter-load/kosong.
+  region_name: string | null;
 };
 
 export type MonitoringCategory = {
@@ -124,6 +127,18 @@ function addRegionAllocations(
   for (let i = 0; i < acc.length; i++) acc[i].amount += add[i].amount;
 }
 
+const REGION_NAMES: readonly string[] = REGION_CONTRIBUTIONS.map((r) => r.name);
+
+export type RegionActual = { name: string; amount: number };
+
+function emptyRegionActuals(): RegionActual[] {
+  return REGION_CONTRIBUTIONS.map((r) => ({ name: r.name, amount: 0 }));
+}
+
+function addRegionActuals(acc: RegionActual[], add: RegionActual[]): void {
+  for (let i = 0; i < acc.length; i++) acc[i].amount += add[i].amount;
+}
+
 export type MonitoringRow = {
   categoryId: string | null; // null untuk baris "Tanpa Kategori"
   accountCode: string | null;
@@ -134,6 +149,7 @@ export type MonitoringRow = {
   total: number;
   variance: number; // budget − total
   regionAllocations: RegionAllocation[];
+  regionActuals: RegionActual[];
 };
 
 export type MonitoringTotals = {
@@ -142,6 +158,7 @@ export type MonitoringTotals = {
   total: number;
   variance: number;
   regionAllocations: RegionAllocation[];
+  regionActuals: RegionActual[];
 };
 
 export type MissingStartDateSummary = { count: number; total: number };
@@ -163,6 +180,63 @@ export function summarizeMissingStartDate(
   return { count, total };
 }
 
+export type MissingRegionSummary = { count: number; total: number };
+
+// SKP komitmen dalam kuartal ini yang region-nya bukan salah satu dari 5
+// wilayah tetap (mis. "National", region kosong, atau nama region baru yang
+// belum masuk daftar) dikecualikan dari breakdown Realisasi By Region —
+// jumlah dan nilainya ditampilkan sebagai catatan agar tidak hilang diam-diam.
+export function summarizeExcludedRegion(
+  campaigns: Pick<
+    MonitoringCampaign,
+    "status" | "requested_budget" | "start_date" | "region_name"
+  >[],
+  fiscalYear: number,
+  quarter: number
+): MissingRegionSummary {
+  const monthKeys = getQuarterMonths(fiscalYear, quarter).map(
+    (m) => `${m.year}-${pad2(m.month)}`
+  );
+  let count = 0;
+  let total = 0;
+  for (const c of campaigns) {
+    if (!MONITORING_COMMITTED_STATUSES.includes(c.status)) continue;
+    if (!c.start_date) continue;
+    if (!monthKeys.includes(c.start_date.slice(0, 7))) continue;
+    if (c.region_name && REGION_NAMES.includes(c.region_name)) continue;
+    count++;
+    total += c.requested_budget ?? 0;
+  }
+  return { count, total };
+}
+
+// Menjumlahkan requested_budget SKP komitmen ke bucket region×kategori untuk
+// Realisasi By Region — sumbernya SELALU nilai Budget di SKP (requested_budget),
+// terlepas dari mode Komitmen/Realisasi yang aktif di halaman. SKP dengan
+// region di luar 5 wilayah tetap (lihat summarizeExcludedRegion) dilewati.
+function buildRegionActualsByCategory(
+  campaigns: MonitoringCampaign[],
+  fiscalYear: number,
+  quarter: number
+): Map<string, RegionActual[]> {
+  const monthKeys = getQuarterMonths(fiscalYear, quarter).map(
+    (m) => `${m.year}-${pad2(m.month)}`
+  );
+  const map = new Map<string, RegionActual[]>();
+  for (const c of campaigns) {
+    if (!MONITORING_COMMITTED_STATUSES.includes(c.status)) continue;
+    if (!c.start_date) continue;
+    if (!monthKeys.includes(c.start_date.slice(0, 7))) continue;
+    const regionIndex = c.region_name ? REGION_NAMES.indexOf(c.region_name) : -1;
+    if (regionIndex === -1) continue;
+    const key = c.promotion_category_id ?? "";
+    const bucket = map.get(key) ?? emptyRegionActuals();
+    bucket[regionIndex].amount += c.requested_budget ?? 0;
+    map.set(key, bucket);
+  }
+  return map;
+}
+
 export type MonitoringAggregate = {
   fiscalYear: number;
   quarter: number;
@@ -176,7 +250,14 @@ export type MonitoringAggregate = {
 };
 
 function emptyTotals(): MonitoringTotals {
-  return { budget: 0, months: [0, 0, 0], total: 0, variance: 0, regionAllocations: emptyRegionAllocations() };
+  return {
+    budget: 0,
+    months: [0, 0, 0],
+    total: 0,
+    variance: 0,
+    regionAllocations: emptyRegionAllocations(),
+    regionActuals: emptyRegionActuals(),
+  };
 }
 
 function addRow(acc: MonitoringTotals, row: MonitoringRow): void {
@@ -185,6 +266,7 @@ function addRow(acc: MonitoringTotals, row: MonitoringRow): void {
   acc.total += row.total;
   acc.variance = acc.budget - acc.total;
   addRegionAllocations(acc.regionAllocations, row.regionAllocations);
+  addRegionActuals(acc.regionActuals, row.regionActuals);
 }
 
 function buildAggregateFromSpending({
@@ -193,12 +275,14 @@ function buildAggregateFromSpending({
   categories,
   budgets,
   spendingByCategory,
+  regionActualsByCategory,
 }: {
   fiscalYear: number;
   quarter: number;
   categories: MonitoringCategory[];
   budgets: { promotion_category_id: string; total_amount: number }[];
   spendingByCategory: Map<string, [number, number, number]>;
+  regionActualsByCategory: Map<string, RegionActual[]>;
 }): MonitoringAggregate {
   const quarterMonths = getQuarterMonths(fiscalYear, quarter);
 
@@ -208,6 +292,10 @@ function buildAggregateFromSpending({
       b.promotion_category_id,
       (budgetByCategory.get(b.promotion_category_id) ?? 0) + b.total_amount
     );
+  }
+
+  function regionActualsFor(key: string): RegionActual[] {
+    return (regionActualsByCategory.get(key) ?? emptyRegionActuals()).map((r) => ({ ...r }));
   }
 
   function buildRow(cat: MonitoringCategory): MonitoringRow {
@@ -224,6 +312,7 @@ function buildAggregateFromSpending({
       total,
       variance: budget - total,
       regionAllocations: allocateBudgetByRegion(budget),
+      regionActuals: regionActualsFor(cat.id),
     };
   }
 
@@ -253,6 +342,7 @@ function buildAggregateFromSpending({
       total,
       variance: -total,
       regionAllocations: emptyRegionAllocations(),
+      regionActuals: regionActualsFor(""),
     };
   }
 
@@ -320,6 +410,7 @@ export function aggregateMonitoringBudget({
     categories,
     budgets,
     spendingByCategory,
+    regionActualsByCategory: buildRegionActualsByCategory(campaigns, fiscalYear, quarter),
   });
 }
 
@@ -336,18 +427,25 @@ export type MonitoringRealization = {
 // dengan mode Komitmen. Struktur hasil (baris, subtotal, Tanpa Kategori)
 // identik dengan aggregateMonitoringBudget — hanya sumber angka spending
 // yang berbeda.
+//
+// Realisasi By Region (regionActuals) TIDAK ikut sumber invoice — selalu
+// dari requested_budget SKP komitmen (`campaigns`), sama seperti mode
+// Komitmen. Karena itu fungsi ini menerima `campaigns` terpisah dari
+// `realizations`, khusus untuk breakdown region tsb.
 export function aggregateMonitoringBudgetRealisasi({
   fiscalYear,
   quarter,
   categories,
   budgets,
   realizations,
+  campaigns,
 }: {
   fiscalYear: number;
   quarter: number;
   categories: MonitoringCategory[];
   budgets: { promotion_category_id: string; total_amount: number }[];
   realizations: MonitoringRealization[];
+  campaigns: MonitoringCampaign[];
 }): MonitoringAggregate {
   const quarterMonths = getQuarterMonths(fiscalYear, quarter);
   const monthKeys = quarterMonths.map(
@@ -371,6 +469,7 @@ export function aggregateMonitoringBudgetRealisasi({
     categories,
     budgets,
     spendingByCategory,
+    regionActualsByCategory: buildRegionActualsByCategory(campaigns, fiscalYear, quarter),
   });
 }
 

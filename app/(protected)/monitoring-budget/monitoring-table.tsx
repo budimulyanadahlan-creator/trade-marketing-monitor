@@ -12,27 +12,36 @@ import {
 import { cn, formatIDR } from "@/lib/utils";
 import { drilldownKey, REGION_CONTRIBUTIONS } from "@/lib/monitoring-budget";
 import type {
+  MissingRegionSummary,
   MissingStartDateSummary,
   MonitoringAggregate,
   MonitoringMode,
   MonitoringRow,
   MonitoringTotals,
-  RegionAllocation,
 } from "@/lib/monitoring-budget";
 import {
   MonitoringDrilldownCell,
   type MonitoringDrilldown,
 } from "./monitoring-drilldown-cell";
 
-// Alokasi budget per region — 5 kolom turunan (%tetap × Budget kategori),
-// tidak terkait data regions/campaigns.region_id aktual. Dipakai baik di
-// baris kategori maupun baris subtotal, sama-sama dari row.regionAllocations.
-function RegionAllocationCells({ allocations }: { allocations: RegionAllocation[] }) {
+const REGION_COUNT = REGION_CONTRIBUTIONS.length;
+
+// 5 kolom angka per region — dipakai baik untuk Alokasi Budget by Region
+// (target, %tetap × Budget kategori) maupun Realisasi By Region (actual,
+// requested_budget SKP per region asli). keyPrefix membedakan React key
+// antar 2 blok karena nama region-nya sama persis di kedua blok.
+function RegionAmountCells({
+  keyPrefix,
+  amounts,
+}: {
+  keyPrefix: string;
+  amounts: { name: string; amount: number }[];
+}) {
   return (
     <>
-      {allocations.map((a) => (
+      {amounts.map((a) => (
         <TableCell
-          key={a.name}
+          key={`${keyPrefix}-${a.name}`}
           className="text-right text-slate-300 whitespace-nowrap"
         >
           {formatIDR(a.amount)}
@@ -97,7 +106,8 @@ function CategoryRow({
         {formatIDR(row.total)}
       </TableCell>
       <VarianceCell value={row.variance} />
-      <RegionAllocationCells allocations={row.regionAllocations} />
+      <RegionAmountCells keyPrefix="alokasi" amounts={row.regionAllocations} />
+      <RegionAmountCells keyPrefix="realisasi" amounts={row.regionActuals} />
     </TableRow>
   );
 }
@@ -135,7 +145,8 @@ function TotalsRow({
         {formatIDR(totals.total)}
       </TableCell>
       <VarianceCell value={totals.variance} />
-      <RegionAllocationCells allocations={totals.regionAllocations} />
+      <RegionAmountCells keyPrefix="alokasi" amounts={totals.regionAllocations} />
+      <RegionAmountCells keyPrefix="realisasi" amounts={totals.regionActuals} />
     </TableRow>
   );
 }
@@ -144,6 +155,7 @@ export function MonitoringTable({
   aggregate,
   mode,
   missingStartDate,
+  missingRegion,
   periodSelector,
   modeToggle,
   drilldown,
@@ -152,6 +164,7 @@ export function MonitoringTable({
   aggregate: MonitoringAggregate;
   mode: MonitoringMode;
   missingStartDate: MissingStartDateSummary;
+  missingRegion: MissingRegionSummary;
   periodSelector: ReactNode;
   modeToggle: ReactNode;
   drilldown: MonitoringDrilldown;
@@ -205,38 +218,70 @@ export function MonitoringTable({
         </div>
       )}
 
+      {missingRegion.count > 0 && (
+        <div className="rounded-md border border-amber-500/20 bg-amber-500/8 px-4 py-2.5 text-sm text-amber-300">
+          {missingRegion.count} SKP komitmen senilai{" "}
+          {formatIDR(missingRegion.total)} berregion &quot;National&quot; atau
+          region lain di luar 5 wilayah, sehingga tidak masuk breakdown
+          Realisasi By Region.
+        </div>
+      )}
+
       {/* Table */}
       <div className="rounded-lg border border-white/8 bg-white/3 overflow-hidden">
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow className="border-white/8 hover:bg-transparent">
-                <TableHead className="text-slate-400 min-w-[220px]">
+                <TableHead rowSpan={2} className="text-slate-400 min-w-[220px] align-bottom">
                   Kategori
                 </TableHead>
-                <TableHead className="text-slate-400 text-right min-w-[140px]">
+                <TableHead rowSpan={2} className="text-slate-400 text-right min-w-[140px] align-bottom">
                   Budget (IDR)
                 </TableHead>
                 {monthLabels.map((label) => (
                   <TableHead
                     key={label}
-                    className="text-slate-400 text-right min-w-[130px]"
+                    rowSpan={2}
+                    className="text-slate-400 text-right min-w-[130px] align-bottom"
                   >
                     {label}
                   </TableHead>
                 ))}
-                <TableHead className="text-slate-400 text-right min-w-[140px]">
+                <TableHead rowSpan={2} className="text-slate-400 text-right min-w-[140px] align-bottom">
                   Total Actual
                 </TableHead>
-                <TableHead className="text-slate-400 text-right min-w-[140px]">
+                <TableHead rowSpan={2} className="text-slate-400 text-right min-w-[140px] align-bottom">
                   Variance
                 </TableHead>
+                <TableHead
+                  colSpan={REGION_COUNT}
+                  className="text-slate-400 text-center border-l border-white/8"
+                >
+                  Alokasi Budget by Region
+                </TableHead>
+                <TableHead
+                  colSpan={REGION_COUNT}
+                  className="text-slate-400 text-center border-l border-white/8"
+                >
+                  Realisasi By Region
+                </TableHead>
+              </TableRow>
+              <TableRow className="border-white/8 hover:bg-transparent">
                 {REGION_CONTRIBUTIONS.map((region) => (
                   <TableHead
-                    key={region.name}
-                    className="text-slate-400 text-right min-w-[160px]"
+                    key={`alokasi-${region.name}`}
+                    className="text-slate-400 text-right min-w-[150px]"
                   >
-                    {region.name} ({Math.round(region.percentage * 100)}%)
+                    {region.name}
+                  </TableHead>
+                ))}
+                {REGION_CONTRIBUTIONS.map((region) => (
+                  <TableHead
+                    key={`realisasi-${region.name}`}
+                    className="text-slate-400 text-right min-w-[150px]"
+                  >
+                    {region.name}
                   </TableHead>
                 ))}
               </TableRow>
@@ -245,7 +290,7 @@ export function MonitoringTable({
               {isEmpty ? (
                 <TableRow>
                   <TableCell
-                    colSpan={7 + REGION_CONTRIBUTIONS.length}
+                    colSpan={7 + REGION_COUNT * 2}
                     className="text-center text-slate-500 py-12"
                   >
                     {emptyStateLabel}
