@@ -60,7 +60,7 @@ function baseSubmitData(overrides: Partial<Record<string, unknown>> = {}) {
     promotion_category_id: uuid,
     mechanism: "Test mechanism",
     avg_sales_3months: 0,
-    requested_budget: 0,
+    requested_budget: 50000,
     sales_projection: 0,
     start_date: "2026-01-01",
     end_date: "2026-01-31",
@@ -69,13 +69,39 @@ function baseSubmitData(overrides: Partial<Record<string, unknown>> = {}) {
 }
 
 describe("submitCampaignAction — optional numeric fields", () => {
-  it("accepts avg_sales_3months and requested_budget left at 0 (schema validation passes)", async () => {
+  it("accepts avg_sales_3months and sales_projection left at 0 (schema validation passes)", async () => {
     setupMocks();
 
     const result = await submitCampaignAction(baseSubmitData());
 
     // If schema validation rejected the 0 values, we'd get a validation message here
     // instead of the (later) file-count check message.
+    expect(result.error).toBe("Minimal 1 dokumen SKP harus diupload sebelum mengajukan");
+  });
+});
+
+describe("submitCampaignAction — minimum requested_budget", () => {
+  it("rejects requested_budget of 0 with a validation message", async () => {
+    setupMocks();
+
+    const result = await submitCampaignAction(baseSubmitData({ requested_budget: 0 }));
+
+    expect(result.error).toBe("Budget harus lebih dari Rp10.000");
+  });
+
+  it("rejects placeholder requested_budget values below the threshold (e.g. 1000)", async () => {
+    setupMocks();
+
+    const result = await submitCampaignAction(baseSubmitData({ requested_budget: 1000 }));
+
+    expect(result.error).toBe("Budget harus lebih dari Rp10.000");
+  });
+
+  it("accepts requested_budget above the threshold and proceeds past schema validation", async () => {
+    setupMocks();
+
+    const result = await submitCampaignAction(baseSubmitData({ requested_budget: 10001 }));
+
     expect(result.error).toBe("Minimal 1 dokumen SKP harus diupload sebelum mengajukan");
   });
 });

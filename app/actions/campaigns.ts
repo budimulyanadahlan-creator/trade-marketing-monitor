@@ -6,6 +6,13 @@ import { z } from "zod";
 import type { CampaignStatus } from "@/types/database";
 import { sendSkpSubmittedEmail } from "@/lib/email";
 
+// Budget SKP asli terkecil di sistem (per Agustus 2026) adalah ~Rp168.000 —
+// threshold ini jauh di bawahnya sehingga tidak menolak SKP sah manapun,
+// tapi menutup celah nilai placeholder (Rp0, Rp7, Rp1.000, dst) yang
+// sebelumnya lolos karena field ini cuma divalidasi min(0) dan diberi
+// default 0 kalau kosong.
+const MIN_SUBMIT_BUDGET = 10_000;
+
 async function requireActiveUser() {
   const supabase = await createClient();
   const {
@@ -131,7 +138,9 @@ const submitSchema = z.object({
   objective: z.string().optional().nullable(),
   mechanism: z.string().min(1, "Mekanisme harus diisi"),
   avg_sales_3months: z.coerce.number().min(0).optional().default(0),
-  requested_budget: z.coerce.number().min(0).optional().default(0),
+  requested_budget: z.coerce
+    .number()
+    .min(MIN_SUBMIT_BUDGET, `Budget harus lebih dari Rp${MIN_SUBMIT_BUDGET.toLocaleString("id-ID")}`),
   sales_projection: z.coerce.number().min(0).optional().default(0),
   start_date: z.string().min(1, "Tanggal mulai harus diisi"),
   end_date: z.string().min(1, "Tanggal selesai harus diisi"),

@@ -511,7 +511,7 @@ function Step3({
       </div>
 
       <div className="space-y-1.5">
-        <Label htmlFor="c-budget">Budget (IDR) (Opsional)</Label>
+        <Label htmlFor="c-budget">Budget (IDR)</Label>
         <Input
           id="c-budget"
           type="text"
@@ -520,8 +520,10 @@ function Step3({
           onChange={handleBudgetInput}
           placeholder="Contoh: 50000000"
         />
-        {numBudget > 0 && (
+        {numBudget > 0 ? (
           <p className="text-xs text-slate-400 pl-1">{formatIDR(numBudget)}</p>
+        ) : (
+          <p className="text-xs text-slate-400 pl-1">Minimal Rp10.000</p>
         )}
         {overBudget && (
           <div className="flex items-start gap-2 rounded-md border border-amber-500/25 bg-amber-500/8 px-3 py-2">
@@ -661,6 +663,11 @@ function Step3({
 
 // ─── Validation ─────────────────────────────────────────────────────────────
 
+// Harus sama dengan MIN_SUBMIT_BUDGET di app/actions/campaigns.ts (tidak bisa
+// diimpor langsung — file itu "use server" dan cuma boleh mengekspor async
+// function). Ini cuma validasi cepat di client; server tetap sumber kebenaran.
+const MIN_SUBMIT_BUDGET = 10_000;
+
 function validateStep1(data: FormData): string | null {
   if (!data.name.trim()) return "Nama campaign harus diisi";
   if (!data.department_id) return "Departemen harus dipilih";
@@ -687,6 +694,9 @@ function validateStep3(
   if (!data.end_date) return "Tanggal selesai harus diisi";
   if (data.end_date < data.start_date)
     return "Tanggal selesai harus setelah tanggal mulai";
+  const budget = Number(data.requested_budget.replace(/\D/g, "")) || 0;
+  if (budget < MIN_SUBMIT_BUDGET)
+    return `Budget harus lebih dari Rp${MIN_SUBMIT_BUDGET.toLocaleString("id-ID")}`;
   return null;
 }
 
