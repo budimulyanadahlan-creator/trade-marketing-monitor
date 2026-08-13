@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import { REGION_CONTRIBUTIONS } from "./monitoring-budget";
 import type {
   MonitoringAggregate,
   MonitoringMode,
@@ -41,17 +42,29 @@ const THIN_BORDER: Partial<ExcelJS.Borders> = {
   right: { style: "thin", color: { argb: "FFD0D0D0" } },
 };
 
-const COL_COUNT = 7; // Kategori, Budget, 3 bulan, Total Actual, Variance
+const REGION_COUNT = REGION_CONTRIBUTIONS.length;
+const VARIANCE_COL = 7; // Kategori, Budget, 3 bulan, Total Actual, Variance
+const COL_COUNT = VARIANCE_COL + REGION_COUNT; // + 5 kolom alokasi budget by region
 
 function categoryLabel(row: MonitoringRow): string {
   return row.accountCode ? `${row.accountCode} ${row.name}` : row.name;
+}
+
+function rowValues(row: MonitoringRow): number[] {
+  return [
+    row.budget,
+    ...row.months,
+    row.total,
+    row.variance,
+    ...row.regionAllocations.map((a) => a.amount),
+  ];
 }
 
 function writeDataRow(ws: ExcelJS.Worksheet, label: string, values: number[]): ExcelJS.Row {
   const row = ws.addRow([label, ...values]);
   for (let col = 2; col <= COL_COUNT; col++) {
     const cell = row.getCell(col);
-    cell.numFmt = col === COL_COUNT ? VARIANCE_FORMAT : NUMBER_FORMAT;
+    cell.numFmt = col === VARIANCE_COL ? VARIANCE_FORMAT : NUMBER_FORMAT;
     cell.border = THIN_BORDER;
   }
   row.getCell(1).border = THIN_BORDER;
@@ -70,6 +83,7 @@ function writeTotalsRow(
     ...totals.months,
     totals.total,
     totals.variance,
+    ...totals.regionAllocations.map((a) => a.amount),
   ]);
   row.font = { bold: true };
   for (let col = 1; col <= COL_COUNT; col++) {
@@ -92,6 +106,7 @@ export function buildMonitoringBudgetWorkbook(
     { width: 16 },
     { width: 16 },
     { width: 16 },
+    ...REGION_CONTRIBUTIONS.map(() => ({ width: 20 })),
   ];
 
   // Judul
@@ -124,6 +139,13 @@ export function buildMonitoringBudgetWorkbook(
   ws.mergeCells(3, 7, 4, 7); // Variance
   headerRow1.getCell(7).value = "Variance";
 
+  // Alokasi budget by region — 5 kolom setelah Variance, murni %tetap × Budget.
+  REGION_CONTRIBUTIONS.forEach((region, i) => {
+    const col = VARIANCE_COL + 1 + i;
+    ws.mergeCells(3, col, 4, col);
+    headerRow1.getCell(col).value = `${region.name} (${Math.round(region.percentage * 100)}%)`;
+  });
+
   aggregate.monthLabels.forEach((label, i) => {
     headerRow2.getCell(3 + i).value = label;
   });
@@ -140,20 +162,19 @@ export function buildMonitoringBudgetWorkbook(
 
   // Baris kategori TP
   for (const row of aggregate.tpRows) {
-    writeDataRow(ws, categoryLabel(row), [row.budget, ...row.months, row.total, row.variance]);
+    writeDataRow(ws, categoryLabel(row), rowValues(row));
   }
   writeTotalsRow(ws, "Total TP", aggregate.totalTP, SUBTOTAL_FILL);
 
   // Baris kategori CP
   for (const row of aggregate.cpRows) {
-    writeDataRow(ws, categoryLabel(row), [row.budget, ...row.months, row.total, row.variance]);
+    writeDataRow(ws, categoryLabel(row), rowValues(row));
   }
   writeTotalsRow(ws, "Total CP", aggregate.totalCP, SUBTOTAL_FILL);
 
   // Tanpa Kategori (di luar subtotal TP/CP, hanya jika ada)
   if (aggregate.uncategorized) {
-    const u = aggregate.uncategorized;
-    writeDataRow(ws, u.name, [u.budget, ...u.months, u.total, u.variance]);
+    writeDataRow(ws, aggregate.uncategorized.name, rowValues(aggregate.uncategorized));
   }
 
   writeTotalsRow(ws, "Total TP CP", aggregate.grandTotal, GRAND_TOTAL_FILL);

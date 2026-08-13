@@ -88,6 +88,42 @@ export type MonitoringCategory = {
   account_code: string;
 };
 
+export type RegionAllocation = { name: string; percentage: number; amount: number };
+
+// Kontribusi tetap per region — dipakai untuk memecah kolom Budget setiap
+// baris menjadi alokasi target per region. Angka hitungan murni (%tetap ×
+// Budget kategori), TIDAK terkait dengan tabel regions/campaigns.region_id
+// (master data region yang bebas-isi, fitur terpisah). Total harus 100%.
+export const REGION_CONTRIBUTIONS: readonly { name: string; percentage: number }[] = [
+  { name: "Greater Jakarta", percentage: 0.28 },
+  { name: "West & Central Java", percentage: 0.22 },
+  { name: "East Java & Bali", percentage: 0.2 },
+  { name: "North Sumatera etc", percentage: 0.2 },
+  { name: "West Kalimantan", percentage: 0.1 },
+];
+
+// Memecah satu nilai budget jadi alokasi per region. Tiap region dibulatkan
+// independen (Math.round) — selisih pembulatan antar region dibiarkan,
+// bukan largest-remainder.
+export function allocateBudgetByRegion(budget: number): RegionAllocation[] {
+  return REGION_CONTRIBUTIONS.map((r) => ({
+    name: r.name,
+    percentage: r.percentage,
+    amount: Math.round(budget * r.percentage),
+  }));
+}
+
+function emptyRegionAllocations(): RegionAllocation[] {
+  return allocateBudgetByRegion(0);
+}
+
+function addRegionAllocations(
+  acc: RegionAllocation[],
+  add: RegionAllocation[]
+): void {
+  for (let i = 0; i < acc.length; i++) acc[i].amount += add[i].amount;
+}
+
 export type MonitoringRow = {
   categoryId: string | null; // null untuk baris "Tanpa Kategori"
   accountCode: string | null;
@@ -97,6 +133,7 @@ export type MonitoringRow = {
   months: [number, number, number];
   total: number;
   variance: number; // budget − total
+  regionAllocations: RegionAllocation[];
 };
 
 export type MonitoringTotals = {
@@ -104,6 +141,7 @@ export type MonitoringTotals = {
   months: [number, number, number];
   total: number;
   variance: number;
+  regionAllocations: RegionAllocation[];
 };
 
 export type MissingStartDateSummary = { count: number; total: number };
@@ -138,7 +176,7 @@ export type MonitoringAggregate = {
 };
 
 function emptyTotals(): MonitoringTotals {
-  return { budget: 0, months: [0, 0, 0], total: 0, variance: 0 };
+  return { budget: 0, months: [0, 0, 0], total: 0, variance: 0, regionAllocations: emptyRegionAllocations() };
 }
 
 function addRow(acc: MonitoringTotals, row: MonitoringRow): void {
@@ -146,6 +184,7 @@ function addRow(acc: MonitoringTotals, row: MonitoringRow): void {
   for (let i = 0; i < 3; i++) acc.months[i] += row.months[i];
   acc.total += row.total;
   acc.variance = acc.budget - acc.total;
+  addRegionAllocations(acc.regionAllocations, row.regionAllocations);
 }
 
 function buildAggregateFromSpending({
@@ -184,6 +223,7 @@ function buildAggregateFromSpending({
       months,
       total,
       variance: budget - total,
+      regionAllocations: allocateBudgetByRegion(budget),
     };
   }
 
@@ -212,6 +252,7 @@ function buildAggregateFromSpending({
       months: uncatMonths,
       total,
       variance: -total,
+      regionAllocations: emptyRegionAllocations(),
     };
   }
 

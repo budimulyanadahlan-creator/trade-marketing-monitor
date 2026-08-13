@@ -11,6 +11,8 @@ import {
   drilldownKey,
   buildKomitmenDrilldown,
   buildRealisasiDrilldown,
+  allocateBudgetByRegion,
+  REGION_CONTRIBUTIONS,
   type MonitoringCampaign,
   type MonitoringRealization,
   type DrilldownCampaignInput,
@@ -141,18 +143,23 @@ describe("aggregateMonitoringBudget", () => {
       months: [100, 700, 0],
       total: 800,
       variance: 700,
+      // Kedua kategori TP di sini punya budget kelipatan yang membulat pas
+      // (1000 & 500), jadi hasil sum-per-baris = allocateBudgetByRegion(1500).
+      regionAllocations: allocateBudgetByRegion(1500),
     });
     expect(result.totalCP).toEqual({
       budget: 2000,
       months: [0, 0, 300],
       total: 300,
       variance: 1700,
+      regionAllocations: allocateBudgetByRegion(2000),
     });
     expect(result.grandTotal).toEqual({
       budget: 3500,
       months: [100, 700, 300],
       total: 1100,
       variance: 2400,
+      regionAllocations: allocateBudgetByRegion(3500),
     });
   });
 
@@ -192,6 +199,35 @@ describe("aggregateMonitoringBudget", () => {
       campaigns: [campaign(null, 999, "2026-07-01", "cancelled")],
     });
     expect(result.uncategorized).toBeNull();
+  });
+});
+
+describe("allocateBudgetByRegion", () => {
+  it("memecah budget kategori jadi 5 region sesuai persentase kontribusi tetap", () => {
+    const result = allocateBudgetByRegion(2_000_000_000);
+    expect(result).toEqual([
+      { name: "Greater Jakarta", percentage: 0.28, amount: 560_000_000 },
+      { name: "West & Central Java", percentage: 0.22, amount: 440_000_000 },
+      { name: "East Java & Bali", percentage: 0.20, amount: 400_000_000 },
+      { name: "North Sumatera etc", percentage: 0.20, amount: 400_000_000 },
+      { name: "West Kalimantan", percentage: 0.10, amount: 200_000_000 },
+    ]);
+  });
+
+  it("persentase kontribusi region berjumlah 100%", () => {
+    const total = REGION_CONTRIBUTIONS.reduce((s, r) => s + r.percentage, 0);
+    expect(total).toBeCloseTo(1);
+  });
+
+  it("membulatkan tiap region secara independen (Math.round, bukan largest-remainder)", () => {
+    const result = allocateBudgetByRegion(1_104_509_314);
+    // 1_104_509_314 * 0.22 = 242_992_049.08 → dibulatkan
+    expect(result[1].amount).toBe(242_992_049);
+  });
+
+  it("budget nol menghasilkan alokasi nol di semua region", () => {
+    const result = allocateBudgetByRegion(0);
+    expect(result.every((r) => r.amount === 0)).toBe(true);
   });
 });
 

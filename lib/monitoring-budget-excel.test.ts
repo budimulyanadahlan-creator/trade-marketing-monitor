@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type ExcelJS from "exceljs";
 import { buildMonitoringBudgetWorkbook } from "./monitoring-budget-excel";
-import type { MonitoringAggregate } from "./monitoring-budget";
+import { allocateBudgetByRegion, type MonitoringAggregate } from "./monitoring-budget";
 
 function aggregate(overrides: Partial<MonitoringAggregate> = {}): MonitoringAggregate {
   return {
@@ -11,9 +11,9 @@ function aggregate(overrides: Partial<MonitoringAggregate> = {}): MonitoringAggr
     tpRows: [],
     cpRows: [],
     uncategorized: null,
-    totalTP: { budget: 0, months: [0, 0, 0], total: 0, variance: 0 },
-    totalCP: { budget: 0, months: [0, 0, 0], total: 0, variance: 0 },
-    grandTotal: { budget: 0, months: [0, 0, 0], total: 0, variance: 0 },
+    totalTP: { budget: 0, months: [0, 0, 0], total: 0, variance: 0, regionAllocations: allocateBudgetByRegion(0) },
+    totalCP: { budget: 0, months: [0, 0, 0], total: 0, variance: 0, regionAllocations: allocateBudgetByRegion(0) },
+    grandTotal: { budget: 0, months: [0, 0, 0], total: 0, variance: 0, regionAllocations: allocateBudgetByRegion(0) },
     ...overrides,
   };
 }
@@ -67,9 +67,16 @@ describe("buildMonitoringBudgetWorkbook — baris kategori & subtotal", () => {
             months: [100_000, 200_000, 300_000],
             total: 600_000,
             variance: 400_000,
+            regionAllocations: allocateBudgetByRegion(1_000_000),
           },
         ],
-        totalTP: { budget: 1_000_000, months: [100_000, 200_000, 300_000], total: 600_000, variance: 400_000 },
+        totalTP: {
+          budget: 1_000_000,
+          months: [100_000, 200_000, 300_000],
+          total: 600_000,
+          variance: 400_000,
+          regionAllocations: allocateBudgetByRegion(1_000_000),
+        },
       })
     );
 
@@ -80,11 +87,15 @@ describe("buildMonitoringBudgetWorkbook — baris kategori & subtotal", () => {
     expect(catRow.getCell(3).value).toBe(100_000);
     expect(catRow.getCell(6).value).toBe(600_000);
     expect(catRow.getCell(7).value).toBe(400_000);
+    // Kolom 8-12: alokasi 5 region, setelah Variance
+    expect(catRow.getCell(8).value).toBe(280_000); // Greater Jakarta 28% dari 1.000.000
+    expect(catRow.getCell(12).value).toBe(100_000); // West Kalimantan 10% dari 1.000.000
 
     const totalRow = ws.getRow(6);
     expect(String(totalRow.getCell(1).value)).toBe("Total TP");
     expect(totalRow.getCell(2).value).toBe(1_000_000);
     expect(totalRow.getCell(7).value).toBe(400_000);
+    expect(totalRow.getCell(8).value).toBe(280_000);
     // Baris subtotal diberi latar
     expect(totalRow.getCell(1).fill).toBeDefined();
   });
@@ -101,6 +112,7 @@ describe("buildMonitoringBudgetWorkbook — baris kategori & subtotal", () => {
           months: [0, 0, 50_000],
           total: 50_000,
           variance: -50_000,
+          regionAllocations: allocateBudgetByRegion(0),
         },
       })
     );
@@ -129,6 +141,7 @@ describe("buildMonitoringBudgetWorkbook — variance & styling", () => {
             months: [0, 0, 100_000],
             total: 100_000,
             variance: -100_000,
+            regionAllocations: allocateBudgetByRegion(0),
           },
         ],
       })
@@ -154,6 +167,7 @@ describe("buildMonitoringBudgetWorkbook — variance & styling", () => {
             months: [0, 0, 0],
             total: 0,
             variance: 500_000,
+            regionAllocations: allocateBudgetByRegion(500_000),
           },
         ],
       })
@@ -177,10 +191,11 @@ describe("buildMonitoringBudgetWorkbook — variance & styling", () => {
             months: [0, 0, 0],
             total: 0,
             variance: 100,
+            regionAllocations: allocateBudgetByRegion(100),
           },
         ],
-        totalTP: { budget: 100, months: [0, 0, 0], total: 0, variance: 100 },
-        grandTotal: { budget: 100, months: [0, 0, 0], total: 0, variance: 100 },
+        totalTP: { budget: 100, months: [0, 0, 0], total: 0, variance: 100, regionAllocations: allocateBudgetByRegion(100) },
+        grandTotal: { budget: 100, months: [0, 0, 0], total: 0, variance: 100, regionAllocations: allocateBudgetByRegion(100) },
       })
     );
     let grandTotalRow: ExcelJS.Row | undefined;

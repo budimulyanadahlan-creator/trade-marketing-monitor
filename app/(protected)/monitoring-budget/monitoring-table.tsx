@@ -10,18 +10,37 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn, formatIDR } from "@/lib/utils";
-import { drilldownKey } from "@/lib/monitoring-budget";
+import { drilldownKey, REGION_CONTRIBUTIONS } from "@/lib/monitoring-budget";
 import type {
   MissingStartDateSummary,
   MonitoringAggregate,
   MonitoringMode,
   MonitoringRow,
   MonitoringTotals,
+  RegionAllocation,
 } from "@/lib/monitoring-budget";
 import {
   MonitoringDrilldownCell,
   type MonitoringDrilldown,
 } from "./monitoring-drilldown-cell";
+
+// Alokasi budget per region — 5 kolom turunan (%tetap × Budget kategori),
+// tidak terkait data regions/campaigns.region_id aktual. Dipakai baik di
+// baris kategori maupun baris subtotal, sama-sama dari row.regionAllocations.
+function RegionAllocationCells({ allocations }: { allocations: RegionAllocation[] }) {
+  return (
+    <>
+      {allocations.map((a) => (
+        <TableCell
+          key={a.name}
+          className="text-right text-slate-300 whitespace-nowrap"
+        >
+          {formatIDR(a.amount)}
+        </TableCell>
+      ))}
+    </>
+  );
+}
 
 function VarianceCell({ value }: { value: number }) {
   return (
@@ -78,6 +97,7 @@ function CategoryRow({
         {formatIDR(row.total)}
       </TableCell>
       <VarianceCell value={row.variance} />
+      <RegionAllocationCells allocations={row.regionAllocations} />
     </TableRow>
   );
 }
@@ -115,6 +135,7 @@ function TotalsRow({
         {formatIDR(totals.total)}
       </TableCell>
       <VarianceCell value={totals.variance} />
+      <RegionAllocationCells allocations={totals.regionAllocations} />
     </TableRow>
   );
 }
@@ -210,13 +231,21 @@ export function MonitoringTable({
                 <TableHead className="text-slate-400 text-right min-w-[140px]">
                   Variance
                 </TableHead>
+                {REGION_CONTRIBUTIONS.map((region) => (
+                  <TableHead
+                    key={region.name}
+                    className="text-slate-400 text-right min-w-[160px]"
+                  >
+                    {region.name} ({Math.round(region.percentage * 100)}%)
+                  </TableHead>
+                ))}
               </TableRow>
             </TableHeader>
             <TableBody>
               {isEmpty ? (
                 <TableRow>
                   <TableCell
-                    colSpan={7}
+                    colSpan={7 + REGION_CONTRIBUTIONS.length}
                     className="text-center text-slate-500 py-12"
                   >
                     {emptyStateLabel}
