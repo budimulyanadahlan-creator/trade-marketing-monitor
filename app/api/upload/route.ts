@@ -1,5 +1,6 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { syncChecklistAfterFileDelete } from "@/lib/claim-checklist-sync";
 
 const ALLOWED_TYPES = ["application/pdf", "image/jpeg", "image/jpg", "image/png"];
 const MAX_SIZE = 5 * 1024 * 1024; // 5 MB
@@ -95,6 +96,7 @@ export async function POST(request: NextRequest) {
       file_type: file.type,
       file_size: file.size,
       uploaded_by: user.id,
+      document_type_id: null,
     })
     .select()
     .single();
@@ -128,7 +130,7 @@ export async function DELETE(request: NextRequest) {
 
   const { data: fileRecord } = await supabase
     .from("campaign_files")
-    .select("file_url, uploaded_by")
+    .select("file_url, uploaded_by, campaign_id, document_type_id")
     .eq("id", fileId)
     .single();
 
@@ -142,6 +144,16 @@ export async function DELETE(request: NextRequest) {
     .remove([fileRecord.file_url]);
 
   await supabase.from("campaign_files").delete().eq("id", fileId);
+
+  // Claim document (has document_type_id): if this was the last file
+  // attached to the checklist item, reset it back to unfulfilled.
+  if (fileRecord.document_type_id) {
+    await syncChecklistAfterFileDelete(supabase, {
+      campaignId: fileRecord.campaign_id,
+      distributorId: fileRecord.uploaded_by,
+      documentTypeId: fileRecord.document_type_id,
+    });
+  }
 
   return NextResponse.json({ success: true });
 }

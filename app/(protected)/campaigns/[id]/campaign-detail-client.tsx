@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -30,6 +31,7 @@ import {
   CircleCheckBig,
   PackageCheck,
   Download,
+  Upload,
   TriangleAlert,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -89,6 +91,7 @@ interface Props {
   aaBudgetInfo: AABudgetInfo | null;
   isEditable: boolean;
   userRole: UserRole;
+  userId: string;
   departments: { id: string; name: string }[];
   brands: { id: string; name: string }[];
   regions: { id: string; name: string }[];
@@ -354,17 +357,169 @@ const CHECKLIST_EDITABLE_STATUSES: CampaignStatus[] = [
   "claim_submitted",
 ];
 
+const CLAIM_DOCUMENT_ACCEPT = "application/pdf,image/jpeg,image/jpg,image/png";
+
+function ClaimFileRow({
+  file,
+  canDelete,
+  onDeleted,
+}: {
+  file: ClaimDocument["files"][number];
+  canDelete: boolean;
+  onDeleted: () => void;
+}) {
+  const [opening, setOpening] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  async function open() {
+    setOpening(true);
+    try {
+      const res = await fetch(`/api/upload?file_id=${file.id}`);
+      if (!res.ok) {
+        toast.error("Gagal mendapatkan link file");
+        return;
+      }
+      const { url } = await res.json();
+      window.open(url, "_blank");
+    } finally {
+      setOpening(false);
+    }
+  }
+
+  async function handleDelete() {
+    setDeleting(true);
+    try {
+      const res = await fetch("/api/upload", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileId: file.id }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        toast.error(json.error ?? "Gagal menghapus file");
+        return;
+      }
+      toast.success("Dokumen dihapus");
+      onDeleted();
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <button
+        onClick={open}
+        disabled={opening}
+        className="flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 transition-colors"
+      >
+        {opening ? (
+          <Loader2 className="h-3 w-3 animate-spin" />
+        ) : (
+          <FileText className="h-3 w-3" />
+        )}
+        {file.fileName}
+      </button>
+      {canDelete && (
+        <button
+          onClick={handleDelete}
+          disabled={deleting}
+          className="text-slate-600 hover:text-rose-400 transition-colors disabled:opacity-40"
+        >
+          {deleting ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : (
+            <Trash2 className="h-3 w-3" />
+          )}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ClaimFileUploadButton({
+  campaignId,
+  documentTypeId,
+  onUploaded,
+}: {
+  campaignId: string;
+  documentTypeId: string;
+  onUploaded: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [isUploading, setIsUploading] = useState(false);
+
+  async function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+
+    setIsUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("campaign_id", campaignId);
+      formData.append("document_type_id", documentTypeId);
+
+      const res = await fetch("/api/upload/claim-document", {
+        method: "POST",
+        body: formData,
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        toast.error(json.error ?? "Gagal mengupload dokumen");
+        return;
+      }
+      toast.success("Dokumen berhasil diupload");
+      onUploaded();
+    } finally {
+      setIsUploading(false);
+    }
+  }
+
+  return (
+    <>
+      <input
+        ref={inputRef}
+        type="file"
+        accept={CLAIM_DOCUMENT_ACCEPT}
+        className="hidden"
+        onChange={handleChange}
+        disabled={isUploading}
+      />
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        onClick={() => inputRef.current?.click()}
+        disabled={isUploading}
+        className="h-7 px-2 text-xs"
+      >
+        {isUploading ? (
+          <Loader2 className="h-3 w-3 animate-spin" />
+        ) : (
+          <Upload className="h-3 w-3" />
+        )}
+        Upload
+      </Button>
+    </>
+  );
+}
+
 function ClaimChecklistSection({
   campaignId,
   campaignStatus,
   userRole,
+  userId,
   documents,
 }: {
   campaignId: string;
   campaignStatus: CampaignStatus;
   userRole: UserRole;
+  userId: string;
   documents: ClaimDocument[];
 }) {
+  const router = useRouter();
   const isDistributor = userRole === "distributor";
   const isEditable =
     isDistributor && CHECKLIST_EDITABLE_STATUSES.includes(campaignStatus);
@@ -426,48 +581,80 @@ function ClaimChecklistSection({
         {documents.map((doc) => {
           const fulfilled = localState[doc.documentTypeId] ?? doc.isFulfilled;
           const pending = pendingIds.has(doc.documentTypeId);
+          const hasFiles = doc.files.length > 0;
+          // Once a file is attached, fulfillment is file-driven (see
+          // lib/claim-checklist-sync.ts) — manual toggling only applies
+          // to items with no files attached.
+          const canToggleManually = isEditable && !hasFiles;
 
           return (
-            <label
+            <div
               key={doc.documentTypeId}
-              className={`flex items-center gap-3 rounded-lg border border-white/8 px-4 py-3 transition-colors ${
-                isEditable && !pending
-                  ? "cursor-pointer hover:bg-white/4"
-                  : "cursor-default"
-              }`}
+              className="rounded-lg border border-white/8 px-4 py-3"
             >
-              {pending ? (
-                <Loader2 className="h-4 w-4 animate-spin text-slate-400 flex-shrink-0" />
-              ) : !isEditable ? (
-                <div
-                  className={`h-4 w-4 rounded flex-shrink-0 border flex items-center justify-center ${
-                    fulfilled
-                      ? "bg-rose-500 border-rose-500"
-                      : "border-slate-600 bg-slate-800"
-                  }`}
-                >
-                  {fulfilled && <Check className="h-2.5 w-2.5 text-white" />}
-                </div>
-              ) : (
-                <input
-                  type="checkbox"
-                  checked={fulfilled}
-                  onChange={() => handleToggle(doc.documentTypeId)}
-                  disabled={pending}
-                  className="h-4 w-4 rounded border-slate-600 bg-slate-800 accent-emerald-500 flex-shrink-0"
-                />
-              )}
-              <span
-                className={`text-sm flex-1 ${
-                  fulfilled ? "text-slate-200" : "text-slate-400"
+              <label
+                className={`flex items-center gap-3 transition-colors ${
+                  canToggleManually && !pending ? "cursor-pointer" : "cursor-default"
                 }`}
               >
-                {doc.name}
-              </span>
-              {isEditable && fulfilled && !pending && (
-                <CheckCircle2 className="h-4 w-4 text-emerald-400 flex-shrink-0" />
+                {pending ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-slate-400 flex-shrink-0" />
+                ) : !isEditable ? (
+                  <div
+                    className={`h-4 w-4 rounded flex-shrink-0 border flex items-center justify-center ${
+                      fulfilled
+                        ? "bg-rose-500 border-rose-500"
+                        : "border-slate-600 bg-slate-800"
+                    }`}
+                  >
+                    {fulfilled && <Check className="h-2.5 w-2.5 text-white" />}
+                  </div>
+                ) : (
+                  <input
+                    type="checkbox"
+                    checked={fulfilled}
+                    onChange={() => handleToggle(doc.documentTypeId)}
+                    disabled={pending || !canToggleManually}
+                    className="h-4 w-4 rounded border-slate-600 bg-slate-800 accent-emerald-500 flex-shrink-0 disabled:opacity-60"
+                  />
+                )}
+                <span
+                  className={`text-sm flex-1 ${
+                    fulfilled ? "text-slate-200" : "text-slate-400"
+                  }`}
+                >
+                  {doc.name}
+                </span>
+                {isEditable && hasFiles && (
+                  <span className="text-[11px] text-slate-500">
+                    otomatis dari dokumen
+                  </span>
+                )}
+                {isEditable && fulfilled && !pending && (
+                  <CheckCircle2 className="h-4 w-4 text-emerald-400 flex-shrink-0" />
+                )}
+              </label>
+
+              {(hasFiles || isEditable) && (
+                <div className="mt-2 ml-7 flex flex-wrap items-center gap-x-4 gap-y-1.5">
+                  {doc.files.map((f) => (
+                    <ClaimFileRow
+                      key={f.id}
+                      file={f}
+                      canDelete={isDistributor && isEditable && f.uploadedBy === userId}
+                      onDeleted={() => router.refresh()}
+                    />
+                  ))}
+                  {isDistributor && isEditable && (
+                    <ClaimFileUploadButton
+                      campaignId={campaignId}
+                      documentTypeId={doc.documentTypeId}
+                      onUploaded={() => router.refresh()}
+                    />
+                  )}
+                </div>
               )}
-            </label>
+            </div>
           );
         })}
       </div>
@@ -706,6 +893,7 @@ export function CampaignDetailClient({
   aaBudgetInfo,
   isEditable,
   userRole,
+  userId,
   departments,
   brands,
   regions,
@@ -722,6 +910,10 @@ export function CampaignDetailClient({
   const canAddRealization =
     ["admin", "superadmin"].includes(userRole) &&
     (campaign.status === "approved" || campaign.status === "ongoing" || campaign.status === "paid");
+
+  // Claim document files are shown per checklist item in ClaimChecklistSection
+  // instead — keep the general "Dokumen" list to plain SKP attachments.
+  const skpFiles = files.filter((f) => !f.document_type_id);
 
   const hasDistributor = distributorReceipts.length > 0;
   const unfulfilledClaimDocs =
@@ -1034,18 +1226,19 @@ export function CampaignDetailClient({
           campaignId={campaign.id}
           campaignStatus={campaign.status}
           userRole={userRole}
+          userId={userId}
           documents={claimDocuments}
         />
       )}
 
       {/* Files */}
-      {files.length > 0 && (
+      {skpFiles.length > 0 && (
         <div className="rounded-xl border border-white/8 bg-white/2 p-6">
           <h2 className="text-sm font-semibold text-slate-300 mb-3 uppercase tracking-wider">
             Dokumen
           </h2>
           <ul className="space-y-2">
-            {files.map((f) => (
+            {skpFiles.map((f) => (
               <li key={f.id}>
                 <SignedFileLink fileId={f.id} fileName={f.file_name} />
               </li>

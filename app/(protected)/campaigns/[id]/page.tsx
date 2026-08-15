@@ -4,10 +4,18 @@ import { computeAARemainingBudget } from "@/lib/campaign-status";
 import { CampaignDetailClient } from "./campaign-detail-client";
 import type { CampaignRow, CampaignFileRow, ApprovalHistoryRow, RealizationRow, DistributorReceiptRow, UserRole, CampaignStatus } from "@/types/database";
 
+export type ClaimDocumentFile = {
+  id: string;
+  fileName: string;
+  uploadedBy: string;
+  uploadedAt: string;
+};
+
 export type ClaimDocument = {
   documentTypeId: string;
   name: string;
   isFulfilled: boolean;
+  files: ClaimDocumentFile[];
 };
 
 // Info budget AA untuk approver: dihitung server-side saat halaman dimuat.
@@ -149,10 +157,25 @@ export default async function CampaignDetailPage({ params }: Props) {
         }
       }
 
+      // Claim document files (document_type_id set) grouped per checklist item.
+      const claimFilesByDocType = new Map<string, ClaimDocumentFile[]>();
+      for (const f of (filesRaw ?? []) as CampaignFileRow[]) {
+        if (!f.document_type_id) continue;
+        const list = claimFilesByDocType.get(f.document_type_id) ?? [];
+        list.push({
+          id: f.id,
+          fileName: f.file_name,
+          uploadedBy: f.uploaded_by,
+          uploadedAt: f.uploaded_at,
+        });
+        claimFilesByDocType.set(f.document_type_id, list);
+      }
+
       claimDocuments = docs.map((d) => ({
         documentTypeId: d.documentTypeId,
         name: d.name,
         isFulfilled: fulfilledMap.get(d.documentTypeId) ?? false,
+        files: claimFilesByDocType.get(d.documentTypeId) ?? [],
       }));
     }
   }
@@ -264,6 +287,7 @@ export default async function CampaignDetailPage({ params }: Props) {
       aaBudgetInfo={aaBudgetInfo}
       isEditable={isEditable}
       userRole={userRole}
+      userId={user.id}
       departments={departments ?? []}
       brands={brands ?? []}
       regions={regions ?? []}

@@ -176,6 +176,8 @@ export type CampaignFileRow = {
   file_size: number;
   uploaded_by: string;
   uploaded_at: string;
+  // Terisi = dokumen klaim (referensi claim_document_types); NULL = lampiran SKP biasa.
+  document_type_id: string | null;
 };
 
 export type ApprovalAction = "submitted" | "approved_l1" | "approved_l2" | "approved_l3" | "approved_l4" | "approved" | "rejected";
