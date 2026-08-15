@@ -1,9 +1,14 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { syncChecklistAfterFileDelete } from "@/lib/claim-checklist-sync";
+import type { CampaignStatus } from "@/types/database";
 
 const ALLOWED_TYPES = ["application/pdf", "image/jpeg", "image/jpg", "image/png"];
 const MAX_SIZE = 5 * 1024 * 1024; // 5 MB
+// Mirrors EDITABLE_STATUSES in app/api/upload/claim-document/route.ts —
+// claim documents can't be removed once the claim they belong to is
+// submitted (locked until cancelled in Phase 3, or paid).
+const CLAIM_DOCUMENT_EDITABLE_STATUSES: CampaignStatus[] = ["approved", "ongoing"];
 
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
@@ -136,6 +141,24 @@ export async function DELETE(request: NextRequest) {
 
   if (!fileRecord || fileRecord.uploaded_by !== user.id) {
     return NextResponse.json({ error: "File tidak ditemukan" }, { status: 404 });
+  }
+
+  if (fileRecord.document_type_id) {
+    const { data: campaign } = await supabase
+      .from("campaigns")
+      .select("status")
+      .eq("id", fileRecord.campaign_id)
+      .single();
+
+    if (
+      !campaign ||
+      !CLAIM_DOCUMENT_EDITABLE_STATUSES.includes(campaign.status as CampaignStatus)
+    ) {
+      return NextResponse.json(
+        { error: "Dokumen klaim hanya dapat dihapus saat SKP berstatus Approved atau Ongoing" },
+        { status: 400 }
+      );
+    }
   }
 
   const adminClient = createAdminClient();

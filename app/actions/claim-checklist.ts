@@ -4,11 +4,9 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import type { CampaignStatus } from "@/types/database";
 
-const CHECKLIST_EDITABLE_STATUSES: CampaignStatus[] = [
-  "approved",
-  "ongoing",
-  "claim_submitted",
-];
+// "claim_submitted" is intentionally excluded — once a claim is submitted,
+// checklist changes are locked until it's cancelled (Phase 3) or paid.
+const CHECKLIST_EDITABLE_STATUSES: CampaignStatus[] = ["approved", "ongoing"];
 
 export async function upsertClaimChecklistAction(
   campaignId: string,
@@ -46,7 +44,7 @@ export async function upsertClaimChecklistAction(
     ) {
       return {
         error:
-          "Checklist hanya dapat diupdate saat SKP berstatus Approved, Ongoing, atau Klaim Diajukan",
+          "Checklist hanya dapat diupdate saat SKP berstatus Approved atau Ongoing",
       };
     }
 

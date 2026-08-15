@@ -6,7 +6,9 @@ import type { CampaignStatus } from "@/types/database";
 
 const ALLOWED_TYPES = ["application/pdf", "image/jpeg", "image/jpg", "image/png"];
 const MAX_SIZE = 5 * 1024 * 1024; // 5 MB, applies to size after compression
-const EDITABLE_STATUSES: CampaignStatus[] = ["approved", "ongoing", "claim_submitted"];
+// "claim_submitted" is intentionally excluded — once a claim is submitted,
+// new uploads are locked until it's cancelled (Phase 3) or paid.
+const EDITABLE_STATUSES: CampaignStatus[] = ["approved", "ongoing"];
 
 // Upload a claim document for one checklist item. Distributor-only —
 // mirrors CHECKLIST_EDITABLE_STATUSES in app/actions/claim-checklist.ts.
@@ -78,8 +80,7 @@ export async function POST(request: NextRequest) {
   if (!EDITABLE_STATUSES.includes(campaign.status as CampaignStatus)) {
     return NextResponse.json(
       {
-        error:
-          "Dokumen klaim hanya dapat diupload saat SKP berstatus Approved, Ongoing, atau Klaim Diajukan",
+        error: "Dokumen klaim hanya dapat diupload saat SKP berstatus Approved atau Ongoing",
       },
       { status: 400 }
     );

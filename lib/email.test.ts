@@ -8,7 +8,7 @@ vi.mock("resend", () => ({
   }),
 }));
 
-import { sendSkpPendingDigestEmail } from "./email";
+import { sendSkpPendingDigestEmail, sendClaimSubmittedEmail } from "./email";
 
 describe("sendSkpPendingDigestEmail", () => {
   const originalEnv = process.env;
@@ -90,6 +90,85 @@ describe("sendSkpPendingDigestEmail", () => {
     await expect(
       sendSkpPendingDigestEmail({ to: recipients, pendingItems })
     ).resolves.not.toThrow();
+
+    expect(mockSend).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("sendClaimSubmittedEmail", () => {
+  const originalEnv = process.env;
+
+  const recipients = [
+    { email: "finance1@example.com", name: "Finance One" },
+    { email: "creator1@example.com", name: "Creator One" },
+  ];
+
+  const opts = {
+    to: recipients,
+    campaignName: "Promo Lebaran",
+    campaignId: "camp-1",
+    claimAmount: 1_500_000,
+    submittedAt: "2026-08-15T01:00:00.000Z",
+  };
+
+  beforeEach(() => {
+    mockSend.mockReset();
+    mockSend.mockResolvedValue({ data: { id: "email-1" }, error: null });
+    process.env = {
+      ...originalEnv,
+      RESEND_API_KEY: "re_test_key",
+      SKP_EMAIL_ENABLED: "true",
+    };
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
+  it("does not send when SKP_EMAIL_ENABLED is not set", async () => {
+    delete process.env.SKP_EMAIL_ENABLED;
+    await sendClaimSubmittedEmail(opts);
+    expect(mockSend).not.toHaveBeenCalled();
+  });
+
+  it("does not send when RESEND_API_KEY is not set", async () => {
+    delete process.env.RESEND_API_KEY;
+    await sendClaimSubmittedEmail(opts);
+    expect(mockSend).not.toHaveBeenCalled();
+  });
+
+  it("sends one email per recipient with correct subject", async () => {
+    await sendClaimSubmittedEmail(opts);
+
+    expect(mockSend).toHaveBeenCalledTimes(2);
+    expect(mockSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "finance1@example.com",
+        subject: "[Klaim Diajukan] Promo Lebaran",
+      })
+    );
+    expect(mockSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "creator1@example.com",
+        subject: "[Klaim Diajukan] Promo Lebaran",
+      })
+    );
+  });
+
+  it("includes the formatted claim amount in the email body", async () => {
+    await sendClaimSubmittedEmail(opts);
+
+    const call = mockSend.mock.calls[0][0];
+    expect(call.html).toContain("Rp");
+    expect(call.html).toContain("1.500.000");
+  });
+
+  it("continues sending to other recipients when one fails", async () => {
+    mockSend
+      .mockRejectedValueOnce(new Error("bounce"))
+      .mockResolvedValueOnce({ data: { id: "email-2" }, error: null });
+
+    await expect(sendClaimSubmittedEmail(opts)).resolves.not.toThrow();
 
     expect(mockSend).toHaveBeenCalledTimes(2);
   });

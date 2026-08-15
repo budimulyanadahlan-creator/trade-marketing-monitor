@@ -22,11 +22,19 @@ function makeSelectChain(result: { data: unknown }) {
   return chain;
 }
 
-function setupMocks(fileRecord: unknown) {
+function setupMocks(
+  fileRecord: unknown,
+  campaign: { status: string } | null = { status: "ongoing" }
+) {
   const filesChain = makeSelectChain({ data: fileRecord });
+  const campaignsChain = makeSelectChain({ data: campaign });
   const supabase = {
     auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: "dist-1" } } }) },
-    from: vi.fn().mockReturnValue(filesChain),
+    from: vi.fn().mockImplementation((table: string) => {
+      if (table === "campaign_files") return filesChain;
+      if (table === "campaigns") return campaignsChain;
+      return filesChain;
+    }),
   };
 
   const storageRemove = vi.fn().mockResolvedValue({});
@@ -36,7 +44,7 @@ function setupMocks(fileRecord: unknown) {
   (createAdminClient as ReturnType<typeof vi.fn>).mockReturnValue(adminClient);
   (syncChecklistAfterFileDelete as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
-  return { supabase, filesChain, storageRemove };
+  return { supabase, filesChain, campaignsChain, storageRemove };
 }
 
 function makeRequest(fileId: string | null) {
@@ -94,5 +102,40 @@ describe("DELETE /api/upload", () => {
 
     expect(res.status).toBe(404);
     expect(syncChecklistAfterFileDelete).not.toHaveBeenCalled();
+  });
+
+  it("rejects deleting a claim document once the claim has been submitted (locked)", async () => {
+    setupMocks(
+      {
+        file_url: "path/to/file.jpg",
+        uploaded_by: "dist-1",
+        campaign_id: "camp-1",
+        document_type_id: "doc-1",
+      },
+      { status: "claim_submitted" }
+    );
+
+    const res = await DELETE(makeRequest("file-1"));
+    const json = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(json.error).toMatch(/Approved|Ongoing/i);
+    expect(syncChecklistAfterFileDelete).not.toHaveBeenCalled();
+  });
+
+  it("allows deleting a plain SKP attachment even when the campaign is claim_submitted", async () => {
+    setupMocks(
+      {
+        file_url: "path/to/file.pdf",
+        uploaded_by: "dist-1",
+        campaign_id: "camp-1",
+        document_type_id: null,
+      },
+      { status: "claim_submitted" }
+    );
+
+    const res = await DELETE(makeRequest("file-1"));
+
+    expect(res.status).toBe(200);
   });
 });

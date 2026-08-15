@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
+import { formatIDR } from "@/lib/utils";
 import type { UserRole } from "@/types/database";
 
 // Statuses that represent intermediate approval levels (awaiting next approver)
@@ -38,6 +39,7 @@ type CampaignPayload = {
   created_by: string;
   actual_spent: number;
   requested_budget: number;
+  claim_amount: number | null;
 };
 
 export function RealtimeNotifications({
@@ -126,7 +128,30 @@ export function RealtimeNotifications({
                   toast.error("Campaign Anda ditolak", {
                     description: campaign.name,
                   });
+                } else if (campaign.status === "claim_submitted") {
+                  toast.success("Klaim SKP Anda telah diajukan", {
+                    description:
+                      campaign.claim_amount != null
+                        ? `${campaign.name} — ${formatIDR(campaign.claim_amount)}`
+                        : campaign.name,
+                  });
                 }
+              }
+
+              // Notify finance when a distributor (or admin fallback) submits a claim
+              if (role === "finance" && campaign.status === "claim_submitted") {
+                toast.info("Klaim baru diajukan", {
+                  description:
+                    campaign.claim_amount != null
+                      ? `${campaign.name} — ${formatIDR(campaign.claim_amount)}`
+                      : campaign.name,
+                  action: {
+                    label: "Lihat",
+                    onClick: () => {
+                      window.location.href = `/campaigns/${campaign.id}`;
+                    },
+                  },
+                });
               }
             }
           }

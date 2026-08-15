@@ -1,8 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { z } from "zod";
+import { sendClaimSubmittedEmail } from "@/lib/email";
 import type { CampaignStatus } from "@/types/database";
 
 async function requireActiveUser() {
@@ -143,22 +144,33 @@ export async function deleteRealizationAction(
 }
 
 // ============================================================
-// SUBMIT KLAIM (Admin — ongoing → claim_submitted)
+// SUBMIT KLAIM (Distributor — ongoing → claim_submitted;
+// admin/superadmin can also use this as a fallback)
 // ============================================================
 
+const submitKlaimSchema = z.object({
+  claimAmount: z.coerce.number().min(1, "Nominal klaim harus lebih dari 0"),
+});
+
 export async function submitKlaimAction(
-  campaignId: string
+  campaignId: string,
+  claimAmount: number
 ): Promise<{ error?: string; success?: boolean }> {
   try {
-    const { supabase, profile } = await requireActiveUser();
+    const { supabase, userId, profile } = await requireActiveUser();
 
-    if (!["admin", "superadmin"].includes(profile.role)) {
-      return { error: "Hanya Admin yang dapat mengajukan klaim" };
+    if (!["distributor", "admin", "superadmin"].includes(profile.role)) {
+      return { error: "Hanya distributor atau admin yang dapat mengajukan klaim" };
+    }
+
+    const parsed = submitKlaimSchema.safeParse({ claimAmount });
+    if (!parsed.success) {
+      return { error: parsed.error.issues[0]?.message ?? "Nominal klaim tidak valid" };
     }
 
     const { data: campaign } = await supabase
       .from("campaigns")
-      .select("id, status")
+      .select("id, status, name, created_by")
       .eq("id", campaignId)
       .single();
 
@@ -169,30 +181,88 @@ export async function submitKlaimAction(
       };
     }
 
-    const { count } = await supabase
-      .from("realizations")
-      .select("id", { count: "exact", head: true })
-      .eq("campaign_id", campaignId);
-
-    if (!count || count === 0) {
-      return {
-        error: "Input minimal satu realisasi sebelum mengajukan klaim",
-      };
-    }
+    const submittedAt = new Date().toISOString();
 
     const { error } = await supabase
       .from("campaigns")
-      .update({ status: "claim_submitted" as CampaignStatus })
+      .update({
+        status: "claim_submitted" as CampaignStatus,
+        claim_amount: parsed.data.claimAmount,
+        claim_submitted_at: submittedAt,
+        claim_submitted_by: userId,
+      })
       .eq("id", campaignId);
 
     if (error) return { error: error.message };
 
     revalidatePath(`/campaigns/${campaignId}`);
     revalidatePath("/campaigns");
+
+    // Best-effort: notify finance + the SKP creator. A notification failure
+    // shouldn't fail the claim submission itself, which already succeeded.
+    try {
+      await notifyClaimSubmitted({
+        campaignId,
+        campaignName: campaign.name,
+        claimAmount: parsed.data.claimAmount,
+        creatorId: campaign.created_by,
+        submittedAt,
+      });
+    } catch (notifyErr) {
+      console.error("[submitKlaimAction] Notification error:", notifyErr);
+    }
+
     return { success: true };
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Terjadi kesalahan" };
   }
+}
+
+async function notifyClaimSubmitted(opts: {
+  campaignId: string;
+  campaignName: string;
+  claimAmount: number;
+  creatorId: string;
+  submittedAt: string;
+}) {
+  const adminClient = createAdminClient();
+
+  const [{ data: financeUsers }, { data: creatorProfile }] = await Promise.all([
+    adminClient
+      .from("users")
+      .select("id, full_name")
+      .eq("role", "finance")
+      .eq("is_active", true),
+    adminClient.from("users").select("id, full_name").eq("id", opts.creatorId).single(),
+  ]);
+
+  const nameById = new Map<string, string>();
+  const recipientIds = new Set<string>();
+  for (const u of financeUsers ?? []) {
+    recipientIds.add(u.id);
+    nameById.set(u.id, u.full_name);
+  }
+  if (creatorProfile) {
+    recipientIds.add(creatorProfile.id);
+    nameById.set(creatorProfile.id, creatorProfile.full_name);
+  }
+
+  if (recipientIds.size === 0) return;
+
+  const { data: authData } = await adminClient.auth.admin.listUsers({ perPage: 1000 });
+  const recipients = (authData?.users ?? [])
+    .filter((u) => recipientIds.has(u.id) && u.email)
+    .map((u) => ({ email: u.email!, name: nameById.get(u.id) ?? u.email! }));
+
+  if (recipients.length === 0) return;
+
+  await sendClaimSubmittedEmail({
+    to: recipients,
+    campaignId: opts.campaignId,
+    campaignName: opts.campaignName,
+    claimAmount: opts.claimAmount,
+    submittedAt: opts.submittedAt,
+  });
 }
 
 // ============================================================

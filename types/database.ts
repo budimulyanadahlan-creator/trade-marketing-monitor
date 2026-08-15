@@ -163,6 +163,9 @@ export type CampaignRow = {
   submitted_at: string | null;
   skp_number: string | null;
   aa_reference_number: string | null;
+  claim_amount: number | null;
+  claim_submitted_at: string | null;
+  claim_submitted_by: string | null;
   updated_at: string;
   created_at: string;
 };
@@ -385,7 +388,7 @@ export type Database = {
       };
       campaigns: {
         Row: CampaignRow;
-        Insert: Omit<CampaignRow, "id" | "created_at" | "updated_at" | "actual_spent" | "submitted_at" | "skp_number" | "aa_reference_number"> & {
+        Insert: Omit<CampaignRow, "id" | "created_at" | "updated_at" | "actual_spent" | "submitted_at" | "skp_number" | "aa_reference_number" | "claim_amount" | "claim_submitted_at" | "claim_submitted_by"> & {
           id?: string;
           created_at?: string;
           updated_at?: string;
@@ -393,6 +396,9 @@ export type Database = {
           submitted_at?: string | null;
           skp_number?: string | null;
           aa_reference_number?: string | null;
+          claim_amount?: number | null;
+          claim_submitted_at?: string | null;
+          claim_submitted_by?: string | null;
           mechanism?: string;
           sales_projection?: number;
         };

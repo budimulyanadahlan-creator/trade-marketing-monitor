@@ -351,11 +351,10 @@ function AddRealizationDialog({
 // Claim Checklist Section
 // ============================================================
 
-const CHECKLIST_EDITABLE_STATUSES: CampaignStatus[] = [
-  "approved",
-  "ongoing",
-  "claim_submitted",
-];
+// "claim_submitted" is intentionally excluded — once a claim is submitted,
+// checklist/upload changes are locked until it's cancelled (Phase 3) or paid.
+// Mirrors CHECKLIST_EDITABLE_STATUSES in app/actions/claim-checklist.ts.
+const CHECKLIST_EDITABLE_STATUSES: CampaignStatus[] = ["approved", "ongoing"];
 
 const CLAIM_DOCUMENT_ACCEPT = "application/pdf,image/jpeg,image/jpg,image/png";
 
@@ -663,6 +662,87 @@ function ClaimChecklistSection({
 }
 
 // ============================================================
+// Submit Klaim Dialog
+// ============================================================
+
+function SubmitKlaimDialog({
+  campaignId,
+  open,
+  onOpenChange,
+}: {
+  campaignId: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [amount, setAmount] = useState("");
+  const [isPending, startTransition] = useTransition();
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const parsedAmount = Number(amount.replace(/\D/g, ""));
+    if (!parsedAmount || parsedAmount <= 0) {
+      toast.error("Masukkan nominal klaim yang valid");
+      return;
+    }
+
+    startTransition(async () => {
+      const result = await submitKlaimAction(campaignId, parsedAmount);
+
+      if (result.error) {
+        toast.error(result.error);
+        return;
+      }
+
+      toast.success("Klaim berhasil diajukan");
+      setAmount("");
+      onOpenChange(false);
+    });
+  }
+
+  const parsedAmount = Number(amount.replace(/\D/g, "") || "0");
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Ajukan Klaim</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="claim-amount">Nominal Klaim (IDR)</Label>
+            <Input
+              id="claim-amount"
+              placeholder="contoh: 5000000"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value.replace(/[^0-9]/g, ""))}
+              required
+            />
+            {amount && (
+              <p className="text-xs text-slate-400">{formatIDR(parsedAmount)}</p>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+              disabled={isPending}
+            >
+              Batal
+            </Button>
+            <Button type="submit" disabled={isPending || !amount}>
+              {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              Ajukan
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ============================================================
 // Realizations Section
 // ============================================================
 
@@ -684,26 +764,19 @@ function RealizationsSection({
   unfulfilledClaimDocs: string[];
 }) {
   const [addOpen, setAddOpen] = useState(false);
+  const [submitKlaimOpen, setSubmitKlaimOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [isPendingKlaim, startKlaim] = useTransition();
+  const [, startDelete] = useTransition();
   const [isPendingPaid, startPaid] = useTransition();
   const [isPendingCompleted, startCompleted] = useTransition();
 
   function handleDelete(id: string) {
     setDeletingId(id);
-    startKlaim(async () => {
+    startDelete(async () => {
       const result = await deleteRealizationAction(id, campaign.id);
       setDeletingId(null);
       if (result.error) toast.error(result.error);
       else toast.success("Realisasi dihapus");
-    });
-  }
-
-  function handleSubmitKlaim() {
-    startKlaim(async () => {
-      const result = await submitKlaimAction(campaign.id);
-      if (result.error) toast.error(result.error);
-      else toast.success("Klaim berhasil diajukan");
     });
   }
 
@@ -736,14 +809,9 @@ function RealizationsSection({
             <Button
               size="sm"
               variant="outline"
-              onClick={handleSubmitKlaim}
-              disabled={isPendingKlaim || realizations.length === 0}
+              onClick={() => setSubmitKlaimOpen(true)}
             >
-              {isPendingKlaim ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Receipt className="h-4 w-4" />
-              )}
+              <Receipt className="h-4 w-4" />
               Submit Klaim
             </Button>
           )}
@@ -875,6 +943,12 @@ function RealizationsSection({
         open={addOpen}
         onOpenChange={setAddOpen}
       />
+
+      <SubmitKlaimDialog
+        campaignId={campaign.id}
+        open={submitKlaimOpen}
+        onOpenChange={setSubmitKlaimOpen}
+      />
     </div>
   );
 }
@@ -922,7 +996,7 @@ export function CampaignDetailClient({
       : [];
 
   const canSubmitKlaim =
-    ["admin", "superadmin"].includes(userRole) &&
+    ["distributor", "admin", "superadmin"].includes(userRole) &&
     campaign.status === "ongoing";
 
   const canMarkPaid =
@@ -1183,6 +1257,16 @@ export function CampaignDetailClient({
             label="Total Realisasi"
             value={formatIDR(campaign.actual_spent)}
           />
+          {campaign.claim_amount != null && (
+            <DetailRow
+              label="Nominal Klaim"
+              value={
+                <span className="font-semibold text-amber-400">
+                  {formatIDR(campaign.claim_amount)}
+                </span>
+              }
+            />
+          )}
           {campaign.requested_budget > 0 && campaign.actual_spent > 0 && (
             <DetailRow
               label="Serapan Anggaran"

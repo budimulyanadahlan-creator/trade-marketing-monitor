@@ -187,12 +187,14 @@ describe("POST /api/upload/claim-document", () => {
     expect(json.error).toMatch(/Approved|Ongoing|Klaim Diajukan/i);
   });
 
-  it("accepts claim_submitted as an editable status", async () => {
+  it("rejects claim_submitted — uploads are locked once a claim is submitted", async () => {
     setupMocks({ campaign: { id: "camp-1", status: "claim_submitted" } });
 
     const res = await POST(makeRequest());
+    const json = await res.json();
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(400);
+    expect(json.error).toMatch(/Approved|Ongoing/i);
   });
 
   it("rejects missing file", async () => {
