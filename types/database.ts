@@ -239,6 +239,20 @@ export type DistributorClaimChecklistRow = {
   updated_at: string;
 };
 
+export type ClaimEventAction = "submitted" | "cancelled";
+
+export type ClaimEventRow = {
+  id: string;
+  campaign_id: string;
+  actor_id: string | null;
+  action: ClaimEventAction;
+  // Nominal klaim pada saat 'submitted'; selalu null untuk 'cancelled' —
+  // riwayat nominal per pengajuan, karena campaigns.claim_amount dikosongkan
+  // saat dibatalkan.
+  claim_amount: number | null;
+  created_at: string;
+};
+
 // Convenience aliases
 export type Department = DepartmentRow;
 export type UserProfile = UserRow;
@@ -634,6 +648,27 @@ export type Database = {
             columns: ["document_type_id"];
             isOneToOne: false;
             referencedRelation: "claim_document_types";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      claim_events: {
+        Row: ClaimEventRow;
+        Insert: Omit<ClaimEventRow, "id" | "created_at"> & { id?: string; created_at?: string };
+        Update: never;
+        Relationships: [
+          {
+            foreignKeyName: "claim_events_campaign_id_fkey";
+            columns: ["campaign_id"];
+            isOneToOne: false;
+            referencedRelation: "campaigns";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "claim_events_actor_id_fkey";
+            columns: ["actor_id"];
+            isOneToOne: false;
+            referencedRelation: "users";
             referencedColumns: ["id"];
           }
         ];

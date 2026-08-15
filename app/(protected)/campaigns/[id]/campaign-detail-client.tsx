@@ -42,6 +42,7 @@ import {
   addRealizationAction,
   deleteRealizationAction,
   submitKlaimAction,
+  cancelKlaimAction,
   markAsPaidAction,
   markAsCompletedAction,
 } from "@/app/actions/realizations";
@@ -53,6 +54,7 @@ import type {
   ApprovalHistoryRow,
   RealizationRow,
   DistributorReceiptRow,
+  ClaimEventRow,
   UserRole,
   CampaignStatus,
 } from "@/types/database";
@@ -81,6 +83,10 @@ type ApprovalHistoryWithActor = ApprovalHistoryRow & {
   actor: { full_name: string } | null;
 };
 
+type ClaimEventWithActor = ClaimEventRow & {
+  actor: { full_name: string } | null;
+};
+
 interface Props {
   campaign: CampaignWithJoins;
   files: CampaignFileRow[];
@@ -88,6 +94,7 @@ interface Props {
   realizations: RealizationWithCreator[];
   distributorReceipts: DistributorReceiptWithReceiver[];
   claimDocuments: ClaimDocument[];
+  claimEvents: ClaimEventWithActor[];
   aaBudgetInfo: AABudgetInfo | null;
   isEditable: boolean;
   userRole: UserRole;
@@ -751,6 +758,7 @@ function RealizationsSection({
   realizations,
   canAddRealization,
   canSubmitKlaim,
+  canCancelKlaim,
   canMarkPaid,
   canMarkCompleted,
   unfulfilledClaimDocs,
@@ -759,6 +767,7 @@ function RealizationsSection({
   realizations: RealizationWithCreator[];
   canAddRealization: boolean;
   canSubmitKlaim: boolean;
+  canCancelKlaim: boolean;
   canMarkPaid: boolean;
   canMarkCompleted: boolean;
   unfulfilledClaimDocs: string[];
@@ -767,6 +776,7 @@ function RealizationsSection({
   const [submitKlaimOpen, setSubmitKlaimOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [, startDelete] = useTransition();
+  const [isPendingCancel, startCancel] = useTransition();
   const [isPendingPaid, startPaid] = useTransition();
   const [isPendingCompleted, startCompleted] = useTransition();
 
@@ -777,6 +787,14 @@ function RealizationsSection({
       setDeletingId(null);
       if (result.error) toast.error(result.error);
       else toast.success("Realisasi dihapus");
+    });
+  }
+
+  function handleCancelKlaim() {
+    startCancel(async () => {
+      const result = await cancelKlaimAction(campaign.id);
+      if (result.error) toast.error(result.error);
+      else toast.success("Pengajuan klaim dibatalkan");
     });
   }
 
@@ -813,6 +831,22 @@ function RealizationsSection({
             >
               <Receipt className="h-4 w-4" />
               Submit Klaim
+            </Button>
+          )}
+          {canCancelKlaim && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleCancelKlaim}
+              disabled={isPendingCancel}
+              className="border-rose-500/40 text-rose-400 hover:bg-rose-500/10"
+            >
+              {isPendingCancel ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <XCircle className="h-4 w-4" />
+              )}
+              Batalkan Pengajuan
             </Button>
           )}
           {canMarkPaid && (
@@ -954,6 +988,66 @@ function RealizationsSection({
 }
 
 // ============================================================
+// Claim History Section (Riwayat Klaim)
+// ============================================================
+
+const claimEventIconMap: Record<string, React.ReactNode> = {
+  submitted: <Send className="h-3.5 w-3.5 text-blue-400" />,
+  cancelled: <XCircle className="h-3.5 w-3.5 text-rose-400" />,
+};
+
+const claimEventLabelMap: Record<string, string> = {
+  submitted: "Klaim Diajukan",
+  cancelled: "Pengajuan Dibatalkan",
+};
+
+function ClaimHistorySection({ events }: { events: ClaimEventWithActor[] }) {
+  return (
+    <div className="rounded-xl border border-white/8 bg-white/2 p-6">
+      <h2 className="text-sm font-semibold text-slate-300 mb-4 uppercase tracking-wider">
+        Riwayat Klaim
+      </h2>
+      <ol className="space-y-4">
+        {events.map((entry, idx) => (
+          <li key={entry.id} className="flex gap-3">
+            <div className="flex flex-col items-center">
+              <div className="flex h-7 w-7 items-center justify-center rounded-full border border-white/10 bg-white/4">
+                {claimEventIconMap[entry.action] ?? (
+                  <Clock className="h-3.5 w-3.5 text-slate-400" />
+                )}
+              </div>
+              {idx < events.length - 1 && (
+                <div className="w-px flex-1 bg-white/8 mt-1" />
+              )}
+            </div>
+            <div className="pb-4 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-medium text-slate-200">
+                  {claimEventLabelMap[entry.action] ?? entry.action}
+                </span>
+                <span className="text-xs text-slate-500">·</span>
+                <span className="text-xs text-slate-500">
+                  {entry.actor?.full_name ?? "—"}
+                </span>
+                <span className="text-xs text-slate-500">·</span>
+                <span className="text-xs text-slate-500">
+                  {formatDate(entry.created_at)}
+                </span>
+              </div>
+              {entry.action === "submitted" && entry.claim_amount != null && (
+                <p className="mt-1 text-sm text-slate-400">
+                  Nominal klaim: {formatIDR(entry.claim_amount)}
+                </p>
+              )}
+            </div>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+// ============================================================
 // Main Client Component
 // ============================================================
 
@@ -964,6 +1058,7 @@ export function CampaignDetailClient({
   realizations,
   distributorReceipts,
   claimDocuments,
+  claimEvents,
   aaBudgetInfo,
   isEditable,
   userRole,
@@ -999,6 +1094,10 @@ export function CampaignDetailClient({
     ["distributor", "admin", "superadmin"].includes(userRole) &&
     campaign.status === "ongoing";
 
+  const canCancelKlaim =
+    ["distributor", "admin", "superadmin"].includes(userRole) &&
+    campaign.status === "claim_submitted";
+
   const canMarkPaid =
     ["finance", "superadmin"].includes(userRole) &&
     campaign.status === "claim_submitted";
@@ -1017,6 +1116,7 @@ export function CampaignDetailClient({
   const showRealizationsSection =
     canAddRealization ||
     canSubmitKlaim ||
+    canCancelKlaim ||
     canMarkPaid ||
     canMarkCompleted ||
     realizations.length > 0;
@@ -1298,6 +1398,7 @@ export function CampaignDetailClient({
           realizations={realizations}
           canAddRealization={canAddRealization}
           canSubmitKlaim={canSubmitKlaim}
+          canCancelKlaim={canCancelKlaim}
           canMarkPaid={canMarkPaid}
           canMarkCompleted={canMarkCompleted}
           unfulfilledClaimDocs={unfulfilledClaimDocs}
@@ -1314,6 +1415,9 @@ export function CampaignDetailClient({
           documents={claimDocuments}
         />
       )}
+
+      {/* Claim history */}
+      {claimEvents.length > 0 && <ClaimHistorySection events={claimEvents} />}
 
       {/* Files */}
       {skpFiles.length > 0 && (

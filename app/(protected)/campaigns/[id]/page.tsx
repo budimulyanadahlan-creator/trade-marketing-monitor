@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { computeAARemainingBudget } from "@/lib/campaign-status";
 import { CampaignDetailClient } from "./campaign-detail-client";
-import type { CampaignRow, CampaignFileRow, ApprovalHistoryRow, RealizationRow, DistributorReceiptRow, UserRole, CampaignStatus } from "@/types/database";
+import type { CampaignRow, CampaignFileRow, ApprovalHistoryRow, RealizationRow, DistributorReceiptRow, ClaimEventRow, UserRole, CampaignStatus } from "@/types/database";
 
 export type ClaimDocumentFile = {
   id: string;
@@ -117,6 +117,18 @@ export default async function CampaignDetailPage({ params }: Props) {
     : { data: [] };
   const distributorReceipts = (receiptsRaw ?? []) as (DistributorReceiptRow & {
     receiver: { full_name: string } | null;
+  })[];
+
+  // Riwayat ajukan/batalkan klaim — visible to whoever the RLS policy on
+  // claim_events lets see this campaign's events (admin/superadmin/finance/
+  // manager always, distributor for their own visible SKP).
+  const { data: claimEventsRaw } = await supabase
+    .from("claim_events")
+    .select("*, actor:actor_id(full_name)")
+    .eq("campaign_id", id)
+    .order("created_at", { ascending: true });
+  const claimEvents = (claimEventsRaw ?? []) as (ClaimEventRow & {
+    actor: { full_name: string } | null;
   })[];
 
   // Claim checklist data (distributor, admin, superadmin, finance, manager)
@@ -284,6 +296,7 @@ export default async function CampaignDetailPage({ params }: Props) {
       realizations={realizations}
       distributorReceipts={distributorReceipts}
       claimDocuments={claimDocuments}
+      claimEvents={claimEvents}
       aaBudgetInfo={aaBudgetInfo}
       isEditable={isEditable}
       userRole={userRole}

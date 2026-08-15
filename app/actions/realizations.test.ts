@@ -7,7 +7,7 @@ vi.mock("@/lib/supabase/server", () => ({
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/email", () => ({ sendClaimSubmittedEmail: vi.fn() }));
 
-import { submitKlaimAction } from "./realizations";
+import { submitKlaimAction, cancelKlaimAction } from "./realizations";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { sendClaimSubmittedEmail } from "@/lib/email";
@@ -86,6 +86,7 @@ function setupMocks({
   ],
 }: SetupOptions = {}) {
   const campaignsChain = makeCampaignsChain(campaign, updateError);
+  const claimEventsChain = { insert: vi.fn().mockResolvedValue({ error: null }) };
 
   const mockClient = {
     auth: {
@@ -97,6 +98,7 @@ function setupMocks({
       if (table === "users")
         return makeQueryChain({ role, is_active: isActive });
       if (table === "campaigns") return campaignsChain;
+      if (table === "claim_events") return claimEventsChain;
       return {};
     }),
   };
@@ -117,7 +119,7 @@ function setupMocks({
   vi.mocked(createClient).mockResolvedValue(mockClient as never);
   vi.mocked(createAdminClient).mockReturnValue(mockAdminClient as never);
 
-  return { campaignsChain, mockAdminClient };
+  return { campaignsChain, mockAdminClient, claimEventsChain };
 }
 
 describe("submitKlaimAction", () => {
@@ -167,7 +169,7 @@ describe("submitKlaimAction", () => {
   });
 
   it("distributor happy path: updates campaign, revalidates, notifies, returns success", async () => {
-    const { campaignsChain } = setupMocks();
+    const { campaignsChain, claimEventsChain } = setupMocks();
 
     const result = await submitKlaimAction("camp-1", 1_500_000);
 
@@ -180,6 +182,13 @@ describe("submitKlaimAction", () => {
         claim_submitted_by: "dist-1",
       })
     );
+
+    expect(claimEventsChain.insert).toHaveBeenCalledWith({
+      campaign_id: "camp-1",
+      actor_id: "dist-1",
+      action: "submitted",
+      claim_amount: 1_500_000,
+    });
 
     expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith(
       "/campaigns/camp-1"
@@ -212,6 +221,121 @@ describe("submitKlaimAction", () => {
     );
 
     const result = await submitKlaimAction("camp-1", 1_000_000);
+    expect(result).toEqual({ success: true });
+  });
+
+  it("still succeeds even if the claim_events insert fails", async () => {
+    const { claimEventsChain } = setupMocks();
+    claimEventsChain.insert.mockRejectedValueOnce(new Error("db down"));
+
+    const result = await submitKlaimAction("camp-1", 1_000_000);
+    expect(result).toEqual({ success: true });
+  });
+});
+
+describe("cancelKlaimAction", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns error when user is not distributor, admin, or superadmin", async () => {
+    setupMocks({ role: "manager" });
+    const result = await cancelKlaimAction("camp-1");
+    expect(result).toEqual({
+      error: "Hanya distributor atau admin yang dapat membatalkan klaim",
+    });
+  });
+
+  it("returns error when campaign is not claim_submitted", async () => {
+    setupMocks({
+      campaign: {
+        id: "camp-1",
+        status: "ongoing",
+        name: "Promo A",
+        created_by: "creator-1",
+      },
+    });
+    const result = await cancelKlaimAction("camp-1");
+    expect(result).toEqual({
+      error: "Hanya SKP berstatus Klaim Diajukan yang dapat dibatalkan",
+    });
+  });
+
+  it("returns error when db update fails", async () => {
+    setupMocks({
+      campaign: {
+        id: "camp-1",
+        status: "claim_submitted",
+        name: "Promo A",
+        created_by: "creator-1",
+      },
+      updateError: { message: "DB constraint violation" },
+    });
+    const result = await cancelKlaimAction("camp-1");
+    expect(result).toEqual({ error: "DB constraint violation" });
+  });
+
+  it("distributor happy path: reverts campaign to ongoing, clears claim fields, logs history", async () => {
+    const { campaignsChain, claimEventsChain } = setupMocks({
+      campaign: {
+        id: "camp-1",
+        status: "claim_submitted",
+        name: "Promo A",
+        created_by: "creator-1",
+      },
+    });
+
+    const result = await cancelKlaimAction("camp-1");
+
+    expect(result).toEqual({ success: true });
+
+    expect(campaignsChain.update).toHaveBeenCalledWith({
+      status: "ongoing",
+      claim_amount: null,
+      claim_submitted_at: null,
+      claim_submitted_by: null,
+    });
+
+    expect(claimEventsChain.insert).toHaveBeenCalledWith({
+      campaign_id: "camp-1",
+      actor_id: "dist-1",
+      action: "cancelled",
+      claim_amount: null,
+    });
+
+    expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith(
+      "/campaigns/camp-1"
+    );
+    expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/campaigns");
+  });
+
+  it("admin can also cancel a claim as a fallback", async () => {
+    setupMocks({
+      userId: "admin-1",
+      role: "admin",
+      campaign: {
+        id: "camp-1",
+        status: "claim_submitted",
+        name: "Promo A",
+        created_by: "creator-1",
+      },
+    });
+    const result = await cancelKlaimAction("camp-1");
+    expect(result).toEqual({ success: true });
+  });
+
+  it("still succeeds even if the claim_events insert fails", async () => {
+    const { claimEventsChain } = setupMocks({
+      campaign: {
+        id: "camp-1",
+        status: "claim_submitted",
+        name: "Promo A",
+        created_by: "creator-1",
+      },
+    });
+    claimEventsChain.insert.mockRejectedValueOnce(new Error("db down"));
+
+    const result = await cancelKlaimAction("camp-1");
     expect(result).toEqual({ success: true });
   });
 });

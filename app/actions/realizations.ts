@@ -198,8 +198,19 @@ export async function submitKlaimAction(
     revalidatePath(`/campaigns/${campaignId}`);
     revalidatePath("/campaigns");
 
-    // Best-effort: notify finance + the SKP creator. A notification failure
-    // shouldn't fail the claim submission itself, which already succeeded.
+    // Best-effort: the status change above already succeeded, so a failure
+    // recording history or sending notifications shouldn't fail the action.
+    try {
+      await supabase.from("claim_events").insert({
+        campaign_id: campaignId,
+        actor_id: userId,
+        action: "submitted",
+        claim_amount: parsed.data.claimAmount,
+      });
+    } catch (historyErr) {
+      console.error("[submitKlaimAction] claim_events insert error:", historyErr);
+    }
+
     try {
       await notifyClaimSubmitted({
         campaignId,
@@ -210,6 +221,67 @@ export async function submitKlaimAction(
       });
     } catch (notifyErr) {
       console.error("[submitKlaimAction] Notification error:", notifyErr);
+    }
+
+    return { success: true };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Terjadi kesalahan" };
+  }
+}
+
+// ============================================================
+// CANCEL KLAIM (Distributor — claim_submitted → ongoing;
+// admin/superadmin can also use this as a fallback)
+// ============================================================
+
+export async function cancelKlaimAction(
+  campaignId: string
+): Promise<{ error?: string; success?: boolean }> {
+  try {
+    const { supabase, userId, profile } = await requireActiveUser();
+
+    if (!["distributor", "admin", "superadmin"].includes(profile.role)) {
+      return { error: "Hanya distributor atau admin yang dapat membatalkan klaim" };
+    }
+
+    const { data: campaign } = await supabase
+      .from("campaigns")
+      .select("id, status")
+      .eq("id", campaignId)
+      .single();
+
+    if (!campaign || campaign.status !== "claim_submitted") {
+      return {
+        error: "Hanya SKP berstatus Klaim Diajukan yang dapat dibatalkan",
+      };
+    }
+
+    const { error } = await supabase
+      .from("campaigns")
+      .update({
+        status: "ongoing" as CampaignStatus,
+        claim_amount: null,
+        claim_submitted_at: null,
+        claim_submitted_by: null,
+      })
+      .eq("id", campaignId);
+
+    if (error) return { error: error.message };
+
+    revalidatePath(`/campaigns/${campaignId}`);
+    revalidatePath("/campaigns");
+
+    // Best-effort: the status change above already succeeded, so a failure
+    // recording history shouldn't fail the action.
+    try {
+      await supabase.from("claim_events").insert({
+        campaign_id: campaignId,
+        actor_id: userId,
+        action: "cancelled",
+        claim_amount: null,
+      });
+    } catch (historyErr) {
+      console.error("[cancelKlaimAction] claim_events insert error:", historyErr);
     }
 
     return { success: true };
