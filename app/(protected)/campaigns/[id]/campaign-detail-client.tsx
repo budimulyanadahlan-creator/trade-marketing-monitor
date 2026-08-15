@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -535,6 +535,16 @@ function ClaimChecklistSection({
   const [localState, setLocalState] = useState<Record<string, boolean>>(
     Object.fromEntries(documents.map((d) => [d.documentTypeId, d.isFulfilled]))
   );
+
+  // `documents` only gets a new reference when the page's server data is
+  // actually refetched (router.refresh() after upload/delete) — resync so
+  // auto-fulfillment from a new file (or an unchecked item after the last
+  // file is removed) shows up. Without this, localState stays pinned to
+  // whatever it was on first mount, since useState's initializer only runs
+  // once and `??` never falls through for an already-present (false) key.
+  useEffect(() => {
+    setLocalState(Object.fromEntries(documents.map((d) => [d.documentTypeId, d.isFulfilled])));
+  }, [documents]);
 
   async function handleToggle(documentTypeId: string) {
     if (!isEditable || pendingIds.has(documentTypeId)) return;
