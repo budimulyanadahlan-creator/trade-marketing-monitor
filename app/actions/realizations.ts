@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { z } from "zod";
-import { sendClaimSubmittedEmail } from "@/lib/email";
+import { sendClaimSubmittedEmail, sendMarkedAsPaidEmail } from "@/lib/email";
 import type { CampaignStatus } from "@/types/database";
 
 async function requireActiveUser() {
@@ -338,22 +338,40 @@ async function notifyClaimSubmitted(opts: {
 }
 
 // ============================================================
-// MARK AS PAID (Finance — claim_submitted → paid)
+// MARK AS PAID (Finance/Admin/Superadmin — claim_submitted → paid)
 // ============================================================
 
+const markAsPaidSchema = z.object({
+  paidDate: z
+    .string()
+    .optional()
+    .refine(
+      (val) => !val || new Date(val) <= new Date(),
+      "Tanggal bayar tidak boleh lebih dari hari ini"
+    ),
+  note: z.string().trim().max(500, "Catatan maksimal 500 karakter").optional(),
+});
+
 export async function markAsPaidAction(
-  campaignId: string
+  campaignId: string,
+  paidDate?: string,
+  note?: string
 ): Promise<{ error?: string; success?: boolean }> {
   try {
     const { supabase, profile } = await requireActiveUser();
 
-    if (!["finance", "superadmin"].includes(profile.role)) {
-      return { error: "Hanya Finance yang dapat menandai SKP sebagai Paid" };
+    if (!["finance", "admin", "superadmin"].includes(profile.role)) {
+      return { error: "Hanya Finance atau Admin yang dapat menandai SKP sebagai Paid" };
+    }
+
+    const parsed = markAsPaidSchema.safeParse({ paidDate, note });
+    if (!parsed.success) {
+      return { error: parsed.error.issues[0]?.message ?? "Input tidak valid" };
     }
 
     const { data: campaign } = await supabase
       .from("campaigns")
-      .select("id, status")
+      .select("id, status, name, claim_amount, distributor_id")
       .eq("id", campaignId)
       .single();
 
@@ -364,19 +382,91 @@ export async function markAsPaidAction(
       };
     }
 
+    const paidAt = parsed.data.paidDate
+      ? new Date(parsed.data.paidDate).toISOString()
+      : new Date().toISOString();
+    const paidNote = parsed.data.note || null;
+
     const { error } = await supabase
       .from("campaigns")
-      .update({ status: "paid" as CampaignStatus })
+      .update({
+        status: "paid" as CampaignStatus,
+        paid_at: paidAt,
+        paid_note: paidNote,
+      })
       .eq("id", campaignId);
 
     if (error) return { error: error.message };
 
     revalidatePath(`/campaigns/${campaignId}`);
     revalidatePath("/campaigns");
+
+    // Best-effort: the status change above already succeeded, so a failure
+    // sending notifications shouldn't fail the action.
+    try {
+      await notifyMarkedAsPaid({
+        campaignId,
+        campaignName: campaign.name,
+        claimAmount: campaign.claim_amount,
+        distributorId: campaign.distributor_id,
+        paidAt,
+        paidNote,
+      });
+    } catch (notifyErr) {
+      console.error("[markAsPaidAction] Notification error:", notifyErr);
+    }
+
     return { success: true };
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Terjadi kesalahan" };
   }
+}
+
+async function notifyMarkedAsPaid(opts: {
+  campaignId: string;
+  campaignName: string;
+  claimAmount: number | null;
+  distributorId: string | null;
+  paidAt: string;
+  paidNote: string | null;
+}) {
+  // Not filtered further than distributor_id — same accepted cross-distributor
+  // visibility gap documented for this feature (PRD Keputusan #5).
+  if (!opts.distributorId) return;
+
+  const adminClient = createAdminClient();
+
+  const { data: distributorUsers } = await adminClient
+    .from("users")
+    .select("id, full_name")
+    .eq("role", "distributor")
+    .eq("distributor_id", opts.distributorId)
+    .eq("is_active", true);
+
+  if (!distributorUsers || distributorUsers.length === 0) return;
+
+  const nameById = new Map<string, string>();
+  const recipientIds = new Set<string>();
+  for (const u of distributorUsers) {
+    recipientIds.add(u.id);
+    nameById.set(u.id, u.full_name);
+  }
+
+  const { data: authData } = await adminClient.auth.admin.listUsers({ perPage: 1000 });
+  const recipients = (authData?.users ?? [])
+    .filter((u) => recipientIds.has(u.id) && u.email)
+    .map((u) => ({ email: u.email!, name: nameById.get(u.id) ?? u.email! }));
+
+  if (recipients.length === 0) return;
+
+  await sendMarkedAsPaidEmail({
+    to: recipients,
+    campaignId: opts.campaignId,
+    campaignName: opts.campaignName,
+    claimAmount: opts.claimAmount,
+    paidAt: opts.paidAt,
+    paidNote: opts.paidNote,
+  });
 }
 
 // ============================================================

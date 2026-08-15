@@ -75,7 +75,7 @@ export default async function ProtectedLayout({
 
   const { data: profile } = await supabase
     .from("users")
-    .select("full_name, role, is_active, department_id")
+    .select("full_name, role, is_active, department_id, distributor_id")
     .eq("id", user.id)
     .single();
 
@@ -94,6 +94,7 @@ export default async function ProtectedLayout({
       notificationCount={notificationCount}
       userId={user.id}
       departmentId={profile.department_id}
+      distributorId={profile.distributor_id}
       pendingStatuses={pendingStatuses}
     >
       {children}

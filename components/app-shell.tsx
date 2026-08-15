@@ -14,6 +14,7 @@ interface AppShellProps {
   notificationCount: number;
   userId: string;
   departmentId: string | null;
+  distributorId: string | null;
   pendingStatuses: string[];
   children: React.ReactNode;
 }
@@ -24,6 +25,7 @@ export function AppShell({
   notificationCount,
   userId,
   departmentId,
+  distributorId,
   pendingStatuses,
   children,
 }: AppShellProps) {
@@ -54,6 +56,7 @@ export function AppShell({
         userId={userId}
         role={role}
         departmentId={departmentId}
+        distributorId={distributorId}
         pendingStatuses={pendingStatuses}
       />
     </div>

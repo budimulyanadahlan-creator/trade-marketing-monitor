@@ -27,6 +27,8 @@ interface RealtimeNotificationsProps {
   userId: string;
   role: UserRole;
   departmentId: string | null;
+  /** This user's distributor company, if role is "distributor" */
+  distributorId: string | null;
   /** Statuses this user is responsible for approving (computed server-side) */
   pendingStatuses: string[];
 }
@@ -36,6 +38,7 @@ type CampaignPayload = {
   name: string;
   status: string;
   department_id: string;
+  distributor_id: string | null;
   created_by: string;
   actual_spent: number;
   requested_budget: number;
@@ -46,6 +49,7 @@ export function RealtimeNotifications({
   userId,
   role,
   departmentId,
+  distributorId,
   pendingStatuses,
 }: RealtimeNotificationsProps) {
   // Track which campaign IDs we've already toasted to avoid duplicates on reconnect
@@ -153,6 +157,27 @@ export function RealtimeNotifications({
                   },
                 });
               }
+
+              // Notify the related distributor when their claim is marked as paid
+              if (
+                role === "distributor" &&
+                campaign.status === "paid" &&
+                distributorId != null &&
+                campaign.distributor_id === distributorId
+              ) {
+                toast.success("Klaim SKP Anda telah dibayar", {
+                  description:
+                    campaign.claim_amount != null
+                      ? `${campaign.name} — ${formatIDR(campaign.claim_amount)}`
+                      : campaign.name,
+                  action: {
+                    label: "Lihat",
+                    onClick: () => {
+                      window.location.href = `/campaigns/${campaign.id}`;
+                    },
+                  },
+                });
+              }
             }
           }
 
@@ -201,7 +226,7 @@ export function RealtimeNotifications({
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [userId, role, departmentId]);
+  }, [userId, role, departmentId, distributorId]);
 
   return null;
 }

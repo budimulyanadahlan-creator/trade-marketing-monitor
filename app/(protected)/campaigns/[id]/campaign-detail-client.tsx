@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   ChevronLeft,
   Pencil,
@@ -750,6 +751,97 @@ function SubmitKlaimDialog({
 }
 
 // ============================================================
+// Mark Paid Dialog
+// ============================================================
+
+function MarkPaidDialog({
+  campaignId,
+  open,
+  onOpenChange,
+}: {
+  campaignId: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [paidDate, setPaidDate] = useState("");
+  const [note, setNote] = useState("");
+  const [isPending, startTransition] = useTransition();
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+
+    startTransition(async () => {
+      const result = await markAsPaidAction(
+        campaignId,
+        paidDate || undefined,
+        note || undefined
+      );
+
+      if (result.error) {
+        toast.error(result.error);
+        return;
+      }
+
+      toast.success("SKP ditandai sebagai Paid");
+      setPaidDate("");
+      setNote("");
+      onOpenChange(false);
+    });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Tandai Dibayar</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="paid-date">Tanggal Bayar (opsional)</Label>
+            <Input
+              id="paid-date"
+              type="date"
+              value={paidDate}
+              max={new Date().toISOString().slice(0, 10)}
+              onChange={(e) => setPaidDate(e.target.value)}
+            />
+            <p className="text-xs text-slate-500">
+              Kosongkan untuk memakai waktu saat ini.
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="paid-note">Catatan (opsional)</Label>
+            <Textarea
+              id="paid-note"
+              placeholder="contoh: dibayar via transfer BCA"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              rows={3}
+            />
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+              disabled={isPending}
+            >
+              Batal
+            </Button>
+            <Button type="submit" disabled={isPending}>
+              {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              Tandai Dibayar
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ============================================================
 // Realizations Section
 // ============================================================
 
@@ -774,10 +866,10 @@ function RealizationsSection({
 }) {
   const [addOpen, setAddOpen] = useState(false);
   const [submitKlaimOpen, setSubmitKlaimOpen] = useState(false);
+  const [markPaidOpen, setMarkPaidOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [, startDelete] = useTransition();
   const [isPendingCancel, startCancel] = useTransition();
-  const [isPendingPaid, startPaid] = useTransition();
   const [isPendingCompleted, startCompleted] = useTransition();
 
   function handleDelete(id: string) {
@@ -795,14 +887,6 @@ function RealizationsSection({
       const result = await cancelKlaimAction(campaign.id);
       if (result.error) toast.error(result.error);
       else toast.success("Pengajuan klaim dibatalkan");
-    });
-  }
-
-  function handleMarkPaid() {
-    startPaid(async () => {
-      const result = await markAsPaidAction(campaign.id);
-      if (result.error) toast.error(result.error);
-      else toast.success("SKP ditandai sebagai Paid");
     });
   }
 
@@ -853,15 +937,10 @@ function RealizationsSection({
             <Button
               size="sm"
               variant="outline"
-              onClick={handleMarkPaid}
-              disabled={isPendingPaid}
+              onClick={() => setMarkPaidOpen(true)}
               className="border-teal-500/40 text-teal-400 hover:bg-teal-500/10"
             >
-              {isPendingPaid ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <BadgeCheck className="h-4 w-4" />
-              )}
+              <BadgeCheck className="h-4 w-4" />
               Tandai Paid
             </Button>
           )}
@@ -983,6 +1062,12 @@ function RealizationsSection({
         open={submitKlaimOpen}
         onOpenChange={setSubmitKlaimOpen}
       />
+
+      <MarkPaidDialog
+        campaignId={campaign.id}
+        open={markPaidOpen}
+        onOpenChange={setMarkPaidOpen}
+      />
     </div>
   );
 }
@@ -1099,7 +1184,7 @@ export function CampaignDetailClient({
     campaign.status === "claim_submitted";
 
   const canMarkPaid =
-    ["finance", "superadmin"].includes(userRole) &&
+    ["finance", "admin", "superadmin"].includes(userRole) &&
     campaign.status === "claim_submitted";
 
   const canMarkCompleted =
@@ -1366,6 +1451,19 @@ export function CampaignDetailClient({
                 </span>
               }
             />
+          )}
+          {campaign.paid_at != null && (
+            <DetailRow
+              label="Tanggal Bayar"
+              value={
+                <span className="font-semibold text-teal-400">
+                  {formatDate(campaign.paid_at)}
+                </span>
+              }
+            />
+          )}
+          {campaign.paid_note != null && campaign.paid_note !== "" && (
+            <DetailRow label="Catatan Bayar" value={campaign.paid_note} />
           )}
           {campaign.requested_budget > 0 && campaign.actual_spent > 0 && (
             <DetailRow

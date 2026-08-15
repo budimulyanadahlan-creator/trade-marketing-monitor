@@ -5,12 +5,15 @@ vi.mock("@/lib/supabase/server", () => ({
   createAdminClient: vi.fn(),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
-vi.mock("@/lib/email", () => ({ sendClaimSubmittedEmail: vi.fn() }));
+vi.mock("@/lib/email", () => ({
+  sendClaimSubmittedEmail: vi.fn(),
+  sendMarkedAsPaidEmail: vi.fn(),
+}));
 
-import { submitKlaimAction, cancelKlaimAction } from "./realizations";
+import { submitKlaimAction, cancelKlaimAction, markAsPaidAction } from "./realizations";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
-import { sendClaimSubmittedEmail } from "@/lib/email";
+import { sendClaimSubmittedEmail, sendMarkedAsPaidEmail } from "@/lib/email";
 
 // -------------------------------------------------------
 // Mock builder helpers
@@ -336,6 +339,198 @@ describe("cancelKlaimAction", () => {
     claimEventsChain.insert.mockRejectedValueOnce(new Error("db down"));
 
     const result = await cancelKlaimAction("camp-1");
+    expect(result).toEqual({ success: true });
+  });
+});
+
+// -------------------------------------------------------
+// markAsPaidAction
+// -------------------------------------------------------
+
+type PaidCampaign = {
+  id: string;
+  status: string;
+  name: string;
+  claim_amount: number | null;
+  distributor_id: string | null;
+};
+
+function setupMarkAsPaidMocks({
+  userId = "fin-1",
+  role = "finance",
+  isActive = true,
+  campaign = {
+    id: "camp-1",
+    status: "claim_submitted",
+    name: "Promo A",
+    claim_amount: 1_500_000,
+    distributor_id: "dist-co-1",
+  } as PaidCampaign | null,
+  updateError = null as { message: string } | null,
+  distributorUsers = [{ id: "dist-user-1", full_name: "Dist User One" }],
+  authUsers = [{ id: "dist-user-1", email: "distuser1@example.com" }],
+}: {
+  userId?: string | null;
+  role?: string;
+  isActive?: boolean;
+  campaign?: PaidCampaign | null;
+  updateError?: { message: string } | null;
+  distributorUsers?: { id: string; full_name: string }[];
+  authUsers?: { id: string; email: string | undefined }[];
+} = {}) {
+  const campaignsChain = makeCampaignsChain(campaign, updateError);
+
+  const mockClient = {
+    auth: {
+      getUser: vi
+        .fn()
+        .mockResolvedValue({ data: { user: userId ? { id: userId } : null } }),
+    },
+    from: vi.fn().mockImplementation((table: string) => {
+      if (table === "users") return makeQueryChain({ role, is_active: isActive });
+      if (table === "campaigns") return campaignsChain;
+      return {};
+    }),
+  };
+
+  const distributorUsersChain: Record<string, unknown> = { data: distributorUsers };
+  distributorUsersChain.select = vi.fn().mockReturnValue(distributorUsersChain);
+  distributorUsersChain.eq = vi.fn().mockReturnValue(distributorUsersChain);
+
+  const mockAdminClient = {
+    from: vi.fn().mockImplementation((table: string) => {
+      if (table === "users") return distributorUsersChain;
+      return {};
+    }),
+    auth: {
+      admin: {
+        listUsers: vi.fn().mockResolvedValue({ data: { users: authUsers } }),
+      },
+    },
+  };
+
+  vi.mocked(createClient).mockResolvedValue(mockClient as never);
+  vi.mocked(createAdminClient).mockReturnValue(mockAdminClient as never);
+
+  return { campaignsChain, mockAdminClient, distributorUsersChain };
+}
+
+describe("markAsPaidAction", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns error when user is not finance, admin, or superadmin", async () => {
+    setupMarkAsPaidMocks({ role: "manager" });
+    const result = await markAsPaidAction("camp-1");
+    expect(result).toEqual({
+      error: "Hanya Finance atau Admin yang dapat menandai SKP sebagai Paid",
+    });
+  });
+
+  it("admin can mark a claim as paid (newly allowed role)", async () => {
+    setupMarkAsPaidMocks({ userId: "admin-1", role: "admin" });
+    const result = await markAsPaidAction("camp-1");
+    expect(result).toEqual({ success: true });
+  });
+
+  it("returns error when campaign is not claim_submitted", async () => {
+    setupMarkAsPaidMocks({
+      campaign: {
+        id: "camp-1",
+        status: "ongoing",
+        name: "Promo A",
+        claim_amount: null,
+        distributor_id: "dist-co-1",
+      },
+    });
+    const result = await markAsPaidAction("camp-1");
+    expect(result).toEqual({
+      error: "Hanya SKP berstatus Klaim Diajukan yang dapat ditandai Paid",
+    });
+  });
+
+  it("returns error when db update fails", async () => {
+    setupMarkAsPaidMocks({ updateError: { message: "DB constraint violation" } });
+    const result = await markAsPaidAction("camp-1");
+    expect(result).toEqual({ error: "DB constraint violation" });
+  });
+
+  it("returns error when paidDate is in the future", async () => {
+    setupMarkAsPaidMocks();
+    const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const result = await markAsPaidAction("camp-1", future);
+    expect(result.error).toMatch(/tanggal bayar/i);
+  });
+
+  it("happy path: defaults paid_at to now and paid_note to null when omitted", async () => {
+    const { campaignsChain } = setupMarkAsPaidMocks();
+
+    const result = await markAsPaidAction("camp-1");
+
+    expect(result).toEqual({ success: true });
+    expect(campaignsChain.update).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "paid", paid_note: null })
+    );
+    const updateArg = (campaignsChain.update as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(typeof updateArg.paid_at).toBe("string");
+
+    expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/campaigns/camp-1");
+    expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/campaigns");
+  });
+
+  it("stores the provided paidDate and note", async () => {
+    const { campaignsChain } = setupMarkAsPaidMocks();
+
+    const result = await markAsPaidAction("camp-1", "2026-08-10", "Dibayar via transfer BCA");
+
+    expect(result).toEqual({ success: true });
+    expect(campaignsChain.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "paid",
+        paid_at: new Date("2026-08-10").toISOString(),
+        paid_note: "Dibayar via transfer BCA",
+      })
+    );
+  });
+
+  it("notifies the campaign's distributor users by email", async () => {
+    setupMarkAsPaidMocks();
+
+    await markAsPaidAction("camp-1");
+
+    expect(sendMarkedAsPaidEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        campaignId: "camp-1",
+        campaignName: "Promo A",
+        claimAmount: 1_500_000,
+        to: [{ email: "distuser1@example.com", name: "Dist User One" }],
+      })
+    );
+  });
+
+  it("skips notification when the campaign has no distributor", async () => {
+    setupMarkAsPaidMocks({
+      campaign: {
+        id: "camp-1",
+        status: "claim_submitted",
+        name: "Promo A",
+        claim_amount: 1_500_000,
+        distributor_id: null,
+      },
+    });
+
+    const result = await markAsPaidAction("camp-1");
+
+    expect(result).toEqual({ success: true });
+    expect(sendMarkedAsPaidEmail).not.toHaveBeenCalled();
+  });
+
+  it("still succeeds even if the notification step fails", async () => {
+    setupMarkAsPaidMocks();
+    vi.mocked(sendMarkedAsPaidEmail).mockRejectedValueOnce(new Error("resend down"));
+
+    const result = await markAsPaidAction("camp-1");
     expect(result).toEqual({ success: true });
   });
 });
