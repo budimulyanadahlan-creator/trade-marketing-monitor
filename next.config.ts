@@ -8,6 +8,14 @@ const nextConfig: NextConfig = {
   // sharp (even indirectly, e.g. lib/image-compress.ts) crashes at runtime
   // with ERR_DLOPEN_FAILED: libvips-cpp.so... cannot open shared object file.
   serverExternalPackages: ["sharp"],
+  // serverExternalPackages alone isn't enough: sharp resolves its libvips
+  // binary (@img/sharp-libvips-linux-x64) through a dynamically computed
+  // require() path, which Vercel's static file tracer can't follow — so the
+  // binary still gets dropped from the deployed function unless explicitly
+  // included here.
+  outputFileTracingIncludes: {
+    "/api/upload/claim-document": ["./node_modules/@img/**/*", "./node_modules/sharp/**/*"],
+  },
 };
 
 export default nextConfig;
