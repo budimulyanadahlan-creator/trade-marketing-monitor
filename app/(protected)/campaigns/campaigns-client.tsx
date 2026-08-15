@@ -19,7 +19,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { Plus, ExternalLink, Pencil, CheckSquare, Download, Trash2 } from "lucide-react";
+import { Plus, ExternalLink, Pencil, CheckSquare, Download, Trash2, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate, formatIDR } from "@/lib/utils";
 import { getStatusConfig } from "@/lib/campaign-status";
@@ -54,6 +54,8 @@ interface Props {
   masterBudgets: { id: string; promotion_category_id: string; fiscal_year: number; quarter: number; total_amount: number }[];
   lockedRegionId?: string | null;
   receiptedCampaignIds?: string[];
+  /** Approved SKP only: required vs fulfilled claim-document checklist items. */
+  checklistStatusByCampaignId?: Record<string, { required: number; fulfilled: number }>;
 }
 
 export function CampaignsClient({
@@ -70,9 +72,11 @@ export function CampaignsClient({
   masterBudgets,
   lockedRegionId,
   receiptedCampaignIds = [],
+  checklistStatusByCampaignId = {},
 }: Props) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingCampaign, setEditingCampaign] = useState<CampaignWithJoins | null>(null);
+  const [onlyChecklistReady, setOnlyChecklistReady] = useState(false);
 
   const [checklistCampaign, setChecklistCampaign] = useState<CampaignWithJoins | null>(null);
   const [checklistNotes, setChecklistNotes] = useState("");
@@ -87,7 +91,18 @@ export function CampaignsClient({
 
   const isDistributor = userRole === "distributor";
   const isAdminOrSuperadmin = userRole === "admin" || userRole === "superadmin";
+  const canSeeChecklistReadiness = ["admin", "superadmin", "finance", "manager"].includes(userRole);
   const masterData = { departments, brands, regions, channels, categories, actionApprovals, vendors, distributors, masterBudgets, lockedRegionId };
+
+  function isChecklistReady(campaignId: string): boolean {
+    const status = checklistStatusByCampaignId[campaignId];
+    return !!status && status.required > 0 && status.fulfilled >= status.required;
+  }
+
+  const visibleCampaigns =
+    canSeeChecklistReadiness && onlyChecklistReady
+      ? campaigns.filter((c) => c.status === "approved" && isChecklistReady(c.id))
+      : campaigns;
 
   function canAdminDelete(status: CampaignStatus): boolean {
     if (userRole === "superadmin") return true;
@@ -141,15 +156,28 @@ export function CampaignsClient({
         <div>
           <h1 className="text-2xl font-bold text-slate-100">SKP</h1>
           <p className="text-slate-400 text-sm mt-0.5">
-            {campaigns.length} SKP ditemukan
+            {visibleCampaigns.length} SKP ditemukan
           </p>
         </div>
-        {["user", "manager", "finance", "admin", "superadmin"].includes(userRole) && (
-          <Button size="sm" onClick={() => { setEditingCampaign(null); setModalOpen(true); }}>
-            <Plus className="h-4 w-4" />
-            SKP Baru
-          </Button>
-        )}
+        <div className="flex items-center gap-3">
+          {canSeeChecklistReadiness && (
+            <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={onlyChecklistReady}
+                onChange={(e) => setOnlyChecklistReady(e.target.checked)}
+                className="accent-emerald-500"
+              />
+              Checklist Siap
+            </label>
+          )}
+          {["user", "manager", "finance", "admin", "superadmin"].includes(userRole) && (
+            <Button size="sm" onClick={() => { setEditingCampaign(null); setModalOpen(true); }}>
+              <Plus className="h-4 w-4" />
+              SKP Baru
+            </Button>
+          )}
+        </div>
       </div>
 
       <div
@@ -174,9 +202,10 @@ export function CampaignsClient({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {campaigns.length > 0 ? (
-              campaigns.map((campaign) => {
+            {visibleCampaigns.length > 0 ? (
+              visibleCampaigns.map((campaign) => {
                 const statusCfg = getStatusConfig(campaign.status);
+                const checklistStatus = checklistStatusByCampaignId[campaign.id];
                 return (
                   <TableRow key={campaign.id} className="border-white/8">
                     <TableCell className="text-slate-400 text-xs font-mono">
@@ -201,11 +230,27 @@ export function CampaignsClient({
                       {campaign.department?.name ?? "—"}
                     </TableCell>
                     <TableCell>
-                      <span
-                        className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${statusCfg.className}`}
-                      >
-                        {statusCfg.label}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${statusCfg.className}`}
+                        >
+                          {statusCfg.label}
+                        </span>
+                        {canSeeChecklistReadiness &&
+                          campaign.status === "approved" &&
+                          checklistStatus &&
+                          checklistStatus.required > 0 &&
+                          (checklistStatus.fulfilled >= checklistStatus.required ? (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-400">
+                              <CheckCircle2 className="h-3 w-3" />
+                              Checklist Siap
+                            </span>
+                          ) : (
+                            <span className="text-xs text-slate-500">
+                              {checklistStatus.fulfilled}/{checklistStatus.required} dokumen
+                            </span>
+                          ))}
+                      </div>
                     </TableCell>
                     <TableCell className="text-slate-300 text-sm">
                       {formatIDR(campaign.requested_budget)}
@@ -314,7 +359,9 @@ export function CampaignsClient({
                   colSpan={isDistributor ? 11 : 10}
                   className="text-center py-16 text-slate-500"
                 >
-                  Belum ada SKP. Klik "SKP Baru" untuk memulai.
+                  {onlyChecklistReady
+                    ? "Tidak ada SKP approved dengan checklist yang sudah lengkap."
+                    : 'Belum ada SKP. Klik "SKP Baru" untuk memulai.'}
                 </TableCell>
               </TableRow>
             )}

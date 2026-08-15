@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { computeChecklistReadinessByCampaignId } from "@/lib/claim-checklist-status";
 import { CampaignsClient } from "./campaigns-client";
 
 export default async function CampaignsPage() {
@@ -72,6 +73,46 @@ export default async function CampaignsPage() {
 
   const { data: campaigns } = await campaignQuery;
 
+  // Checklist readiness (approved SKP only) — tells admin/finance/manager which
+  // approved SKP already has 100% of its distributor claim-document checklist
+  // filled in, so they know it's ready for "Tambah" (realisasi) to move it to
+  // ongoing. Not relevant for the distributor's own list (already filtered to
+  // approved, and it's their own checklist they're filling in).
+  let checklistStatusByCampaignId: Record<string, { required: number; fulfilled: number }> = {};
+  if (!isDistributor) {
+    const approvedCampaigns = (campaigns ?? []).filter((c) => c.status === "approved");
+    const categoryIds = [
+      ...new Set(
+        approvedCampaigns
+          .map((c) => c.promotion_category_id)
+          .filter((id): id is string => !!id)
+      ),
+    ];
+    const campaignIds = approvedCampaigns.map((c) => c.id);
+
+    if (categoryIds.length > 0 && campaignIds.length > 0) {
+      const [{ data: requirementsRaw }, { data: checklistsRaw }] = await Promise.all([
+        supabase
+          .from("claim_requirements")
+          .select("promotion_category_id, document_type_id")
+          .in("promotion_category_id", categoryIds),
+        supabase
+          .from("distributor_claim_checklists")
+          .select("campaign_id, document_type_id, is_fulfilled")
+          .in("campaign_id", campaignIds),
+      ]);
+
+      checklistStatusByCampaignId = computeChecklistReadinessByCampaignId({
+        campaigns: approvedCampaigns.map((c) => ({
+          id: c.id,
+          promotion_category_id: c.promotion_category_id,
+        })),
+        requirements: requirementsRaw ?? [],
+        checklists: checklistsRaw ?? [],
+      });
+    }
+  }
+
   // Fetch receipted campaign IDs for distributor (to show Status Penerimaan column)
   let receiptedCampaignIds: string[] = [];
   if (isDistributor) {
@@ -140,6 +181,7 @@ export default async function CampaignsPage() {
       masterBudgets={masterBudgets ?? []}
       lockedRegionId={lockedRegionId}
       receiptedCampaignIds={receiptedCampaignIds}
+      checklistStatusByCampaignId={checklistStatusByCampaignId}
     />
   );
 }
