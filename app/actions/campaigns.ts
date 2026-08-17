@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { z } from "zod";
-import type { CampaignStatus } from "@/types/database";
+import type { CampaignStatus, CampaignFileRow } from "@/types/database";
 import { sendSkpSubmittedEmail } from "@/lib/email";
 
 // Budget SKP asli terkecil di sistem (per Agustus 2026) adalah ~Rp168.000 —
@@ -375,6 +375,36 @@ export async function deleteCampaignAdminAction(
 
     revalidatePath("/campaigns");
     return {};
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Terjadi kesalahan" };
+  }
+}
+
+// ============================================================
+// GET SKP FILES (for pre-filling the Edit modal's file list — the
+// campaigns list query doesn't join campaign_files, so the Edit modal
+// otherwise always opens believing 0 files are attached)
+// ============================================================
+
+export type GetCampaignSkpFilesResult = { error?: string; files?: CampaignFileRow[] };
+
+export async function getCampaignSkpFilesAction(
+  campaignId: string
+): Promise<GetCampaignSkpFilesResult> {
+  try {
+    const { supabase } = await requireActiveUser();
+
+    // document_type_id IS NULL — excludes claim documents, which belong to
+    // a separate checklist and are never shown/edited from this wizard.
+    const { data, error } = await supabase
+      .from("campaign_files")
+      .select("*")
+      .eq("campaign_id", campaignId)
+      .is("document_type_id", null)
+      .order("uploaded_at");
+
+    if (error) return { error: error.message };
+    return { files: (data ?? []) as CampaignFileRow[] };
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Terjadi kesalahan" };
   }

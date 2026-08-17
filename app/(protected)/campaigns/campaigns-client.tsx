@@ -25,8 +25,8 @@ import { formatDate, formatIDR } from "@/lib/utils";
 import { getStatusConfig } from "@/lib/campaign-status";
 import { BudgetProgress } from "@/components/budget-progress";
 import { CampaignFormModal } from "./campaign-form-modal";
-import { createDistributorReceiptAction, deleteCampaignAdminAction } from "@/app/actions/campaigns";
-import type { UserRole, CampaignRow, CampaignStatus } from "@/types/database";
+import { createDistributorReceiptAction, deleteCampaignAdminAction, getCampaignSkpFilesAction } from "@/app/actions/campaigns";
+import type { UserRole, CampaignRow, CampaignStatus, CampaignFileRow } from "@/types/database";
 
 type CampaignWithJoins = CampaignRow & {
   department: { name: string } | null;
@@ -76,6 +76,7 @@ export function CampaignsClient({
 }: Props) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingCampaign, setEditingCampaign] = useState<CampaignWithJoins | null>(null);
+  const [editingCampaignFiles, setEditingCampaignFiles] = useState<CampaignFileRow[]>([]);
   const [onlyChecklistReady, setOnlyChecklistReady] = useState(false);
 
   const [checklistCampaign, setChecklistCampaign] = useState<CampaignWithJoins | null>(null);
@@ -109,14 +110,28 @@ export function CampaignsClient({
     return status === "draft" || status === "rejected";
   }
 
-  function openEdit(campaign: CampaignWithJoins) {
+  async function openEdit(campaign: CampaignWithJoins) {
+    // Fetch existing SKP files *before* opening the modal (rather than
+    // opening immediately and patching the files in afterwards): the modal
+    // is keyed by campaign id and seeds its internal state from props only
+    // on mount, so an existingFiles update arriving after mount would be
+    // silently ignored — the same class of bug as the initialData one.
+    const result = await getCampaignSkpFilesAction(campaign.id);
+    if (result.error) {
+      toast.error(`Gagal memuat dokumen SKP yang sudah ada: ${result.error}`);
+      return;
+    }
     setEditingCampaign(campaign);
+    setEditingCampaignFiles(result.files ?? []);
     setModalOpen(true);
   }
 
   function handleModalClose(open: boolean) {
     setModalOpen(open);
-    if (!open) setEditingCampaign(null);
+    if (!open) {
+      setEditingCampaign(null);
+      setEditingCampaignFiles([]);
+    }
   }
 
   async function handleDelete() {
@@ -479,7 +494,7 @@ export function CampaignsClient({
           start_date: editingCampaign.start_date ?? "",
           end_date: editingCampaign.end_date ?? "",
         } : undefined}
-        existingFiles={[]}
+        existingFiles={editingCampaign ? editingCampaignFiles : []}
         {...masterData}
       />
     </div>
