@@ -449,6 +449,12 @@ export function CampaignsClient({
       </Dialog>
 
       <CampaignFormModal
+        // Force a fresh mount per campaign being edited (and for the blank
+        // "new SKP" state) — CampaignFormModal seeds its formData from
+        // initialData via useState, which only runs once per mount and
+        // otherwise ignores subsequent initialData changes while the
+        // component stays mounted across dialog opens.
+        key={editingCampaign?.id ?? "new"}
         open={modalOpen}
         onOpenChange={handleModalClose}
         initialData={editingCampaign ? {
