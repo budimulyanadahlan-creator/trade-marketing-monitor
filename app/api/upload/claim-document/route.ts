@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { compressImageIfNeeded } from "@/lib/image-compress";
 import { markChecklistFulfilled } from "@/lib/claim-checklist-sync";
+import { isDistributorAllowedOnCampaign } from "@/lib/distributor-campaign-guard";
 import type { CampaignStatus } from "@/types/database";
 
 const ALLOWED_TYPES = ["application/pdf", "image/jpeg", "image/jpg", "image/png"];
@@ -25,7 +26,7 @@ export async function POST(request: NextRequest) {
 
   const { data: profile } = await supabase
     .from("users")
-    .select("role, is_active")
+    .select("role, is_active, distributor_id")
     .eq("id", user.id)
     .single();
 
@@ -66,7 +67,7 @@ export async function POST(request: NextRequest) {
   // below since the select policy also allows paid/completed for viewing.
   const { data: campaign } = await supabase
     .from("campaigns")
-    .select("id, status")
+    .select("id, status, distributor_id")
     .eq("id", campaignId)
     .single();
 
@@ -75,6 +76,10 @@ export async function POST(request: NextRequest) {
       { error: "SKP tidak ditemukan atau Anda tidak memiliki akses." },
       { status: 403 }
     );
+  }
+
+  if (!isDistributorAllowedOnCampaign(campaign.distributor_id, profile.distributor_id)) {
+    return NextResponse.json({ error: "SKP ini bukan milik distributor Anda" }, { status: 403 });
   }
 
   if (!EDITABLE_STATUSES.includes(campaign.status as CampaignStatus)) {

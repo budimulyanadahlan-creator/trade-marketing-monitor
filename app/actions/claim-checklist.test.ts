@@ -19,12 +19,14 @@ function makeQueryChain(data: unknown) {
 function setupMocks({
   role = "distributor",
   isActive = true,
+  userDistributorId = null,
   campaign = { id: "camp-1", status: "ongoing" },
   upsertError = null,
 }: Partial<{
   role: string;
   isActive: boolean;
-  campaign: { id: string; status: string } | null;
+  userDistributorId: string | null;
+  campaign: { id: string; status: string; distributor_id?: string | null } | null;
   upsertError: { message: string } | null;
 }> = {}) {
   const upsertChain = { upsert: vi.fn().mockResolvedValue({ error: upsertError }) };
@@ -32,7 +34,8 @@ function setupMocks({
   const mockClient = {
     auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: "dist-1" } } }) },
     from: vi.fn().mockImplementation((table: string) => {
-      if (table === "users") return makeQueryChain({ role, is_active: isActive });
+      if (table === "users")
+        return makeQueryChain({ role, is_active: isActive, distributor_id: userDistributorId });
       if (table === "campaigns") return makeQueryChain(campaign);
       if (table === "distributor_claim_checklists") return upsertChain;
       return {};
@@ -71,5 +74,23 @@ describe("upsertClaimChecklistAction", () => {
     setupMocks({ role: "admin" });
     const result = await upsertClaimChecklistAction("camp-1", "doc-1", true);
     expect(result.error).toMatch(/distributor/i);
+  });
+
+  it("rejects a distributor whose company doesn't match the campaign's assigned distributor", async () => {
+    setupMocks({
+      userDistributorId: "company-a",
+      campaign: { id: "camp-1", status: "ongoing", distributor_id: "company-b" },
+    });
+    const result = await upsertClaimChecklistAction("camp-1", "doc-1", true);
+    expect(result.error).toMatch(/bukan milik/i);
+  });
+
+  it("allows an unmapped distributor account on a campaign with no distributor assigned yet", async () => {
+    setupMocks({
+      userDistributorId: null,
+      campaign: { id: "camp-1", status: "ongoing", distributor_id: null },
+    });
+    const result = await upsertClaimChecklistAction("camp-1", "doc-1", true);
+    expect(result).toEqual({ success: true });
   });
 });

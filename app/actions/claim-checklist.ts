@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { isDistributorAllowedOnCampaign } from "@/lib/distributor-campaign-guard";
 import type { CampaignStatus } from "@/types/database";
 
 // "claim_submitted" is intentionally excluded — once a claim is submitted,
@@ -22,7 +23,7 @@ export async function upsertClaimChecklistAction(
 
     const { data: profile } = await supabase
       .from("users")
-      .select("role, is_active")
+      .select("role, is_active, distributor_id")
       .eq("id", user.id)
       .single();
 
@@ -33,11 +34,15 @@ export async function upsertClaimChecklistAction(
 
     const { data: campaign } = await supabase
       .from("campaigns")
-      .select("id, status")
+      .select("id, status, distributor_id")
       .eq("id", campaignId)
       .single();
 
     if (!campaign) return { error: "SKP tidak ditemukan" };
+
+    if (!isDistributorAllowedOnCampaign(campaign.distributor_id, profile.distributor_id)) {
+      return { error: "SKP ini bukan milik distributor Anda" };
+    }
 
     if (
       !CHECKLIST_EDITABLE_STATUSES.includes(campaign.status as CampaignStatus)

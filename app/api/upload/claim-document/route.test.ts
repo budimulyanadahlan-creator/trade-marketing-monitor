@@ -41,7 +41,8 @@ function setupMocks(
   opts: Partial<{
     role: string;
     isActive: boolean;
-    campaign: { id: string; status: string } | null;
+    userDistributorId: string | null;
+    campaign: { id: string; status: string; distributor_id?: string | null } | null;
     docType: { id: string } | null;
     insertedFile: unknown;
     insertError: { message: string } | null;
@@ -51,6 +52,7 @@ function setupMocks(
   const {
     role = "distributor",
     isActive = true,
+    userDistributorId = null,
     campaign = { id: "camp-1", status: "ongoing" },
     docType = { id: "doc-1" },
     insertedFile = { id: "file-1" },
@@ -58,7 +60,9 @@ function setupMocks(
     uploadError = null,
   } = opts;
 
-  const usersChain = makeSelectChain({ data: { role, is_active: isActive } });
+  const usersChain = makeSelectChain({
+    data: { role, is_active: isActive, distributor_id: userDistributorId },
+  });
   const campaignsChain = makeSelectChain({ data: campaign });
   const docTypesChain = makeSelectChain({ data: docType });
   const filesInsertChain = makeInsertChain({ data: insertedFile, error: insertError });
@@ -175,6 +179,30 @@ describe("POST /api/upload/claim-document", () => {
     const res = await POST(makeRequest());
 
     expect(res.status).toBe(403);
+  });
+
+  it("rejects a distributor uploading to a campaign assigned to a different distributor company", async () => {
+    setupMocks({
+      userDistributorId: "company-a",
+      campaign: { id: "camp-1", status: "ongoing", distributor_id: "company-b" },
+    });
+
+    const res = await POST(makeRequest());
+    const json = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(json.error).toMatch(/bukan milik/i);
+  });
+
+  it("allows an unmapped distributor account on a campaign with no distributor assigned yet", async () => {
+    setupMocks({
+      userDistributorId: null,
+      campaign: { id: "camp-1", status: "ongoing", distributor_id: null },
+    });
+
+    const res = await POST(makeRequest());
+
+    expect(res.status).toBe(200);
   });
 
   it("rejects when campaign status is not editable (e.g. draft)", async () => {
