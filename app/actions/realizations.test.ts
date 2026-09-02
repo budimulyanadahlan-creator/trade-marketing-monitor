@@ -8,6 +8,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/email", () => ({
   sendClaimSubmittedEmail: vi.fn(),
   sendMarkedAsPaidEmail: vi.fn(),
+  sendClaimApprovedEmail: vi.fn(),
 }));
 
 import {
@@ -21,7 +22,7 @@ import {
 } from "./realizations";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
-import { sendClaimSubmittedEmail, sendMarkedAsPaidEmail } from "@/lib/email";
+import { sendClaimSubmittedEmail, sendMarkedAsPaidEmail, sendClaimApprovedEmail } from "@/lib/email";
 
 // -------------------------------------------------------
 // Mock builder helpers
@@ -424,17 +425,23 @@ describe("cancelKlaimAction", () => {
 
 // Serves the verification transition actions: campaigns read/update +
 // best-effort claim_events insert, plus (approveClaimAction only) the
-// claim_item_verifications gate read. Defaults to a fully-accepted claim so
-// existing approve/ready-to-pay tests don't need to know about the gate.
+// claim_item_verifications gate read and the distributor notification's
+// admin-client reads. Defaults to a fully-accepted claim so existing
+// approve/ready-to-pay tests don't need to know about the gate.
 function setupVerificationMocks({
   userId = "fin-1",
   role = "finance",
   isActive = true,
-  campaign = { id: "camp-1", status: "claim_submitted" } as
-    | { id: string; status: string }
-    | null,
+  campaign = {
+    id: "camp-1",
+    status: "claim_submitted",
+    name: "Promo A",
+    distributor_id: "dist-co-1",
+  } as { id: string; status: string; name?: string; distributor_id?: string | null } | null,
   updateError = null as { message: string } | null,
   items = [{ status: "accepted" }] as { status: string }[],
+  distributorUsers = [{ id: "dist-user-1", full_name: "Dist User One" }],
+  authUsers = [{ id: "dist-user-1", email: "distuser1@example.com" }],
 } = {}) {
   const campaignsChain = makeCampaignsChain(campaign, updateError);
   const claimEventsChain = { insert: vi.fn().mockResolvedValue({ error: null }) };
@@ -459,9 +466,26 @@ function setupVerificationMocks({
     }),
   };
 
-  vi.mocked(createClient).mockResolvedValue(mockClient as never);
+  const distributorUsersChain: Record<string, unknown> = { data: distributorUsers };
+  distributorUsersChain.select = vi.fn().mockReturnValue(distributorUsersChain);
+  distributorUsersChain.eq = vi.fn().mockReturnValue(distributorUsersChain);
 
-  return { campaignsChain, claimEventsChain, claimItemVerificationsChain };
+  const mockAdminClient = {
+    from: vi.fn().mockImplementation((table: string) => {
+      if (table === "users") return distributorUsersChain;
+      return {};
+    }),
+    auth: {
+      admin: {
+        listUsers: vi.fn().mockResolvedValue({ data: { users: authUsers } }),
+      },
+    },
+  };
+
+  vi.mocked(createClient).mockResolvedValue(mockClient as never);
+  vi.mocked(createAdminClient).mockReturnValue(mockAdminClient as never);
+
+  return { campaignsChain, claimEventsChain, claimItemVerificationsChain, mockAdminClient };
 }
 
 describe("approveClaimAction", () => {
@@ -560,6 +584,38 @@ describe("approveClaimAction", () => {
     const result = await approveClaimAction("camp-1");
     expect(result).toEqual({ success: true });
     expect(campaignsChain.update).toHaveBeenCalledWith({ status: "claim_verified" });
+  });
+
+  it("notifies the campaign's distributor users by email", async () => {
+    setupVerificationMocks();
+
+    await approveClaimAction("camp-1");
+
+    expect(sendClaimApprovedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        campaignId: "camp-1",
+        campaignName: "Promo A",
+        to: [{ email: "distuser1@example.com", name: "Dist User One" }],
+      })
+    );
+  });
+
+  it("skips notification when the campaign has no distributor", async () => {
+    setupVerificationMocks({
+      campaign: { id: "camp-1", status: "claim_submitted", name: "Promo A", distributor_id: null },
+    });
+
+    await approveClaimAction("camp-1");
+
+    expect(sendClaimApprovedEmail).not.toHaveBeenCalled();
+  });
+
+  it("still succeeds even if the notification step fails", async () => {
+    setupVerificationMocks();
+    vi.mocked(sendClaimApprovedEmail).mockRejectedValueOnce(new Error("resend down"));
+
+    const result = await approveClaimAction("camp-1");
+    expect(result).toEqual({ success: true });
   });
 });
 

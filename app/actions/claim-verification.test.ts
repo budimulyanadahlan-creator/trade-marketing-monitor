@@ -2,12 +2,17 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("@/lib/supabase/server", () => ({
   createClient: vi.fn(),
+  createAdminClient: vi.fn(),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("@/lib/email", () => ({
+  sendClaimRevisionRequestedEmail: vi.fn(),
+}));
 
 import { acceptClaimItemAction, requestClaimItemRevisionAction } from "./claim-verification";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { sendClaimRevisionRequestedEmail } from "@/lib/email";
 
 function makeQueryChain(data: unknown) {
   return {
@@ -37,7 +42,7 @@ type SetupOptions = {
   userId?: string | null;
   role?: string;
   isActive?: boolean;
-  campaign?: { id: string; status: string } | null;
+  campaign?: { id: string; status: string; name?: string; distributor_id?: string | null } | null;
   item?:
     | {
         id: string;
@@ -47,13 +52,15 @@ type SetupOptions = {
       }
     | null;
   updateError?: { message: string } | null;
+  distributorUsers?: { id: string; full_name: string }[];
+  authUsers?: { id: string; email: string | undefined }[];
 };
 
 function setupMocks({
   userId = "fin-1",
   role = "finance",
   isActive = true,
-  campaign = { id: "camp-1", status: "claim_submitted" },
+  campaign = { id: "camp-1", status: "claim_submitted", name: "Promo A", distributor_id: "dist-co-1" },
   item = {
     id: "item-1",
     campaign_id: "camp-1",
@@ -61,6 +68,8 @@ function setupMocks({
     claim_document_types: { name: "Invoice" },
   },
   updateError = null,
+  distributorUsers = [{ id: "dist-user-1", full_name: "Dist User One" }],
+  authUsers = [{ id: "dist-user-1", email: "distuser1@example.com" }],
 }: SetupOptions = {}) {
   const itemsChain = makeItemsChain(item, updateError);
   const claimEventsChain = { insert: vi.fn().mockResolvedValue({ error: null }) };
@@ -80,9 +89,26 @@ function setupMocks({
     }),
   };
 
-  vi.mocked(createClient).mockResolvedValue(mockClient as never);
+  const distributorUsersChain: Record<string, unknown> = { data: distributorUsers };
+  distributorUsersChain.select = vi.fn().mockReturnValue(distributorUsersChain);
+  distributorUsersChain.eq = vi.fn().mockReturnValue(distributorUsersChain);
 
-  return { itemsChain, claimEventsChain };
+  const mockAdminClient = {
+    from: vi.fn().mockImplementation((table: string) => {
+      if (table === "users") return distributorUsersChain;
+      return {};
+    }),
+    auth: {
+      admin: {
+        listUsers: vi.fn().mockResolvedValue({ data: { users: authUsers } }),
+      },
+    },
+  };
+
+  vi.mocked(createClient).mockResolvedValue(mockClient as never);
+  vi.mocked(createAdminClient).mockReturnValue(mockAdminClient as never);
+
+  return { itemsChain, claimEventsChain, mockAdminClient };
 }
 
 describe("acceptClaimItemAction", () => {
@@ -180,6 +206,12 @@ describe("acceptClaimItemAction", () => {
     const result = await acceptClaimItemAction("camp-1", "item-1");
     expect(result).toEqual({ success: true });
   });
+
+  it("does not send a revision-requested email on accept", async () => {
+    setupMocks();
+    await acceptClaimItemAction("camp-1", "item-1");
+    expect(sendClaimRevisionRequestedEmail).not.toHaveBeenCalled();
+  });
 });
 
 describe("requestClaimItemRevisionAction", () => {
@@ -241,6 +273,52 @@ describe("requestClaimItemRevisionAction", () => {
   it("still succeeds even if the claim_events insert fails", async () => {
     const { claimEventsChain } = setupMocks();
     claimEventsChain.insert.mockRejectedValueOnce(new Error("db down"));
+    const result = await requestClaimItemRevisionAction("camp-1", "item-1", "Kurang jelas");
+    expect(result).toEqual({ success: true });
+  });
+
+  it("notifies the campaign's distributor users by email with the item label and note", async () => {
+    setupMocks();
+
+    await requestClaimItemRevisionAction("camp-1", "item-1", "File buram, upload ulang");
+
+    expect(sendClaimRevisionRequestedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        campaignId: "camp-1",
+        campaignName: "Promo A",
+        itemLabel: "Invoice",
+        note: "File buram, upload ulang",
+        to: [{ email: "distuser1@example.com", name: "Dist User One" }],
+      })
+    );
+  });
+
+  it("labels the amount item distinctly in the notification email", async () => {
+    setupMocks({
+      item: { id: "item-2", campaign_id: "camp-1", item_type: "amount", claim_document_types: null },
+    });
+
+    await requestClaimItemRevisionAction("camp-1", "item-2", "Nominal tidak sesuai invoice");
+
+    expect(sendClaimRevisionRequestedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ itemLabel: "Nominal Klaim" })
+    );
+  });
+
+  it("skips notification when the campaign has no distributor", async () => {
+    setupMocks({
+      campaign: { id: "camp-1", status: "claim_submitted", name: "Promo A", distributor_id: null },
+    });
+
+    await requestClaimItemRevisionAction("camp-1", "item-1", "Kurang jelas");
+
+    expect(sendClaimRevisionRequestedEmail).not.toHaveBeenCalled();
+  });
+
+  it("still succeeds even if the notification step fails", async () => {
+    setupMocks();
+    vi.mocked(sendClaimRevisionRequestedEmail).mockRejectedValueOnce(new Error("resend down"));
+
     const result = await requestClaimItemRevisionAction("camp-1", "item-1", "Kurang jelas");
     expect(result).toEqual({ success: true });
   });

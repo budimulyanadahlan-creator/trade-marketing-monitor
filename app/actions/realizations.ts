@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { z } from "zod";
-import { sendClaimSubmittedEmail, sendMarkedAsPaidEmail } from "@/lib/email";
+import { sendClaimSubmittedEmail, sendMarkedAsPaidEmail, sendClaimApprovedEmail } from "@/lib/email";
 import {
   ensureClaimItemVerifications,
   resetAllClaimItemVerifications,
@@ -459,7 +459,6 @@ async function notifyClaimSubmitted(opts: {
 // claim_submitted → claim_verified)
 // ============================================================
 
-// Phase 4 will add the "silakan kirim hardcopy" email on top of this.
 export async function approveClaimAction(
   campaignId: string
 ): Promise<{ error?: string; success?: boolean }> {
@@ -472,7 +471,7 @@ export async function approveClaimAction(
 
     const { data: campaign } = await supabase
       .from("campaigns")
-      .select("id, status")
+      .select("id, status, name, distributor_id")
       .eq("id", campaignId)
       .single();
 
@@ -520,10 +519,64 @@ export async function approveClaimAction(
       console.error("[approveClaimAction] claim_events insert error:", historyErr);
     }
 
+    // Best-effort: the status change above already succeeded, so a failure
+    // sending the "silakan kirim hardcopy" notification shouldn't fail the
+    // action.
+    try {
+      await notifyClaimApproved({
+        campaignId,
+        campaignName: campaign.name,
+        distributorId: campaign.distributor_id,
+      });
+    } catch (notifyErr) {
+      console.error("[approveClaimAction] Notification error:", notifyErr);
+    }
+
     return { success: true };
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Terjadi kesalahan" };
   }
+}
+
+async function notifyClaimApproved(opts: {
+  campaignId: string;
+  campaignName: string;
+  distributorId: string | null;
+}) {
+  // Not filtered further than distributor_id — same accepted cross-distributor
+  // visibility gap documented for this feature (PRD Keputusan #5).
+  if (!opts.distributorId) return;
+
+  const adminClient = createAdminClient();
+
+  const { data: distributorUsers } = await adminClient
+    .from("users")
+    .select("id, full_name")
+    .eq("role", "distributor")
+    .eq("distributor_id", opts.distributorId)
+    .eq("is_active", true);
+
+  if (!distributorUsers || distributorUsers.length === 0) return;
+
+  const nameById = new Map<string, string>();
+  const recipientIds = new Set<string>();
+  for (const u of distributorUsers) {
+    recipientIds.add(u.id);
+    nameById.set(u.id, u.full_name);
+  }
+
+  const { data: authData } = await adminClient.auth.admin.listUsers({ perPage: 1000 });
+  const recipients = (authData?.users ?? [])
+    .filter((u) => recipientIds.has(u.id) && u.email)
+    .map((u) => ({ email: u.email!, name: nameById.get(u.id) ?? u.email! }));
+
+  if (recipients.length === 0) return;
+
+  await sendClaimApprovedEmail({
+    to: recipients,
+    campaignId: opts.campaignId,
+    campaignName: opts.campaignName,
+  });
 }
 
 // ============================================================

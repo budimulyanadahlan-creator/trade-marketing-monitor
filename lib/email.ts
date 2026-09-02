@@ -229,6 +229,106 @@ export async function sendMarkedAsPaidEmail(opts: MarkedAsPaidEmailOptions) {
   }
 }
 
+export interface ClaimRevisionRequestedEmailOptions {
+  to: { email: string; name: string }[];
+  campaignName: string;
+  campaignId: string;
+  itemLabel: string;
+  note: string;
+}
+
+export async function sendClaimRevisionRequestedEmail(
+  opts: ClaimRevisionRequestedEmailOptions
+) {
+  if (process.env.SKP_EMAIL_ENABLED !== "true") {
+    if (process.env.NODE_ENV === "development") {
+      console.warn(
+        "[Email] SKP_EMAIL_ENABLED is not \"true\" — skipping claim revision requested email"
+      );
+    }
+    return;
+  }
+
+  if (!process.env.RESEND_API_KEY) {
+    if (process.env.NODE_ENV === "development") {
+      console.warn("[Email] RESEND_API_KEY not set — skipping email notification");
+    }
+    return;
+  }
+
+  const campaignUrl = `${APP_URL}/campaigns/${opts.campaignId}`;
+
+  const results = await Promise.allSettled(
+    opts.to.map(({ email, name }) =>
+      resend.emails.send({
+        from: FROM_EMAIL,
+        to: email,
+        subject: `[Revisi Klaim] ${opts.campaignName}`,
+        html: buildClaimRevisionRequestedHtml({
+          recipientName: name,
+          campaignName: opts.campaignName,
+          campaignUrl,
+          itemLabel: opts.itemLabel,
+          note: opts.note,
+        }),
+      })
+    )
+  );
+
+  if (process.env.NODE_ENV === "development") {
+    const failed = results.filter((r) => r.status === "rejected");
+    if (failed.length > 0) {
+      console.error("[Email] Some emails failed to send:", failed);
+    }
+  }
+}
+
+export interface ClaimApprovedEmailOptions {
+  to: { email: string; name: string }[];
+  campaignName: string;
+  campaignId: string;
+}
+
+export async function sendClaimApprovedEmail(opts: ClaimApprovedEmailOptions) {
+  if (process.env.SKP_EMAIL_ENABLED !== "true") {
+    if (process.env.NODE_ENV === "development") {
+      console.warn("[Email] SKP_EMAIL_ENABLED is not \"true\" — skipping claim approved email");
+    }
+    return;
+  }
+
+  if (!process.env.RESEND_API_KEY) {
+    if (process.env.NODE_ENV === "development") {
+      console.warn("[Email] RESEND_API_KEY not set — skipping email notification");
+    }
+    return;
+  }
+
+  const campaignUrl = `${APP_URL}/campaigns/${opts.campaignId}`;
+
+  const results = await Promise.allSettled(
+    opts.to.map(({ email, name }) =>
+      resend.emails.send({
+        from: FROM_EMAIL,
+        to: email,
+        subject: `[Klaim Terverifikasi] ${opts.campaignName}`,
+        html: buildClaimApprovedHtml({
+          recipientName: name,
+          campaignName: opts.campaignName,
+          campaignUrl,
+        }),
+      })
+    )
+  );
+
+  if (process.env.NODE_ENV === "development") {
+    const failed = results.filter((r) => r.status === "rejected");
+    if (failed.length > 0) {
+      console.error("[Email] Some emails failed to send:", failed);
+    }
+  }
+}
+
 export interface PasswordResetNotificationEmailOptions {
   to: { email: string; name: string };
 }
@@ -499,6 +599,130 @@ function buildMarkedAsPaidHtml(opts: {
                 <tr>
                   <td align="center">
                     <a href="${opts.campaignUrl}" style="display:inline-block;background:#1e3a8a;color:#ffffff;padding:13px 32px;border-radius:7px;text-decoration:none;font-weight:700;font-size:15px;">Lihat Detail SKP</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 36px;border-top:1px solid #e5e7eb;background:#f9fafb;">
+              <p style="margin:0;color:#9ca3af;font-size:12px;">Email ini dikirim otomatis oleh sistem Trade Marketing Monitor. Mohon tidak membalas email ini.</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+function buildClaimRevisionRequestedHtml(opts: {
+  recipientName: string;
+  campaignName: string;
+  itemLabel: string;
+  note: string;
+  campaignUrl: string;
+}) {
+  return `<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Revisi Klaim Diminta</title>
+</head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:32px 16px;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:10px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);">
+          <!-- Header -->
+          <tr>
+            <td style="background:#b45309;padding:28px 36px;">
+              <p style="margin:0;color:#fde68a;font-size:12px;text-transform:uppercase;letter-spacing:1px;font-weight:600;">Trade Marketing Monitor</p>
+              <h1 style="margin:8px 0 0;color:#ffffff;font-size:22px;font-weight:700;">Revisi Klaim Diminta</h1>
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="padding:32px 36px;">
+              <p style="margin:0 0 16px;color:#374151;font-size:15px;">Halo, <strong>${opts.recipientName}</strong>,</p>
+              <p style="margin:0 0 24px;color:#374151;font-size:15px;">Finance meminta revisi pada salah satu item klaim SKP berikut:</p>
+
+              <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;margin-bottom:28px;">
+                <tr>
+                  <td style="padding:12px 16px;background:#f9fafb;border-bottom:1px solid #e5e7eb;font-weight:600;color:#374151;width:40%;font-size:14px;">Nama Campaign</td>
+                  <td style="padding:12px 16px;border-bottom:1px solid #e5e7eb;color:#111827;font-size:14px;">${opts.campaignName}</td>
+                </tr>
+                <tr>
+                  <td style="padding:12px 16px;background:#f9fafb;border-bottom:1px solid #e5e7eb;font-weight:600;color:#374151;font-size:14px;">Item Direvisi</td>
+                  <td style="padding:12px 16px;border-bottom:1px solid #e5e7eb;color:#111827;font-size:14px;">${opts.itemLabel}</td>
+                </tr>
+                <tr>
+                  <td style="padding:12px 16px;background:#f9fafb;font-weight:600;color:#374151;font-size:14px;">Catatan Finance</td>
+                  <td style="padding:12px 16px;color:#111827;font-size:14px;">${opts.note}</td>
+                </tr>
+              </table>
+
+              <table width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td align="center">
+                    <a href="${opts.campaignUrl}" style="display:inline-block;background:#b45309;color:#ffffff;padding:13px 32px;border-radius:7px;text-decoration:none;font-weight:700;font-size:15px;">Lihat Detail SKP</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 36px;border-top:1px solid #e5e7eb;background:#f9fafb;">
+              <p style="margin:0;color:#9ca3af;font-size:12px;">Email ini dikirim otomatis oleh sistem Trade Marketing Monitor. Mohon tidak membalas email ini.</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+function buildClaimApprovedHtml(opts: {
+  recipientName: string;
+  campaignName: string;
+  campaignUrl: string;
+}) {
+  return `<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Klaim Terverifikasi</title>
+</head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:32px 16px;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:10px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);">
+          <!-- Header -->
+          <tr>
+            <td style="background:#15803d;padding:28px 36px;">
+              <p style="margin:0;color:#bbf7d0;font-size:12px;text-transform:uppercase;letter-spacing:1px;font-weight:600;">Trade Marketing Monitor</p>
+              <h1 style="margin:8px 0 0;color:#ffffff;font-size:22px;font-weight:700;">Klaim Terverifikasi</h1>
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="padding:32px 36px;">
+              <p style="margin:0 0 16px;color:#374151;font-size:15px;">Halo, <strong>${opts.recipientName}</strong>,</p>
+              <p style="margin:0 0 16px;color:#374151;font-size:15px;">Seluruh dokumen klaim untuk SKP <strong>${opts.campaignName}</strong> telah lengkap terverifikasi.</p>
+              <p style="margin:0 0 24px;color:#374151;font-size:15px;">Silakan kirim hardcopy dokumen klaim tersebut ke Finance.</p>
+
+              <table width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td align="center">
+                    <a href="${opts.campaignUrl}" style="display:inline-block;background:#15803d;color:#ffffff;padding:13px 32px;border-radius:7px;text-decoration:none;font-weight:700;font-size:15px;">Lihat Detail SKP</a>
                   </td>
                 </tr>
               </table>

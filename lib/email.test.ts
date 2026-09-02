@@ -8,7 +8,12 @@ vi.mock("resend", () => ({
   }),
 }));
 
-import { sendSkpPendingDigestEmail, sendClaimSubmittedEmail } from "./email";
+import {
+  sendSkpPendingDigestEmail,
+  sendClaimSubmittedEmail,
+  sendClaimRevisionRequestedEmail,
+  sendClaimApprovedEmail,
+} from "./email";
 
 describe("sendSkpPendingDigestEmail", () => {
   const originalEnv = process.env;
@@ -169,6 +174,150 @@ describe("sendClaimSubmittedEmail", () => {
       .mockResolvedValueOnce({ data: { id: "email-2" }, error: null });
 
     await expect(sendClaimSubmittedEmail(opts)).resolves.not.toThrow();
+
+    expect(mockSend).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("sendClaimRevisionRequestedEmail", () => {
+  const originalEnv = process.env;
+
+  const recipients = [{ email: "dist1@example.com", name: "Distributor One" }];
+
+  const opts = {
+    to: recipients,
+    campaignName: "Promo Lebaran",
+    campaignId: "camp-1",
+    itemLabel: "Invoice",
+    note: "File buram, upload ulang yang lebih jelas",
+  };
+
+  beforeEach(() => {
+    mockSend.mockReset();
+    mockSend.mockResolvedValue({ data: { id: "email-1" }, error: null });
+    process.env = {
+      ...originalEnv,
+      RESEND_API_KEY: "re_test_key",
+      SKP_EMAIL_ENABLED: "true",
+    };
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
+  it("does not send when SKP_EMAIL_ENABLED is not set", async () => {
+    delete process.env.SKP_EMAIL_ENABLED;
+    await sendClaimRevisionRequestedEmail(opts);
+    expect(mockSend).not.toHaveBeenCalled();
+  });
+
+  it("does not send when RESEND_API_KEY is not set", async () => {
+    delete process.env.RESEND_API_KEY;
+    await sendClaimRevisionRequestedEmail(opts);
+    expect(mockSend).not.toHaveBeenCalled();
+  });
+
+  it("sends one email per recipient with correct subject", async () => {
+    await sendClaimRevisionRequestedEmail(opts);
+
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    expect(mockSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "dist1@example.com",
+        subject: "[Revisi Klaim] Promo Lebaran",
+      })
+    );
+  });
+
+  it("includes the item label and finance note in the email body", async () => {
+    await sendClaimRevisionRequestedEmail(opts);
+
+    const call = mockSend.mock.calls[0][0];
+    expect(call.html).toContain("Invoice");
+    expect(call.html).toContain("File buram, upload ulang yang lebih jelas");
+  });
+
+  it("continues sending to other recipients when one fails", async () => {
+    const twoRecipients = [
+      { email: "dist1@example.com", name: "Distributor One" },
+      { email: "dist2@example.com", name: "Distributor Two" },
+    ];
+    mockSend
+      .mockRejectedValueOnce(new Error("bounce"))
+      .mockResolvedValueOnce({ data: { id: "email-2" }, error: null });
+
+    await expect(
+      sendClaimRevisionRequestedEmail({ ...opts, to: twoRecipients })
+    ).resolves.not.toThrow();
+
+    expect(mockSend).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("sendClaimApprovedEmail", () => {
+  const originalEnv = process.env;
+
+  const recipients = [{ email: "dist1@example.com", name: "Distributor One" }];
+
+  const opts = {
+    to: recipients,
+    campaignName: "Promo Lebaran",
+    campaignId: "camp-1",
+  };
+
+  beforeEach(() => {
+    mockSend.mockReset();
+    mockSend.mockResolvedValue({ data: { id: "email-1" }, error: null });
+    process.env = {
+      ...originalEnv,
+      RESEND_API_KEY: "re_test_key",
+      SKP_EMAIL_ENABLED: "true",
+    };
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
+  it("does not send when SKP_EMAIL_ENABLED is not set", async () => {
+    delete process.env.SKP_EMAIL_ENABLED;
+    await sendClaimApprovedEmail(opts);
+    expect(mockSend).not.toHaveBeenCalled();
+  });
+
+  it("does not send when RESEND_API_KEY is not set", async () => {
+    delete process.env.RESEND_API_KEY;
+    await sendClaimApprovedEmail(opts);
+    expect(mockSend).not.toHaveBeenCalled();
+  });
+
+  it("sends one email per recipient with correct subject and hardcopy instruction", async () => {
+    await sendClaimApprovedEmail(opts);
+
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    expect(mockSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "dist1@example.com",
+        subject: "[Klaim Terverifikasi] Promo Lebaran",
+      })
+    );
+    const call = mockSend.mock.calls[0][0];
+    expect(call.html).toContain("hardcopy");
+  });
+
+  it("continues sending to other recipients when one fails", async () => {
+    const twoRecipients = [
+      { email: "dist1@example.com", name: "Distributor One" },
+      { email: "dist2@example.com", name: "Distributor Two" },
+    ];
+    mockSend
+      .mockRejectedValueOnce(new Error("bounce"))
+      .mockResolvedValueOnce({ data: { id: "email-2" }, error: null });
+
+    await expect(
+      sendClaimApprovedEmail({ ...opts, to: twoRecipients })
+    ).resolves.not.toThrow();
 
     expect(mockSend).toHaveBeenCalledTimes(2);
   });

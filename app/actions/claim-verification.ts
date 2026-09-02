@@ -1,8 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { z } from "zod";
+import { sendClaimRevisionRequestedEmail } from "@/lib/email";
 import { CLAIM_AMOUNT_ITEM_LABEL } from "@/lib/claim-item-verifications";
 import type { ClaimItemStatus } from "@/types/database";
 
@@ -43,7 +44,7 @@ async function decideClaimItem(
 
     const { data: campaign } = await supabase
       .from("campaigns")
-      .select("id, status")
+      .select("id, status, name, distributor_id")
       .eq("id", campaignId)
       .single();
 
@@ -80,12 +81,12 @@ async function decideClaimItem(
 
     revalidatePath(`/campaigns/${campaignId}`);
 
+    const docType = item.claim_document_types as { name: string } | null;
+    const itemLabel = item.item_type === "amount" ? CLAIM_AMOUNT_ITEM_LABEL : docType?.name ?? "Dokumen";
+
     // Best-effort: the decision above already succeeded, so a failure
     // recording history shouldn't fail the action.
     try {
-      const docType = item.claim_document_types as { name: string } | null;
-      const itemLabel = item.item_type === "amount" ? CLAIM_AMOUNT_ITEM_LABEL : docType?.name ?? "Dokumen";
-
       await supabase.from("claim_events").insert({
         campaign_id: campaignId,
         actor_id: userId,
@@ -98,10 +99,71 @@ async function decideClaimItem(
       console.error("[decideClaimItem] claim_events insert error:", historyErr);
     }
 
+    // Best-effort: notify the distributor by email on Minta Revisi only
+    // (Phase 4 — Accept per item stays silent per the PRD).
+    if (status === "revision_requested") {
+      try {
+        await notifyClaimRevisionRequested({
+          campaignId,
+          campaignName: campaign.name,
+          distributorId: campaign.distributor_id,
+          itemLabel,
+          note: note ?? "",
+        });
+      } catch (notifyErr) {
+        console.error("[decideClaimItem] Notification error:", notifyErr);
+      }
+    }
+
     return { success: true };
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Terjadi kesalahan" };
   }
+}
+
+async function notifyClaimRevisionRequested(opts: {
+  campaignId: string;
+  campaignName: string;
+  distributorId: string | null;
+  itemLabel: string;
+  note: string;
+}) {
+  // Not filtered further than distributor_id — same accepted cross-distributor
+  // visibility gap documented for this feature (PRD Keputusan #5).
+  if (!opts.distributorId) return;
+
+  const adminClient = createAdminClient();
+
+  const { data: distributorUsers } = await adminClient
+    .from("users")
+    .select("id, full_name")
+    .eq("role", "distributor")
+    .eq("distributor_id", opts.distributorId)
+    .eq("is_active", true);
+
+  if (!distributorUsers || distributorUsers.length === 0) return;
+
+  const nameById = new Map<string, string>();
+  const recipientIds = new Set<string>();
+  for (const u of distributorUsers) {
+    recipientIds.add(u.id);
+    nameById.set(u.id, u.full_name);
+  }
+
+  const { data: authData } = await adminClient.auth.admin.listUsers({ perPage: 1000 });
+  const recipients = (authData?.users ?? [])
+    .filter((u) => recipientIds.has(u.id) && u.email)
+    .map((u) => ({ email: u.email!, name: nameById.get(u.id) ?? u.email! }));
+
+  if (recipients.length === 0) return;
+
+  await sendClaimRevisionRequestedEmail({
+    to: recipients,
+    campaignId: opts.campaignId,
+    campaignName: opts.campaignName,
+    itemLabel: opts.itemLabel,
+    note: opts.note,
+  });
 }
 
 const noteSchema = z.string().trim().max(500, "Catatan maksimal 500 karakter");
