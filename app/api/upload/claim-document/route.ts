@@ -2,13 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { compressImageIfNeeded } from "@/lib/image-compress";
 import { markChecklistFulfilled } from "@/lib/claim-checklist-sync";
+import { resetClaimItemToPending } from "@/lib/claim-item-verifications";
 import { isDistributorAllowedOnCampaign } from "@/lib/distributor-campaign-guard";
 import type { CampaignStatus } from "@/types/database";
 
 const ALLOWED_TYPES = ["application/pdf", "image/jpeg", "image/jpg", "image/png"];
 const MAX_SIZE = 5 * 1024 * 1024; // 5 MB, applies to size after compression
-// "claim_submitted" is intentionally excluded — once a claim is submitted,
-// new uploads are locked until it's cancelled (Phase 3) or paid.
 const EDITABLE_STATUSES: CampaignStatus[] = ["approved", "ongoing"];
 
 // Upload a claim document for one checklist item. Distributor-only —
@@ -82,13 +81,39 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "SKP ini bukan milik distributor Anda" }, { status: 403 });
   }
 
-  if (!EDITABLE_STATUSES.includes(campaign.status as CampaignStatus)) {
+  // Phase 3 (Loop Revisi): once a claim is submitted, re-upload is only
+  // allowed for the one item finance sent back for revision — everything
+  // else (accepted or still-pending items) stays locked until Approve or
+  // Batalkan Pengajuan.
+  const isRevisionUpload = campaign.status === "claim_submitted";
+
+  if (!EDITABLE_STATUSES.includes(campaign.status as CampaignStatus) && !isRevisionUpload) {
     return NextResponse.json(
       {
         error: "Dokumen klaim hanya dapat diupload saat SKP berstatus Approved atau Ongoing",
       },
       { status: 400 }
     );
+  }
+
+  if (isRevisionUpload) {
+    const { data: item } = await supabase
+      .from("claim_item_verifications")
+      .select("id, status")
+      .eq("campaign_id", campaignId)
+      .eq("item_type", "document")
+      .eq("document_type_id", documentTypeId)
+      .maybeSingle();
+
+    if (!item || item.status !== "revision_requested") {
+      return NextResponse.json(
+        {
+          error:
+            "Dokumen ini hanya dapat diupload ulang saat finance memintanya direvisi",
+        },
+        { status: 400 }
+      );
+    }
   }
 
   const { data: docType } = await supabase
@@ -162,6 +187,22 @@ export async function POST(request: NextRequest) {
     distributorId: user.id,
     documentTypeId,
   });
+
+  // The distributor just fixed a revision-requested item — send it back to
+  // "menunggu verifikasi". Best-effort and via the admin client: the file is
+  // already saved, and the UPDATE policy on claim_item_verifications is
+  // scoped to finance/admin/superadmin (this is a system side effect of the
+  // distributor's fix, not a finance decision).
+  if (isRevisionUpload) {
+    try {
+      await resetClaimItemToPending(adminClient, campaignId, {
+        itemType: "document",
+        documentTypeId,
+      });
+    } catch (resetErr) {
+      console.error("[claim-document upload] resetClaimItemToPending error:", resetErr);
+    }
+  }
 
   return NextResponse.json({ file: fileRecord });
 }

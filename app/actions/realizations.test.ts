@@ -16,6 +16,8 @@ import {
   markAsPaidAction,
   approveClaimAction,
   markReadyToPayAction,
+  updateClaimAmountAction,
+  addRealizationAction,
 } from "./realizations";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
@@ -69,7 +71,7 @@ function makeUsersAdminChain(
 // best-effort sync only ever inserts the single 'amount' item in tests.
 function makeThenableAdminChain(result: unknown) {
   const chain: Record<string, unknown> = {};
-  for (const method of ["select", "eq", "insert"]) {
+  for (const method of ["select", "eq", "insert", "delete", "update", "is"]) {
     chain[method] = vi.fn().mockReturnValue(chain);
   }
   chain.then = (resolve: (v: unknown) => void) => resolve(result);
@@ -376,6 +378,40 @@ describe("cancelKlaimAction", () => {
       },
     });
     claimEventsChain.insert.mockRejectedValueOnce(new Error("db down"));
+
+    const result = await cancelKlaimAction("camp-1");
+    expect(result).toEqual({ success: true });
+  });
+
+  it("resets all claim_item_verifications rows for the campaign via the admin client", async () => {
+    const { claimItemVerificationsAdminChain } = setupMocks({
+      campaign: {
+        id: "camp-1",
+        status: "claim_submitted",
+        name: "Promo A",
+        created_by: "creator-1",
+      },
+    });
+
+    const result = await cancelKlaimAction("camp-1");
+
+    expect(result).toEqual({ success: true });
+    expect(claimItemVerificationsAdminChain.delete).toHaveBeenCalled();
+    expect(claimItemVerificationsAdminChain.eq).toHaveBeenCalledWith("campaign_id", "camp-1");
+  });
+
+  it("still succeeds even if resetting claim_item_verifications fails", async () => {
+    const { claimItemVerificationsAdminChain } = setupMocks({
+      campaign: {
+        id: "camp-1",
+        status: "claim_submitted",
+        name: "Promo A",
+        created_by: "creator-1",
+      },
+    });
+    (claimItemVerificationsAdminChain.delete as ReturnType<typeof vi.fn>).mockReturnValue({
+      eq: vi.fn().mockRejectedValue(new Error("db down")),
+    });
 
     const result = await cancelKlaimAction("camp-1");
     expect(result).toEqual({ success: true });
@@ -824,5 +860,244 @@ describe("markAsPaidAction", () => {
 
     const result = await markAsPaidAction("camp-1");
     expect(result).toEqual({ success: true });
+  });
+});
+
+// -------------------------------------------------------
+// updateClaimAmountAction (Phase 3 — distributor edits the claimed
+// nominal while its verification item is revision_requested)
+// -------------------------------------------------------
+
+function makeAmountItemChain(item: { id: string; status: string } | null) {
+  const chain: Record<string, unknown> = {};
+  chain.select = vi.fn().mockReturnValue(chain);
+  chain.eq = vi.fn().mockReturnValue(chain);
+  chain.maybeSingle = vi.fn().mockResolvedValue({ data: item });
+  return chain;
+}
+
+function setupUpdateClaimAmountMocks({
+  userId = "dist-1",
+  role = "distributor",
+  isActive = true,
+  campaign = { id: "camp-1", status: "claim_submitted" } as
+    | { id: string; status: string }
+    | null,
+  item = { id: "item-amount-1", status: "revision_requested" } as
+    | { id: string; status: string }
+    | null,
+  updateError = null as { message: string } | null,
+} = {}) {
+  const campaignsChain = makeCampaignsChain(campaign, updateError);
+  const itemChain = makeAmountItemChain(item);
+
+  const mockClient = {
+    auth: {
+      getUser: vi
+        .fn()
+        .mockResolvedValue({ data: { user: userId ? { id: userId } : null } }),
+    },
+    from: vi.fn().mockImplementation((table: string) => {
+      if (table === "users") return makeQueryChain({ role, is_active: isActive });
+      if (table === "campaigns") return campaignsChain;
+      if (table === "claim_item_verifications") return itemChain;
+      return {};
+    }),
+  };
+
+  const claimItemVerificationsAdminChain = makeThenableAdminChain({ error: null });
+  const mockAdminClient = {
+    from: vi.fn().mockImplementation((table: string) => {
+      if (table === "claim_item_verifications") return claimItemVerificationsAdminChain;
+      return {};
+    }),
+  };
+
+  vi.mocked(createClient).mockResolvedValue(mockClient as never);
+  vi.mocked(createAdminClient).mockReturnValue(mockAdminClient as never);
+
+  return { campaignsChain, itemChain, claimItemVerificationsAdminChain };
+}
+
+describe("updateClaimAmountAction", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns error when user is not distributor, admin, or superadmin", async () => {
+    setupUpdateClaimAmountMocks({ role: "manager" });
+    const result = await updateClaimAmountAction("camp-1", 2_000_000);
+    expect(result).toEqual({
+      error: "Hanya distributor atau admin yang dapat mengedit nominal klaim",
+    });
+  });
+
+  it("returns error when the new amount is zero or negative", async () => {
+    setupUpdateClaimAmountMocks();
+    const result = await updateClaimAmountAction("camp-1", 0);
+    expect(result.error).toMatch(/nominal/i);
+  });
+
+  it("returns error when campaign is not claim_submitted", async () => {
+    setupUpdateClaimAmountMocks({ campaign: { id: "camp-1", status: "ongoing" } });
+    const result = await updateClaimAmountAction("camp-1", 2_000_000);
+    expect(result.error).toMatch(/klaim diajukan/i);
+  });
+
+  it("returns error when the amount item is not revision_requested", async () => {
+    setupUpdateClaimAmountMocks({ item: { id: "item-amount-1", status: "pending" } });
+    const result = await updateClaimAmountAction("camp-1", 2_000_000);
+    expect(result.error).toMatch(/revisi/i);
+  });
+
+  it("returns error when no amount item exists yet", async () => {
+    setupUpdateClaimAmountMocks({ item: null });
+    const result = await updateClaimAmountAction("camp-1", 2_000_000);
+    expect(result.error).toMatch(/revisi/i);
+  });
+
+  it("returns error when db update fails", async () => {
+    setupUpdateClaimAmountMocks({ updateError: { message: "DB constraint violation" } });
+    const result = await updateClaimAmountAction("camp-1", 2_000_000);
+    expect(result).toEqual({ error: "DB constraint violation" });
+  });
+
+  it("distributor happy path: updates claim_amount and resets the item to pending", async () => {
+    const { campaignsChain, claimItemVerificationsAdminChain } = setupUpdateClaimAmountMocks();
+
+    const result = await updateClaimAmountAction("camp-1", 2_500_000);
+
+    expect(result).toEqual({ success: true });
+    expect(campaignsChain.update).toHaveBeenCalledWith({ claim_amount: 2_500_000 });
+    expect(claimItemVerificationsAdminChain.update).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "pending" })
+    );
+    expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/campaigns/camp-1");
+  });
+
+  it("admin can also edit the claim amount as a fallback", async () => {
+    setupUpdateClaimAmountMocks({ userId: "admin-1", role: "admin" });
+    const result = await updateClaimAmountAction("camp-1", 3_000_000);
+    expect(result).toEqual({ success: true });
+  });
+
+  it("still succeeds even if resetting the item fails", async () => {
+    const { claimItemVerificationsAdminChain } = setupUpdateClaimAmountMocks();
+    claimItemVerificationsAdminChain.then = (_resolve: unknown, reject: (e: unknown) => void) =>
+      reject(new Error("db down"));
+
+    const result = await updateClaimAmountAction("camp-1", 2_500_000);
+    expect(result).toEqual({ success: true });
+  });
+});
+
+// -------------------------------------------------------
+// addRealizationAction — claim cycle reset (Phase 3: a new realization
+// moving a paid campaign back to ongoing resets the previous cycle's
+// claim_item_verifications rows)
+// -------------------------------------------------------
+
+function setupAddRealizationMocks({
+  role = "admin",
+  campaign = {
+    id: "camp-1",
+    status: "paid",
+    actual_spent: 1_000_000,
+    requested_budget: 5_000_000,
+  } as { id: string; status: string; actual_spent: number; requested_budget: number } | null,
+  insertError = null as { message: string } | null,
+  updateError = null as { message: string } | null,
+} = {}) {
+  const campaignsChain: Record<string, unknown> = {};
+  campaignsChain.select = vi.fn().mockReturnValue(campaignsChain);
+  campaignsChain.update = vi.fn().mockReturnValue(campaignsChain);
+  campaignsChain.eq = vi.fn().mockReturnValue({
+    single: vi.fn().mockResolvedValue({ data: campaign }),
+    error: updateError,
+  });
+
+  const realizationsChain = { insert: vi.fn().mockResolvedValue({ error: insertError }) };
+
+  const mockClient = {
+    auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: "admin-1" } } }) },
+    from: vi.fn().mockImplementation((table: string) => {
+      if (table === "users") return makeQueryChain({ role, is_active: true });
+      if (table === "campaigns") return campaignsChain;
+      if (table === "realizations") return realizationsChain;
+      return {};
+    }),
+  };
+
+  const claimItemVerificationsAdminChain = makeThenableAdminChain({ error: null });
+  const mockAdminClient = {
+    from: vi.fn().mockImplementation((table: string) => {
+      if (table === "claim_item_verifications") return claimItemVerificationsAdminChain;
+      return {};
+    }),
+  };
+
+  vi.mocked(createClient).mockResolvedValue(mockClient as never);
+  vi.mocked(createAdminClient).mockReturnValue(mockAdminClient as never);
+
+  return { campaignsChain, realizationsChain, claimItemVerificationsAdminChain };
+}
+
+describe("addRealizationAction — claim cycle reset", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("resets claim_item_verifications when a new realization moves a paid campaign back to ongoing", async () => {
+    const { campaignsChain, claimItemVerificationsAdminChain } = setupAddRealizationMocks();
+
+    const result = await addRealizationAction({
+      campaignId: "11111111-1111-4111-8111-111111111111",
+      invoiceNumber: "INV-001",
+      amount: 500_000,
+      realizationDate: "2026-01-01",
+    });
+
+    expect(result.success).toBe(true);
+    expect(campaignsChain.update).toHaveBeenCalledWith({ status: "ongoing" });
+    expect(claimItemVerificationsAdminChain.delete).toHaveBeenCalled();
+    expect(claimItemVerificationsAdminChain.eq).toHaveBeenCalledWith(
+      "campaign_id",
+      "11111111-1111-4111-8111-111111111111"
+    );
+  });
+
+  it("does not reset claim_item_verifications when the campaign was already ongoing", async () => {
+    const { claimItemVerificationsAdminChain } = setupAddRealizationMocks({
+      campaign: {
+        id: "camp-1",
+        status: "ongoing",
+        actual_spent: 1_000_000,
+        requested_budget: 5_000_000,
+      },
+    });
+
+    await addRealizationAction({
+      campaignId: "11111111-1111-4111-8111-111111111111",
+      invoiceNumber: "INV-001",
+      amount: 500_000,
+      realizationDate: "2026-01-01",
+    });
+
+    expect(claimItemVerificationsAdminChain.delete).not.toHaveBeenCalled();
+  });
+
+  it("still succeeds even if resetting claim_item_verifications fails", async () => {
+    const { claimItemVerificationsAdminChain } = setupAddRealizationMocks();
+    claimItemVerificationsAdminChain.then = (_resolve: unknown, reject: (e: unknown) => void) =>
+      reject(new Error("db down"));
+
+    const result = await addRealizationAction({
+      campaignId: "11111111-1111-4111-8111-111111111111",
+      invoiceNumber: "INV-001",
+      amount: 500_000,
+      realizationDate: "2026-01-01",
+    });
+
+    expect(result.success).toBe(true);
   });
 });

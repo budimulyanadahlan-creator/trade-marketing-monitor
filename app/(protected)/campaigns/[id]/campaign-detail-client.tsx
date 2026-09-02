@@ -48,6 +48,7 @@ import {
   markReadyToPayAction,
   markAsPaidAction,
   markAsCompletedAction,
+  updateClaimAmountAction,
 } from "@/app/actions/realizations";
 import { upsertClaimChecklistAction } from "@/app/actions/claim-checklist";
 import {
@@ -377,10 +378,14 @@ function ClaimFileRow({
   file,
   canDelete,
   onDeleted,
+  showVersionTag = false,
 }: {
   file: ClaimDocument["files"][number];
   canDelete: boolean;
   onDeleted: () => void;
+  // Phase 3 (Loop Revisi): re-uploads never delete the old file, so once an
+  // item has more than one file, tell latest from stale at a glance.
+  showVersionTag?: boolean;
 }) {
   const [opening, setOpening] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -425,7 +430,11 @@ function ClaimFileRow({
       <button
         onClick={open}
         disabled={opening}
-        className="flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 transition-colors"
+        className={`flex items-center gap-1.5 text-xs transition-colors ${
+          showVersionTag && !file.isLatest
+            ? "text-slate-500 hover:text-slate-400"
+            : "text-emerald-400 hover:text-emerald-300"
+        }`}
       >
         {opening ? (
           <Loader2 className="h-3 w-3 animate-spin" />
@@ -434,6 +443,17 @@ function ClaimFileRow({
         )}
         {file.fileName}
       </button>
+      {showVersionTag && (
+        <span
+          className={`text-[10px] rounded-full px-1.5 py-0.5 border whitespace-nowrap ${
+            file.isLatest
+              ? "text-emerald-400 border-emerald-500/30 bg-emerald-500/10"
+              : "text-slate-500 border-slate-600/40 bg-slate-500/10"
+          }`}
+        >
+          {file.isLatest ? "terbaru" : "usang"}
+        </span>
+      )}
       {canDelete && (
         <button
           onClick={handleDelete}
@@ -707,6 +727,97 @@ function ClaimItemVerificationControls({
   );
 }
 
+// ============================================================
+// Claim Amount Editor (Phase 3 — distributor fixes the nominal while its
+// verification item is revision_requested, without cancelling the claim)
+// ============================================================
+
+function ClaimAmountEditor({
+  campaignId,
+  claimAmount,
+}: {
+  campaignId: string;
+  claimAmount: number | null;
+}) {
+  const router = useRouter();
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(claimAmount != null ? String(claimAmount) : "");
+  const [isPending, startTransition] = useTransition();
+
+  function handleSave() {
+    const parsedAmount = Number(value.replace(/\D/g, ""));
+    if (!parsedAmount || parsedAmount <= 0) {
+      toast.error("Masukkan nominal klaim yang valid");
+      return;
+    }
+    startTransition(async () => {
+      const result = await updateClaimAmountAction(campaignId, parsedAmount);
+      if (result.error) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success("Nominal klaim diperbarui");
+      setEditing(false);
+      router.refresh();
+    });
+  }
+
+  if (!editing) {
+    return (
+      <div className="flex items-center gap-2 flex-wrap">
+        {claimAmount != null && (
+          <span className="font-semibold text-amber-400">{formatIDR(claimAmount)}</span>
+        )}
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-6 px-2 text-[11px] border-amber-500/40 text-amber-400 hover:bg-amber-500/10"
+          onClick={() => {
+            setValue(claimAmount != null ? String(claimAmount) : "");
+            setEditing(true);
+          }}
+        >
+          <Pencil className="h-3 w-3" />
+          Edit Nominal
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <Input
+        value={value}
+        onChange={(e) => setValue(e.target.value.replace(/[^0-9]/g, ""))}
+        disabled={isPending}
+        autoFocus
+        className="h-7 w-36 text-xs"
+      />
+      <Button
+        type="button"
+        size="sm"
+        className="h-7 px-2 text-xs"
+        onClick={handleSave}
+        disabled={isPending || !value}
+      >
+        {isPending && <Loader2 className="h-3 w-3 animate-spin" />}
+        Simpan
+      </Button>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="h-7 px-2 text-xs"
+        onClick={() => setEditing(false)}
+        disabled={isPending}
+      >
+        Batal
+      </Button>
+    </div>
+  );
+}
+
 function ClaimChecklistSection({
   campaignId,
   campaignStatus,
@@ -804,7 +915,9 @@ function ClaimChecklistSection({
       )}
       {isDistributor && !isEditable && (
         <p className="text-xs text-slate-500 mb-3">
-          Checklist tidak dapat diubah saat SKP berstatus ini.
+          {campaignStatus === "claim_submitted"
+            ? "Checklist terkunci — hanya item yang diminta revisi finance yang bisa diupload ulang."
+            : "Checklist tidak dapat diubah saat SKP berstatus ini."}
         </p>
       )}
 
@@ -817,6 +930,14 @@ function ClaimChecklistSection({
           // lib/claim-checklist-sync.ts) — manual toggling only applies
           // to items with no files attached.
           const canToggleManually = isEditable && !hasFiles;
+          // Phase 3 (Loop Revisi): once a claim is submitted, this one item
+          // reopens for re-upload only while finance has it as
+          // revision_requested — everything else stays locked.
+          const canReupload =
+            isDistributor &&
+            campaignStatus === "claim_submitted" &&
+            doc.verification?.status === "revision_requested";
+          const canUpload = (isDistributor && isEditable) || canReupload;
 
           return (
             <div
@@ -877,7 +998,13 @@ function ClaimChecklistSection({
               )}
               </div>
 
-              {(hasFiles || isEditable) && (
+              {canReupload && (
+                <p className="mt-2 ml-7 text-[11px] text-amber-400">
+                  Finance meminta revisi — upload ulang dokumen ini.
+                </p>
+              )}
+
+              {(hasFiles || canUpload) && (
                 <div className="mt-2 ml-7 flex flex-wrap items-center gap-x-4 gap-y-1.5">
                   {doc.files.map((f) => (
                     <ClaimFileRow
@@ -885,9 +1012,10 @@ function ClaimChecklistSection({
                       file={f}
                       canDelete={isDistributor && isEditable && f.uploadedBy === userId}
                       onDeleted={() => router.refresh()}
+                      showVersionTag={doc.files.length > 1}
                     />
                   ))}
-                  {isDistributor && isEditable && (
+                  {canUpload && (
                     <ClaimFileUploadButton
                       campaignId={campaignId}
                       documentTypeId={doc.documentTypeId}
@@ -900,27 +1028,43 @@ function ClaimChecklistSection({
           );
         })}
 
-        {claimAmountVerification && (
-          <div className="rounded-lg border border-white/8 px-4 py-3">
-            <div className="flex items-start justify-between gap-3">
-              <span className="text-sm text-slate-200">
-                Nominal Klaim
-                {claimAmount != null && (
-                  <span className="ml-2 font-semibold text-amber-400">
-                    {formatIDR(claimAmount)}
-                  </span>
-                )}
-              </span>
-              <ClaimItemVerificationControls
-                campaignId={campaignId}
-                itemId={claimAmountVerification.id}
-                itemLabel="Nominal Klaim"
-                verification={claimAmountVerification}
-                canVerify={canVerifyItems}
-              />
+        {claimAmountVerification && (() => {
+          // Phase 3 (Loop Revisi): distributor edits the nominal in place
+          // instead of the plain read-only figure, but only while finance
+          // has it marked revision_requested.
+          const canEditAmount =
+            isDistributor &&
+            campaignStatus === "claim_submitted" &&
+            claimAmountVerification.status === "revision_requested";
+
+          return (
+            <div className="rounded-lg border border-white/8 px-4 py-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm text-slate-200">Nominal Klaim</span>
+                  <div className="mt-1">
+                    {canEditAmount ? (
+                      <ClaimAmountEditor campaignId={campaignId} claimAmount={claimAmount} />
+                    ) : (
+                      claimAmount != null && (
+                        <span className="font-semibold text-amber-400">
+                          {formatIDR(claimAmount)}
+                        </span>
+                      )
+                    )}
+                  </div>
+                </div>
+                <ClaimItemVerificationControls
+                  campaignId={campaignId}
+                  itemId={claimAmountVerification.id}
+                  itemLabel="Nominal Klaim"
+                  verification={claimAmountVerification}
+                  canVerify={canVerifyItems}
+                />
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
       </div>
     </div>
   );

@@ -1,5 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
-import { ensureClaimItemVerifications } from "./claim-item-verifications";
+import {
+  ensureClaimItemVerifications,
+  resetClaimItemToPending,
+  resetAllClaimItemVerifications,
+} from "./claim-item-verifications";
 
 function makeThenableChain(result: unknown) {
   const chain: Record<string, unknown> = {};
@@ -89,5 +93,74 @@ describe("ensureClaimItemVerifications", () => {
       { campaign_id: "camp-1", item_type: "document", document_type_id: "doc-2", status: "pending" },
       { campaign_id: "camp-1", item_type: "amount", document_type_id: null, status: "pending" },
     ]);
+  });
+});
+
+// -------------------------------------------------------
+// resetClaimItemToPending (Phase 3 — distributor fixes a revision)
+// -------------------------------------------------------
+
+function makeUpdateChain() {
+  const chain: Record<string, unknown> = {};
+  for (const method of ["update", "eq", "is"]) {
+    chain[method] = vi.fn().mockReturnValue(chain);
+  }
+  chain.then = (resolve: (v: unknown) => void) => resolve({ error: null });
+  return chain;
+}
+
+describe("resetClaimItemToPending", () => {
+  it("resets a document item back to pending, scoped to its document_type_id", async () => {
+    const chain = makeUpdateChain();
+    const supabase = { from: vi.fn().mockReturnValue(chain) };
+
+    await resetClaimItemToPending(supabase as never, "camp-1", {
+      itemType: "document",
+      documentTypeId: "doc-1",
+    });
+
+    expect(supabase.from).toHaveBeenCalledWith("claim_item_verifications");
+    expect(chain.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "pending",
+        note: null,
+        actor_id: null,
+        decided_at: null,
+      })
+    );
+    expect(chain.eq).toHaveBeenCalledWith("campaign_id", "camp-1");
+    expect(chain.eq).toHaveBeenCalledWith("item_type", "document");
+    expect(chain.eq).toHaveBeenCalledWith("document_type_id", "doc-1");
+    expect(chain.eq).toHaveBeenCalledWith("status", "revision_requested");
+  });
+
+  it("resets the amount item back to pending, scoped by a null document_type_id", async () => {
+    const chain = makeUpdateChain();
+    const supabase = { from: vi.fn().mockReturnValue(chain) };
+
+    await resetClaimItemToPending(supabase as never, "camp-1", { itemType: "amount" });
+
+    expect(chain.eq).toHaveBeenCalledWith("item_type", "amount");
+    expect(chain.is).toHaveBeenCalledWith("document_type_id", null);
+  });
+});
+
+// -------------------------------------------------------
+// resetAllClaimItemVerifications (Phase 3 — cancel klaim / new claim cycle)
+// -------------------------------------------------------
+
+describe("resetAllClaimItemVerifications", () => {
+  it("deletes every claim_item_verifications row for the campaign", async () => {
+    const chain: Record<string, unknown> = {};
+    chain.delete = vi.fn().mockReturnValue(chain);
+    chain.eq = vi.fn().mockReturnValue(chain);
+    chain.then = (resolve: (v: unknown) => void) => resolve({ error: null });
+    const supabase = { from: vi.fn().mockReturnValue(chain) };
+
+    await resetAllClaimItemVerifications(supabase as never, "camp-1");
+
+    expect(supabase.from).toHaveBeenCalledWith("claim_item_verifications");
+    expect(chain.delete).toHaveBeenCalled();
+    expect(chain.eq).toHaveBeenCalledWith("campaign_id", "camp-1");
   });
 });

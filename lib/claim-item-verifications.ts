@@ -71,3 +71,62 @@ export async function ensureClaimItemVerifications(
 
   await supabase.from("claim_item_verifications").insert(rowsToInsert);
 }
+
+/**
+ * Resets one claim item back to 'pending' after a distributor fixes it
+ * (re-uploads a document, or edits the claim amount) while it was
+ * 'revision_requested'. Clears the finance note/actor/decided_at along with
+ * it — the item is undecided again, and the original note is already
+ * preserved in claim_events' history for that revision request.
+ *
+ * Pass an admin/service-role client — like ensureClaimItemVerifications,
+ * this is a system side effect of a distributor action, not a finance/admin
+ * decision, and the UPDATE policy on claim_item_verifications is scoped to
+ * finance/admin/superadmin only.
+ */
+export async function resetClaimItemToPending(
+  supabase: SupabaseClient<Database>,
+  campaignId: string,
+  match: { itemType: "document"; documentTypeId: string } | { itemType: "amount" }
+): Promise<void> {
+  let query = supabase
+    .from("claim_item_verifications")
+    .update({
+      status: "pending",
+      note: null,
+      actor_id: null,
+      decided_at: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("campaign_id", campaignId)
+    .eq("item_type", match.itemType)
+    // Extra guard on top of the caller's own check — a no-op if the item
+    // isn't actually revision_requested (e.g. a race with finance deciding
+    // it in the meantime), rather than clobbering a fresh decision.
+    .eq("status", "revision_requested");
+
+  query =
+    match.itemType === "document"
+      ? query.eq("document_type_id", match.documentTypeId)
+      : query.is("document_type_id", null);
+
+  await query;
+}
+
+/**
+ * Deletes every claim_item_verifications row for a campaign — used when a
+ * claim's verification cycle starts over from scratch: Batalkan Pengajuan,
+ * or a new realization moving a paid campaign back to ongoing for its next
+ * claim cycle. The next submitKlaimAction / self-heal call to
+ * ensureClaimItemVerifications recreates a fresh, all-pending set.
+ *
+ * Pass an admin/service-role client — no DELETE policy exists on
+ * claim_item_verifications (this is a system side effect, not a
+ * finance/admin decision).
+ */
+export async function resetAllClaimItemVerifications(
+  supabase: SupabaseClient<Database>,
+  campaignId: string
+): Promise<void> {
+  await supabase.from("claim_item_verifications").delete().eq("campaign_id", campaignId);
+}

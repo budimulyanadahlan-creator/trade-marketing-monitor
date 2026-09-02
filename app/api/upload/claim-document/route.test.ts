@@ -11,11 +11,15 @@ vi.mock("@/lib/image-compress", () => ({
 vi.mock("@/lib/claim-checklist-sync", () => ({
   markChecklistFulfilled: vi.fn(),
 }));
+vi.mock("@/lib/claim-item-verifications", () => ({
+  resetClaimItemToPending: vi.fn(),
+}));
 
 import { POST } from "./route";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { compressImageIfNeeded } from "@/lib/image-compress";
 import { markChecklistFulfilled } from "@/lib/claim-checklist-sync";
+import { resetClaimItemToPending } from "@/lib/claim-item-verifications";
 
 // -------------------------------------------------------
 // Mock builder helpers
@@ -37,6 +41,17 @@ function makeInsertChain(result: { data: unknown; error?: unknown }) {
   return chain;
 }
 
+// Serves the claim_item_verifications lookup route.ts makes only when the
+// campaign is claim_submitted, to check whether this document's item is
+// revision_requested (select().eq().eq().eq().maybeSingle()).
+function makeVerificationChain(item: { id: string; status: string } | null) {
+  const chain: Record<string, unknown> = {};
+  chain.select = vi.fn().mockReturnValue(chain);
+  chain.eq = vi.fn().mockReturnValue(chain);
+  chain.maybeSingle = vi.fn().mockResolvedValue({ data: item });
+  return chain;
+}
+
 function setupMocks(
   opts: Partial<{
     role: string;
@@ -47,6 +62,7 @@ function setupMocks(
     insertedFile: unknown;
     insertError: { message: string } | null;
     uploadError: { message: string } | null;
+    verificationItem: { id: string; status: string } | null;
   }> = {}
 ) {
   const {
@@ -58,6 +74,7 @@ function setupMocks(
     insertedFile = { id: "file-1" },
     insertError = null,
     uploadError = null,
+    verificationItem = { id: "item-1", status: "revision_requested" },
   } = opts;
 
   const usersChain = makeSelectChain({
@@ -66,6 +83,7 @@ function setupMocks(
   const campaignsChain = makeSelectChain({ data: campaign });
   const docTypesChain = makeSelectChain({ data: docType });
   const filesInsertChain = makeInsertChain({ data: insertedFile, error: insertError });
+  const verificationChain = makeVerificationChain(verificationItem);
 
   const supabase = {
     auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: "dist-1" } } }) },
@@ -74,6 +92,7 @@ function setupMocks(
       if (table === "campaigns") return campaignsChain;
       if (table === "claim_document_types") return docTypesChain;
       if (table === "campaign_files") return filesInsertChain;
+      if (table === "claim_item_verifications") return verificationChain;
       return makeSelectChain({ data: null });
     }),
   };
@@ -93,8 +112,16 @@ function setupMocks(
     contentType: "image/jpeg",
   });
   (markChecklistFulfilled as ReturnType<typeof vi.fn>).mockResolvedValue({});
+  (resetClaimItemToPending as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
-  return { supabase, adminClient, storageUpload, storageRemove, filesInsertChain };
+  return {
+    supabase,
+    adminClient,
+    storageUpload,
+    storageRemove,
+    filesInsertChain,
+    verificationChain,
+  };
 }
 
 // jsdom's File/FormData globals aren't the same classes Next's NextRequest
@@ -212,17 +239,7 @@ describe("POST /api/upload/claim-document", () => {
     const json = await res.json();
 
     expect(res.status).toBe(400);
-    expect(json.error).toMatch(/Approved|Ongoing|Klaim Diajukan/i);
-  });
-
-  it("rejects claim_submitted — uploads are locked once a claim is submitted", async () => {
-    setupMocks({ campaign: { id: "camp-1", status: "claim_submitted" } });
-
-    const res = await POST(makeRequest());
-    const json = await res.json();
-
-    expect(res.status).toBe(400);
-    expect(json.error).toMatch(/Approved|Ongoing/i);
+    expect(json.error).toMatch(/Approved|Ongoing|Klaim Diajukan|revisi/i);
   });
 
   it("rejects missing file", async () => {
@@ -273,5 +290,73 @@ describe("POST /api/upload/claim-document", () => {
     const res = await POST(makeRequest());
 
     expect(res.status).toBe(500);
+  });
+
+  // -------------------------------------------------------
+  // Phase 3 — revision loop (claim_submitted re-upload)
+  // -------------------------------------------------------
+
+  it("rejects claim_submitted when the item's verification isn't revision_requested", async () => {
+    setupMocks({
+      campaign: { id: "camp-1", status: "claim_submitted" },
+      verificationItem: { id: "item-1", status: "pending" },
+    });
+
+    const res = await POST(makeRequest());
+    const json = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(json.error).toMatch(/revisi/i);
+  });
+
+  it("rejects claim_submitted when no verification item exists yet for the document", async () => {
+    setupMocks({
+      campaign: { id: "camp-1", status: "claim_submitted" },
+      verificationItem: null,
+    });
+
+    const res = await POST(makeRequest());
+
+    expect(res.status).toBe(400);
+  });
+
+  it("allows claim_submitted re-upload when the item is revision_requested, and resets it to pending", async () => {
+    const { storageUpload } = setupMocks({
+      campaign: { id: "camp-1", status: "claim_submitted" },
+      verificationItem: { id: "item-1", status: "revision_requested" },
+    });
+
+    const res = await POST(makeRequest());
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.file).toEqual({ id: "file-1" });
+    expect(storageUpload).toHaveBeenCalled();
+    expect(resetClaimItemToPending).toHaveBeenCalledWith(expect.anything(), "camp-1", {
+      itemType: "document",
+      documentTypeId: "doc-1",
+    });
+  });
+
+  it("still succeeds even if resetting the verification item fails", async () => {
+    setupMocks({
+      campaign: { id: "camp-1", status: "claim_submitted" },
+      verificationItem: { id: "item-1", status: "revision_requested" },
+    });
+    (resetClaimItemToPending as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error("db down")
+    );
+
+    const res = await POST(makeRequest());
+
+    expect(res.status).toBe(200);
+  });
+
+  it("does not reset the verification item for an approved/ongoing upload", async () => {
+    setupMocks({ campaign: { id: "camp-1", status: "ongoing" } });
+
+    await POST(makeRequest());
+
+    expect(resetClaimItemToPending).not.toHaveBeenCalled();
   });
 });

@@ -4,7 +4,11 @@ import { revalidatePath } from "next/cache";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { z } from "zod";
 import { sendClaimSubmittedEmail, sendMarkedAsPaidEmail } from "@/lib/email";
-import { ensureClaimItemVerifications } from "@/lib/claim-item-verifications";
+import {
+  ensureClaimItemVerifications,
+  resetAllClaimItemVerifications,
+  resetClaimItemToPending,
+} from "@/lib/claim-item-verifications";
 import type { CampaignStatus } from "@/types/database";
 
 async function requireActiveUser() {
@@ -97,6 +101,18 @@ export async function addRealizationAction(
         .from("campaigns")
         .update({ status: "ongoing" as CampaignStatus })
         .eq("id", campaignId);
+
+      // A paid campaign already went through a full claim cycle — reset its
+      // claim_item_verifications so the next claim starts verification from
+      // scratch instead of inheriting the previous cycle's decisions.
+      // Best-effort: the transition above already succeeded.
+      if (campaign.status === "paid") {
+        try {
+          await resetAllClaimItemVerifications(createAdminClient(), campaignId);
+        } catch (resetErr) {
+          console.error("[addRealizationAction] claim_item_verifications reset error:", resetErr);
+        }
+      }
     }
 
     const newActualSpent = campaign.actual_spent + amount;
@@ -298,6 +314,91 @@ export async function cancelKlaimAction(
       });
     } catch (historyErr) {
       console.error("[cancelKlaimAction] claim_events insert error:", historyErr);
+    }
+
+    // Best-effort: the status change above already succeeded. Clears every
+    // decision finance made so far — resubmitting starts verification over
+    // from scratch (Phase 3's "loop revisi" reset rule).
+    try {
+      await resetAllClaimItemVerifications(createAdminClient(), campaignId);
+    } catch (resetErr) {
+      console.error("[cancelKlaimAction] claim_item_verifications reset error:", resetErr);
+    }
+
+    return { success: true };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Terjadi kesalahan" };
+  }
+}
+
+// ============================================================
+// UPDATE CLAIM AMOUNT (Distributor — Phase 3 loop revisi: edits the
+// claimed nominal while its verification item is revision_requested,
+// without cancelling the claim; admin/superadmin as a fallback)
+// ============================================================
+
+const updateClaimAmountSchema = z.object({
+  claimAmount: z.coerce.number().min(1, "Nominal klaim harus lebih dari 0"),
+});
+
+export async function updateClaimAmountAction(
+  campaignId: string,
+  claimAmount: number
+): Promise<{ error?: string; success?: boolean }> {
+  try {
+    const { supabase, profile } = await requireActiveUser();
+
+    if (!["distributor", "admin", "superadmin"].includes(profile.role)) {
+      return { error: "Hanya distributor atau admin yang dapat mengedit nominal klaim" };
+    }
+
+    const parsed = updateClaimAmountSchema.safeParse({ claimAmount });
+    if (!parsed.success) {
+      return { error: parsed.error.issues[0]?.message ?? "Nominal klaim tidak valid" };
+    }
+
+    const { data: campaign } = await supabase
+      .from("campaigns")
+      .select("id, status")
+      .eq("id", campaignId)
+      .single();
+
+    if (!campaign || campaign.status !== "claim_submitted") {
+      return {
+        error: "Nominal klaim hanya dapat diedit saat SKP berstatus Klaim Diajukan",
+      };
+    }
+
+    const { data: item } = await supabase
+      .from("claim_item_verifications")
+      .select("id, status")
+      .eq("campaign_id", campaignId)
+      .eq("item_type", "amount")
+      .maybeSingle();
+
+    if (!item || item.status !== "revision_requested") {
+      return {
+        error:
+          "Nominal klaim hanya dapat diedit saat item verifikasi nominal berstatus Revisi Diminta",
+      };
+    }
+
+    const { error } = await supabase
+      .from("campaigns")
+      .update({ claim_amount: parsed.data.claimAmount })
+      .eq("id", campaignId);
+
+    if (error) return { error: error.message };
+
+    revalidatePath(`/campaigns/${campaignId}`);
+
+    // Best-effort: the amount above already saved, so a failure resetting
+    // the item shouldn't fail the whole action — worst case finance sees a
+    // stale revision_requested item next to the new amount.
+    try {
+      await resetClaimItemToPending(createAdminClient(), campaignId, { itemType: "amount" });
+    } catch (resetErr) {
+      console.error("[updateClaimAmountAction] claim_item_verifications reset error:", resetErr);
     }
 
     return { success: true };

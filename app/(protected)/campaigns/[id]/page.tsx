@@ -10,6 +10,10 @@ export type ClaimDocumentFile = {
   fileName: string;
   uploadedBy: string;
   uploadedAt: string;
+  // Phase 3 (Loop Revisi): true for the most recently uploaded file for this
+  // checklist item — re-uploads never delete the old file, so multiple files
+  // can pile up on one item and the UI needs to tell latest from stale.
+  isLatest: boolean;
 };
 
 // Verification decision on one claim item (a document, or the nominal
@@ -237,6 +241,8 @@ export default async function CampaignDetailPage({ params }: Props) {
       }
 
       // Claim document files (document_type_id set) grouped per checklist item.
+      // filesRaw is already ordered by uploaded_at, so the last entry pushed
+      // per document type is the most recent one.
       const claimFilesByDocType = new Map<string, ClaimDocumentFile[]>();
       for (const f of (filesRaw ?? []) as CampaignFileRow[]) {
         if (!f.document_type_id) continue;
@@ -246,8 +252,12 @@ export default async function CampaignDetailPage({ params }: Props) {
           fileName: f.file_name,
           uploadedBy: f.uploaded_by,
           uploadedAt: f.uploaded_at,
+          isLatest: false, // corrected below once each list is complete
         });
         claimFilesByDocType.set(f.document_type_id, list);
+      }
+      for (const list of claimFilesByDocType.values()) {
+        if (list.length > 0) list[list.length - 1].isLatest = true;
       }
 
       claimDocuments = docs.map((d) => ({
