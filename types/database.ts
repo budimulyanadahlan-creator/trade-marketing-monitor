@@ -247,7 +247,9 @@ export type ClaimEventAction =
   | "submitted"
   | "cancelled"
   | "claim_verified"
-  | "ready_to_pay";
+  | "ready_to_pay"
+  | "item_accepted"
+  | "item_revision_requested";
 
 export type ClaimEventRow = {
   id: string;
@@ -258,7 +260,34 @@ export type ClaimEventRow = {
   // riwayat nominal per pengajuan, karena campaigns.claim_amount dikosongkan
   // saat dibatalkan.
   claim_amount: number | null;
+  // Catatan finance untuk 'item_accepted'/'item_revision_requested' (wajib
+  // saat revisi, opsional saat accept); null untuk aksi lain.
+  note: string | null;
+  // Nama item yang diverifikasi ("Nominal Klaim" atau nama dokumen),
+  // didenormalisasi agar riwayat tetap terbaca meski item dihapus.
+  item_label: string | null;
   created_at: string;
+};
+
+// -------------------------------------------------------
+// Verifikasi klaim per item (Phase 2)
+// -------------------------------------------------------
+
+export type ClaimItemType = "document" | "amount";
+export type ClaimItemStatus = "pending" | "accepted" | "revision_requested";
+
+export type ClaimItemVerificationRow = {
+  id: string;
+  campaign_id: string;
+  item_type: ClaimItemType;
+  // NULL hanya untuk item_type = 'amount'.
+  document_type_id: string | null;
+  status: ClaimItemStatus;
+  note: string | null;
+  actor_id: string | null;
+  decided_at: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 // Convenience aliases
@@ -664,7 +693,12 @@ export type Database = {
       };
       claim_events: {
         Row: ClaimEventRow;
-        Insert: Omit<ClaimEventRow, "id" | "created_at"> & { id?: string; created_at?: string };
+        Insert: Omit<ClaimEventRow, "id" | "created_at" | "note" | "item_label"> & {
+          id?: string;
+          created_at?: string;
+          note?: string | null;
+          item_label?: string | null;
+        };
         Update: never;
         Relationships: [
           {
@@ -676,6 +710,46 @@ export type Database = {
           },
           {
             foreignKeyName: "claim_events_actor_id_fkey";
+            columns: ["actor_id"];
+            isOneToOne: false;
+            referencedRelation: "users";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      claim_item_verifications: {
+        Row: ClaimItemVerificationRow;
+        Insert: Omit<
+          ClaimItemVerificationRow,
+          "id" | "created_at" | "updated_at" | "note" | "actor_id" | "decided_at"
+        > & {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+          note?: string | null;
+          actor_id?: string | null;
+          decided_at?: string | null;
+        };
+        Update: Partial<
+          Pick<ClaimItemVerificationRow, "status" | "note" | "actor_id" | "decided_at" | "updated_at">
+        >;
+        Relationships: [
+          {
+            foreignKeyName: "claim_item_verifications_campaign_id_fkey";
+            columns: ["campaign_id"];
+            isOneToOne: false;
+            referencedRelation: "campaigns";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "claim_item_verifications_document_type_id_fkey";
+            columns: ["document_type_id"];
+            isOneToOne: false;
+            referencedRelation: "claim_document_types";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "claim_item_verifications_actor_id_fkey";
             columns: ["actor_id"];
             isOneToOne: false;
             referencedRelation: "users";

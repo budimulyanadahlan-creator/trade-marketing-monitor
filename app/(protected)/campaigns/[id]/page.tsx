@@ -1,8 +1,9 @@
 import { notFound } from "next/navigation";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { computeAARemainingBudget } from "@/lib/campaign-status";
+import { ensureClaimItemVerifications } from "@/lib/claim-item-verifications";
 import { CampaignDetailClient } from "./campaign-detail-client";
-import type { CampaignRow, CampaignFileRow, ApprovalHistoryRow, RealizationRow, DistributorReceiptRow, ClaimEventRow, UserRole, CampaignStatus } from "@/types/database";
+import type { CampaignRow, CampaignFileRow, ApprovalHistoryRow, RealizationRow, DistributorReceiptRow, ClaimEventRow, ClaimItemStatus, UserRole, CampaignStatus } from "@/types/database";
 
 export type ClaimDocumentFile = {
   id: string;
@@ -11,11 +12,22 @@ export type ClaimDocumentFile = {
   uploadedAt: string;
 };
 
+// Verification decision on one claim item (a document, or the nominal
+// amount) — Phase 2 (Verifikasi Klaim oleh Finance).
+export type ClaimItemVerificationInfo = {
+  id: string;
+  status: ClaimItemStatus;
+  note: string | null;
+  actorName: string | null;
+  decidedAt: string | null;
+};
+
 export type ClaimDocument = {
   documentTypeId: string;
   name: string;
   isFulfilled: boolean;
   files: ClaimDocumentFile[];
+  verification: ClaimItemVerificationInfo | null;
 };
 
 // Info budget AA untuk approver: dihitung server-side saat halaman dimuat.
@@ -131,9 +143,64 @@ export default async function CampaignDetailPage({ params }: Props) {
     actor: { full_name: string } | null;
   })[];
 
-  // Claim checklist data (distributor, admin, superadmin, finance, manager)
-  const showClaimSection = ["distributor", "admin", "superadmin", "finance", "manager"].includes(userRole);
+  // Claim checklist data. "user" is included from Phase 2 onward so the SKP
+  // creator can see per-item verification status/notes read-only (PRD story
+  // 18) — RLS still scopes their view to campaigns they created.
+  const showClaimSection = ["distributor", "admin", "superadmin", "finance", "manager", "user"].includes(userRole);
   let claimDocuments: ClaimDocument[] = [];
+
+  // Per-item verification (Phase 2): status/note/actor per document, plus
+  // one row for the nominal claim amount (item_type = 'amount').
+  const ITEM_VERIFICATION_STATUSES: CampaignStatus[] = [
+    "claim_submitted", "claim_verified", "ready_to_pay", "paid", "completed",
+  ];
+  const verificationByDocType = new Map<string, ClaimItemVerificationInfo>();
+  let claimAmountVerification: ClaimItemVerificationInfo | null = null;
+
+  if (showClaimSection && ITEM_VERIFICATION_STATUSES.includes(campaign.status)) {
+    // Self-heal: creates any missing item rows (documents + nominal) so a
+    // claim that was already claim_submitted when this feature shipped
+    // still gets a full set to verify, per the PRD's transition note.
+    if (campaign.status === "claim_submitted") {
+      try {
+        await ensureClaimItemVerifications(
+          createAdminClient(),
+          id,
+          campaign.promotion_category_id
+        );
+      } catch (syncErr) {
+        console.error("[CampaignDetailPage] claim_item_verifications sync error:", syncErr);
+      }
+    }
+
+    const { data: itemsRaw } = await supabase
+      .from("claim_item_verifications")
+      .select("id, item_type, document_type_id, status, note, decided_at, actor:actor_id(full_name)")
+      .eq("campaign_id", id);
+
+    for (const row of (itemsRaw ?? []) as unknown as {
+      id: string;
+      item_type: "document" | "amount";
+      document_type_id: string | null;
+      status: ClaimItemStatus;
+      note: string | null;
+      decided_at: string | null;
+      actor: { full_name: string } | null;
+    }[]) {
+      const info: ClaimItemVerificationInfo = {
+        id: row.id,
+        status: row.status,
+        note: row.note,
+        actorName: row.actor?.full_name ?? null,
+        decidedAt: row.decided_at,
+      };
+      if (row.item_type === "amount") {
+        claimAmountVerification = info;
+      } else if (row.document_type_id) {
+        verificationByDocType.set(row.document_type_id, info);
+      }
+    }
+  }
 
   if (showClaimSection && campaign.promotion_category_id) {
     const { data: requirementsRaw } = await supabase
@@ -188,6 +255,7 @@ export default async function CampaignDetailPage({ params }: Props) {
         name: d.name,
         isFulfilled: fulfilledMap.get(d.documentTypeId) ?? false,
         files: claimFilesByDocType.get(d.documentTypeId) ?? [],
+        verification: verificationByDocType.get(d.documentTypeId) ?? null,
       }));
     }
   }
@@ -296,6 +364,7 @@ export default async function CampaignDetailPage({ params }: Props) {
       realizations={realizations}
       distributorReceipts={distributorReceipts}
       claimDocuments={claimDocuments}
+      claimAmountVerification={claimAmountVerification}
       claimEvents={claimEvents}
       aaBudgetInfo={aaBudgetInfo}
       isEditable={isEditable}

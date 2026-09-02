@@ -63,6 +63,19 @@ function makeUsersAdminChain(
   return chain;
 }
 
+// Serves ensureClaimItemVerifications' admin-client reads/writes against
+// "claim_item_verifications" and "claim_requirements" — empty by default
+// (no pre-existing items, no document requirements) so submitKlaimAction's
+// best-effort sync only ever inserts the single 'amount' item in tests.
+function makeThenableAdminChain(result: unknown) {
+  const chain: Record<string, unknown> = {};
+  for (const method of ["select", "eq", "insert"]) {
+    chain[method] = vi.fn().mockReturnValue(chain);
+  }
+  chain.then = (resolve: (v: unknown) => void) => resolve(result);
+  return chain;
+}
+
 type SetupOptions = {
   userId?: string | null;
   role?: string;
@@ -113,9 +126,13 @@ function setupMocks({
   };
 
   const usersAdminChain = makeUsersAdminChain(financeUsers, creatorProfile);
+  const claimItemVerificationsAdminChain = makeThenableAdminChain({ data: [] });
+  const claimRequirementsAdminChain = makeThenableAdminChain({ data: [] });
   const mockAdminClient = {
     from: vi.fn().mockImplementation((table: string) => {
       if (table === "users") return usersAdminChain;
+      if (table === "claim_item_verifications") return claimItemVerificationsAdminChain;
+      if (table === "claim_requirements") return claimRequirementsAdminChain;
       return {};
     }),
     auth: {
@@ -128,7 +145,12 @@ function setupMocks({
   vi.mocked(createClient).mockResolvedValue(mockClient as never);
   vi.mocked(createAdminClient).mockReturnValue(mockAdminClient as never);
 
-  return { campaignsChain, mockAdminClient, claimEventsChain };
+  return {
+    campaignsChain,
+    mockAdminClient,
+    claimEventsChain,
+    claimItemVerificationsAdminChain,
+  };
 }
 
 describe("submitKlaimAction", () => {
@@ -175,6 +197,17 @@ describe("submitKlaimAction", () => {
     setupMocks({ updateError: { message: "DB constraint violation" } });
     const result = await submitKlaimAction("camp-1", 1_000_000);
     expect(result).toEqual({ error: "DB constraint violation" });
+  });
+
+  it("creates the claim item verification rows via the admin client", async () => {
+    const { claimItemVerificationsAdminChain } = setupMocks();
+
+    const result = await submitKlaimAction("camp-1", 1_000_000);
+
+    expect(result).toEqual({ success: true });
+    expect(claimItemVerificationsAdminChain.insert).toHaveBeenCalledWith([
+      { campaign_id: "camp-1", item_type: "amount", document_type_id: null, status: "pending" },
+    ]);
   });
 
   it("distributor happy path: updates campaign, revalidates, notifies, returns success", async () => {
@@ -354,7 +387,9 @@ describe("cancelKlaimAction", () => {
 // -------------------------------------------------------
 
 // Serves the verification transition actions: campaigns read/update +
-// best-effort claim_events insert. No email step in Phase 1.
+// best-effort claim_events insert, plus (approveClaimAction only) the
+// claim_item_verifications gate read. Defaults to a fully-accepted claim so
+// existing approve/ready-to-pay tests don't need to know about the gate.
 function setupVerificationMocks({
   userId = "fin-1",
   role = "finance",
@@ -363,9 +398,15 @@ function setupVerificationMocks({
     | { id: string; status: string }
     | null,
   updateError = null as { message: string } | null,
+  items = [{ status: "accepted" }] as { status: string }[],
 } = {}) {
   const campaignsChain = makeCampaignsChain(campaign, updateError);
   const claimEventsChain = { insert: vi.fn().mockResolvedValue({ error: null }) };
+  const claimItemVerificationsChain: Record<string, unknown> = {};
+  claimItemVerificationsChain.select = vi.fn().mockReturnValue(claimItemVerificationsChain);
+  claimItemVerificationsChain.eq = vi.fn().mockReturnValue(claimItemVerificationsChain);
+  claimItemVerificationsChain.then = (resolve: (v: unknown) => void) =>
+    resolve({ data: items });
 
   const mockClient = {
     auth: {
@@ -377,13 +418,14 @@ function setupVerificationMocks({
       if (table === "users") return makeQueryChain({ role, is_active: isActive });
       if (table === "campaigns") return campaignsChain;
       if (table === "claim_events") return claimEventsChain;
+      if (table === "claim_item_verifications") return claimItemVerificationsChain;
       return {};
     }),
   };
 
   vi.mocked(createClient).mockResolvedValue(mockClient as never);
 
-  return { campaignsChain, claimEventsChain };
+  return { campaignsChain, claimEventsChain, claimItemVerificationsChain };
 }
 
 describe("approveClaimAction", () => {
@@ -445,6 +487,43 @@ describe("approveClaimAction", () => {
     claimEventsChain.insert.mockRejectedValueOnce(new Error("db down"));
     const result = await approveClaimAction("camp-1");
     expect(result).toEqual({ success: true });
+  });
+
+  it("blocks approval while any item is still pending", async () => {
+    const { campaignsChain } = setupVerificationMocks({
+      items: [{ status: "accepted" }, { status: "pending" }],
+    });
+    const result = await approveClaimAction("camp-1");
+    expect(result).toEqual({
+      error:
+        "Approve Klaim hanya dapat dilakukan setelah semua item (dokumen & nominal) berstatus Accepted",
+    });
+    expect(campaignsChain.update).not.toHaveBeenCalled();
+  });
+
+  it("blocks approval while any item has a revision requested", async () => {
+    const { campaignsChain } = setupVerificationMocks({
+      items: [{ status: "accepted" }, { status: "revision_requested" }],
+    });
+    const result = await approveClaimAction("camp-1");
+    expect(result.error).toMatch(/accepted/i);
+    expect(campaignsChain.update).not.toHaveBeenCalled();
+  });
+
+  it("blocks approval when no items exist yet for the claim", async () => {
+    const { campaignsChain } = setupVerificationMocks({ items: [] });
+    const result = await approveClaimAction("camp-1");
+    expect(result.error).toMatch(/accepted/i);
+    expect(campaignsChain.update).not.toHaveBeenCalled();
+  });
+
+  it("allows approval once every item is accepted", async () => {
+    const { campaignsChain } = setupVerificationMocks({
+      items: [{ status: "accepted" }, { status: "accepted" }],
+    });
+    const result = await approveClaimAction("camp-1");
+    expect(result).toEqual({ success: true });
+    expect(campaignsChain.update).toHaveBeenCalledWith({ status: "claim_verified" });
   });
 });
 

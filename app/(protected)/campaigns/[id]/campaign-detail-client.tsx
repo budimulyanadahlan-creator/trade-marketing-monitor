@@ -50,6 +50,10 @@ import {
   markAsCompletedAction,
 } from "@/app/actions/realizations";
 import { upsertClaimChecklistAction } from "@/app/actions/claim-checklist";
+import {
+  acceptClaimItemAction,
+  requestClaimItemRevisionAction,
+} from "@/app/actions/claim-verification";
 import { CampaignFormModal } from "../campaign-form-modal";
 import type {
   CampaignRow,
@@ -61,7 +65,7 @@ import type {
   UserRole,
   CampaignStatus,
 } from "@/types/database";
-import type { AABudgetInfo, ClaimDocument } from "./page";
+import type { AABudgetInfo, ClaimDocument, ClaimItemVerificationInfo } from "./page";
 
 type RealizationWithCreator = RealizationRow & {
   creator: { full_name: string } | null;
@@ -97,6 +101,7 @@ interface Props {
   realizations: RealizationWithCreator[];
   distributorReceipts: DistributorReceiptWithReceiver[];
   claimDocuments: ClaimDocument[];
+  claimAmountVerification: ClaimItemVerificationInfo | null;
   claimEvents: ClaimEventWithActor[];
   aaBudgetInfo: AABudgetInfo | null;
   isEditable: boolean;
@@ -515,23 +520,217 @@ function ClaimFileUploadButton({
   );
 }
 
+// ============================================================
+// Claim Item Verification (Phase 2 — finance Accept / Minta Revisi)
+// ============================================================
+
+const ITEM_STATUS_CONFIG: Record<
+  ClaimItemVerificationInfo["status"],
+  { label: string; className: string }
+> = {
+  pending: {
+    label: "Menunggu Verifikasi",
+    className: "text-slate-400 bg-slate-500/10 border-slate-500/30",
+  },
+  accepted: {
+    label: "Diterima",
+    className: "text-emerald-400 bg-emerald-500/10 border-emerald-500/30",
+  },
+  revision_requested: {
+    label: "Revisi Diminta",
+    className: "text-amber-400 bg-amber-500/10 border-amber-500/30",
+  },
+};
+
+function ClaimItemStatusBadge({ status }: { status: ClaimItemVerificationInfo["status"] }) {
+  const cfg = ITEM_STATUS_CONFIG[status];
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${cfg.className}`}
+    >
+      {status === "accepted" && <CheckCircle2 className="h-3 w-3" />}
+      {status === "revision_requested" && <TriangleAlert className="h-3 w-3" />}
+      {status === "pending" && <Clock className="h-3 w-3" />}
+      {cfg.label}
+    </span>
+  );
+}
+
+function ClaimItemDecisionDialog({
+  open,
+  onOpenChange,
+  mode,
+  itemLabel,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  mode: "accept" | "revision";
+  itemLabel: string;
+  onConfirm: (note: string) => Promise<void>;
+}) {
+  const [note, setNote] = useState("");
+  const [isPending, startTransition] = useTransition();
+
+  useEffect(() => {
+    if (open) setNote("");
+  }, [open]);
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (mode === "revision" && !note.trim()) {
+      toast.error("Catatan wajib diisi saat meminta revisi");
+      return;
+    }
+    startTransition(async () => {
+      await onConfirm(note.trim());
+    });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !isPending && onOpenChange(o)}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>
+            {mode === "accept" ? "Terima" : "Minta Revisi"} — {itemLabel}
+          </DialogTitle>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="item-decision-note">
+              Catatan {mode === "revision" ? "(wajib)" : "(opsional)"}
+            </Label>
+            <Textarea
+              id="item-decision-note"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder={
+                mode === "revision"
+                  ? "Jelaskan apa yang perlu diperbaiki distributor..."
+                  : "Catatan tambahan (opsional)..."
+              }
+              rows={3}
+              disabled={isPending}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+              disabled={isPending}
+            >
+              Batal
+            </Button>
+            <Button type="submit" disabled={isPending}>
+              {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              {mode === "accept" ? "Terima" : "Kirim Revisi"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ClaimItemVerificationControls({
+  campaignId,
+  itemId,
+  itemLabel,
+  verification,
+  canVerify,
+}: {
+  campaignId: string;
+  itemId: string;
+  itemLabel: string;
+  verification: ClaimItemVerificationInfo;
+  canVerify: boolean;
+}) {
+  const router = useRouter();
+  const [dialogMode, setDialogMode] = useState<"accept" | "revision" | null>(null);
+
+  async function handleConfirm(note: string) {
+    const result =
+      dialogMode === "accept"
+        ? await acceptClaimItemAction(campaignId, itemId, note || undefined)
+        : await requestClaimItemRevisionAction(campaignId, itemId, note);
+
+    if (result.error) {
+      toast.error(result.error);
+      return;
+    }
+    toast.success(dialogMode === "accept" ? "Item diterima" : "Revisi diminta");
+    setDialogMode(null);
+    router.refresh();
+  }
+
+  return (
+    <div className="flex flex-col gap-1 items-end flex-shrink-0">
+      <div className="flex items-center gap-2 flex-wrap justify-end">
+        <ClaimItemStatusBadge status={verification.status} />
+        {canVerify && (
+          <div className="flex items-center gap-1">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-6 px-2 text-[11px] border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10"
+              onClick={() => setDialogMode("accept")}
+            >
+              Terima
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-6 px-2 text-[11px] border-amber-500/40 text-amber-400 hover:bg-amber-500/10"
+              onClick={() => setDialogMode("revision")}
+            >
+              Minta Revisi
+            </Button>
+          </div>
+        )}
+      </div>
+      {verification.note && (
+        <p className="text-[11px] text-slate-500 text-right max-w-xs">
+          Catatan: {verification.note}
+        </p>
+      )}
+      <ClaimItemDecisionDialog
+        open={dialogMode !== null}
+        onOpenChange={(o) => !o && setDialogMode(null)}
+        mode={dialogMode ?? "accept"}
+        itemLabel={itemLabel}
+        onConfirm={handleConfirm}
+      />
+    </div>
+  );
+}
+
 function ClaimChecklistSection({
   campaignId,
   campaignStatus,
   userRole,
   userId,
   documents,
+  claimAmount,
+  claimAmountVerification,
 }: {
   campaignId: string;
   campaignStatus: CampaignStatus;
   userRole: UserRole;
   userId: string;
   documents: ClaimDocument[];
+  claimAmount: number | null;
+  claimAmountVerification: ClaimItemVerificationInfo | null;
 }) {
   const router = useRouter();
   const isDistributor = userRole === "distributor";
   const isEditable =
     isDistributor && CHECKLIST_EDITABLE_STATUSES.includes(campaignStatus);
+  const canVerifyItems =
+    ["finance", "admin", "superadmin"].includes(userRole) &&
+    campaignStatus === "claim_submitted";
 
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
   const [localState, setLocalState] = useState<Record<string, boolean>>(
@@ -574,15 +773,28 @@ function ClaimChecklistSection({
   const fulfilledCount = Object.values(localState).filter(Boolean).length;
   const totalCount = documents.length;
 
+  const verifiableItems = [
+    ...documents.map((d) => d.verification).filter((v): v is ClaimItemVerificationInfo => v !== null),
+    ...(claimAmountVerification ? [claimAmountVerification] : []),
+  ];
+  const acceptedCount = verifiableItems.filter((v) => v.status === "accepted").length;
+
   return (
     <div className="rounded-xl border border-white/8 bg-white/2 p-6">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">
           Dokumen Klaim
         </h2>
-        <span className="text-xs text-slate-500">
-          {fulfilledCount}/{totalCount} dokumen siap
-        </span>
+        <div className="flex items-center gap-3">
+          {verifiableItems.length > 0 && (
+            <span className="text-xs text-slate-500">
+              {acceptedCount}/{verifiableItems.length} item terverifikasi
+            </span>
+          )}
+          <span className="text-xs text-slate-500">
+            {fulfilledCount}/{totalCount} dokumen siap
+          </span>
+        </div>
       </div>
 
       {!isDistributor && (
@@ -611,8 +823,9 @@ function ClaimChecklistSection({
               key={doc.documentTypeId}
               className="rounded-lg border border-white/8 px-4 py-3"
             >
+              <div className="flex items-start justify-between gap-3">
               <label
-                className={`flex items-center gap-3 transition-colors ${
+                className={`flex items-center gap-3 transition-colors flex-1 min-w-0 ${
                   canToggleManually && !pending ? "cursor-pointer" : "cursor-default"
                 }`}
               >
@@ -653,6 +866,16 @@ function ClaimChecklistSection({
                   <CheckCircle2 className="h-4 w-4 text-emerald-400 flex-shrink-0" />
                 )}
               </label>
+              {doc.verification && (
+                <ClaimItemVerificationControls
+                  campaignId={campaignId}
+                  itemId={doc.verification.id}
+                  itemLabel={doc.name}
+                  verification={doc.verification}
+                  canVerify={canVerifyItems}
+                />
+              )}
+              </div>
 
               {(hasFiles || isEditable) && (
                 <div className="mt-2 ml-7 flex flex-wrap items-center gap-x-4 gap-y-1.5">
@@ -676,6 +899,28 @@ function ClaimChecklistSection({
             </div>
           );
         })}
+
+        {claimAmountVerification && (
+          <div className="rounded-lg border border-white/8 px-4 py-3">
+            <div className="flex items-start justify-between gap-3">
+              <span className="text-sm text-slate-200">
+                Nominal Klaim
+                {claimAmount != null && (
+                  <span className="ml-2 font-semibold text-amber-400">
+                    {formatIDR(claimAmount)}
+                  </span>
+                )}
+              </span>
+              <ClaimItemVerificationControls
+                campaignId={campaignId}
+                itemId={claimAmountVerification.id}
+                itemLabel="Nominal Klaim"
+                verification={claimAmountVerification}
+                canVerify={canVerifyItems}
+              />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -864,6 +1109,7 @@ function RealizationsSection({
   canSubmitKlaim,
   canCancelKlaim,
   canApproveClaim,
+  approveClaimReady,
   canMarkReadyToPay,
   canMarkPaid,
   canMarkCompleted,
@@ -875,6 +1121,7 @@ function RealizationsSection({
   canSubmitKlaim: boolean;
   canCancelKlaim: boolean;
   canApproveClaim: boolean;
+  approveClaimReady: boolean;
   canMarkReadyToPay: boolean;
   canMarkPaid: boolean;
   canMarkCompleted: boolean;
@@ -972,8 +1219,13 @@ function RealizationsSection({
               size="sm"
               variant="outline"
               onClick={handleApproveClaim}
-              disabled={isPendingApprove}
-              className="border-lime-500/40 text-lime-400 hover:bg-lime-500/10"
+              disabled={isPendingApprove || !approveClaimReady}
+              title={
+                !approveClaimReady
+                  ? "Semua item (dokumen & nominal) harus berstatus Diterima sebelum Approve"
+                  : undefined
+              }
+              className="border-lime-500/40 text-lime-400 hover:bg-lime-500/10 disabled:opacity-40"
             >
               {isPendingApprove ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -1147,6 +1399,8 @@ const claimEventIconMap: Record<string, React.ReactNode> = {
   cancelled: <XCircle className="h-3.5 w-3.5 text-rose-400" />,
   claim_verified: <CheckCircle2 className="h-3.5 w-3.5 text-lime-400" />,
   ready_to_pay: <PackageCheck className="h-3.5 w-3.5 text-fuchsia-400" />,
+  item_accepted: <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />,
+  item_revision_requested: <TriangleAlert className="h-3.5 w-3.5 text-amber-400" />,
 };
 
 const claimEventLabelMap: Record<string, string> = {
@@ -1154,6 +1408,8 @@ const claimEventLabelMap: Record<string, string> = {
   cancelled: "Pengajuan Dibatalkan",
   claim_verified: "Klaim Di-approve (Terverifikasi)",
   ready_to_pay: "Akan Segera Dibayar",
+  item_accepted: "Item Diterima",
+  item_revision_requested: "Revisi Diminta",
 };
 
 function ClaimHistorySection({ events }: { events: ClaimEventWithActor[] }) {
@@ -1194,6 +1450,12 @@ function ClaimHistorySection({ events }: { events: ClaimEventWithActor[] }) {
                   Nominal klaim: {formatIDR(entry.claim_amount)}
                 </p>
               )}
+              {(entry.action === "item_accepted" || entry.action === "item_revision_requested") && (
+                <p className="mt-1 text-sm text-slate-400">
+                  {entry.item_label ?? "Item"}
+                  {entry.note ? ` — ${entry.note}` : ""}
+                </p>
+              )}
             </div>
           </li>
         ))}
@@ -1213,6 +1475,7 @@ export function CampaignDetailClient({
   realizations,
   distributorReceipts,
   claimDocuments,
+  claimAmountVerification,
   claimEvents,
   aaBudgetInfo,
   isEditable,
@@ -1256,6 +1519,17 @@ export function CampaignDetailClient({
   const canApproveClaim =
     ["finance", "admin", "superadmin"].includes(userRole) &&
     campaign.status === "claim_submitted";
+
+  // Gate for the Approve Klaim button: every item (documents + nominal) must
+  // be accepted. An empty list also isn't "ready" — it means the per-item
+  // rows haven't been created yet for this claim (mirrors the server-side
+  // check in approveClaimAction).
+  const claimItems = [
+    ...claimDocuments.map((d) => d.verification).filter((v): v is ClaimItemVerificationInfo => v !== null),
+    ...(claimAmountVerification ? [claimAmountVerification] : []),
+  ];
+  const approveClaimReady =
+    claimItems.length > 0 && claimItems.every((v) => v.status === "accepted");
 
   const canMarkReadyToPay =
     ["finance", "admin", "superadmin"].includes(userRole) &&
@@ -1584,6 +1858,7 @@ export function CampaignDetailClient({
           canSubmitKlaim={canSubmitKlaim}
           canCancelKlaim={canCancelKlaim}
           canApproveClaim={canApproveClaim}
+          approveClaimReady={approveClaimReady}
           canMarkReadyToPay={canMarkReadyToPay}
           canMarkPaid={canMarkPaid}
           canMarkCompleted={canMarkCompleted}
@@ -1592,13 +1867,15 @@ export function CampaignDetailClient({
       )}
 
       {/* Claim checklist */}
-      {claimDocuments.length > 0 && (
+      {(claimDocuments.length > 0 || claimAmountVerification) && (
         <ClaimChecklistSection
           campaignId={campaign.id}
           campaignStatus={campaign.status}
           userRole={userRole}
           userId={userId}
           documents={claimDocuments}
+          claimAmount={campaign.claim_amount}
+          claimAmountVerification={claimAmountVerification}
         />
       )}
 

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { z } from "zod";
 import { sendClaimSubmittedEmail, sendMarkedAsPaidEmail } from "@/lib/email";
+import { ensureClaimItemVerifications } from "@/lib/claim-item-verifications";
 import type { CampaignStatus } from "@/types/database";
 
 async function requireActiveUser() {
@@ -170,7 +171,7 @@ export async function submitKlaimAction(
 
     const { data: campaign } = await supabase
       .from("campaigns")
-      .select("id, status, name, created_by")
+      .select("id, status, name, created_by, promotion_category_id")
       .eq("id", campaignId)
       .single();
 
@@ -209,6 +210,21 @@ export async function submitKlaimAction(
       });
     } catch (historyErr) {
       console.error("[submitKlaimAction] claim_events insert error:", historyErr);
+    }
+
+    // Best-effort: creates the per-item verification rows (documents +
+    // nominal) finance will decide on. Uses the admin client — this is a
+    // system side effect of submitting, not a finance/admin decision, and
+    // the INSERT policy on claim_item_verifications is scoped to those
+    // roles only.
+    try {
+      await ensureClaimItemVerifications(
+        createAdminClient(),
+        campaignId,
+        campaign.promotion_category_id
+      );
+    } catch (syncErr) {
+      console.error("[submitKlaimAction] claim_item_verifications sync error:", syncErr);
     }
 
     try {
@@ -342,9 +358,7 @@ async function notifyClaimSubmitted(opts: {
 // claim_submitted → claim_verified)
 // ============================================================
 
-// Phase 1 "plain" version: a pure status transition with audit trail.
-// Phase 2 will gate this behind all per-item verifications being accepted,
-// and Phase 4 adds the "silakan kirim hardcopy" email.
+// Phase 4 will add the "silakan kirim hardcopy" email on top of this.
 export async function approveClaimAction(
   campaignId: string
 ): Promise<{ error?: string; success?: boolean }> {
@@ -363,6 +377,23 @@ export async function approveClaimAction(
 
     if (!campaign || campaign.status !== "claim_submitted") {
       return { error: "Hanya SKP berstatus Klaim Diajukan yang dapat di-approve" };
+    }
+
+    // Gate: every item (documents + nominal) must be accepted first. An
+    // empty result also blocks — it means the per-item rows haven't been
+    // created for this claim yet (e.g. legacy claim_submitted from before
+    // this feature), and there's nothing to point to for having verified
+    // it; admin/superadmin keep the markAsPaidAction shortcut for those.
+    const { data: items } = await supabase
+      .from("claim_item_verifications")
+      .select("status")
+      .eq("campaign_id", campaignId);
+
+    if (!items || items.length === 0 || items.some((item) => item.status !== "accepted")) {
+      return {
+        error:
+          "Approve Klaim hanya dapat dilakukan setelah semua item (dokumen & nominal) berstatus Accepted",
+      };
     }
 
     const { error } = await supabase
