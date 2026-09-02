@@ -16,6 +16,8 @@ const STATUS_LABELS: Record<CampaignStatus, string> = {
   rejected: "Ditolak",
   ongoing: "Berjalan",
   claim_submitted: "Klaim Diajukan",
+  claim_verified: "Terverifikasi",
+  ready_to_pay: "Akan Segera Dibayar",
   paid: "Paid",
   completed: "Selesai",
   cancelled: "Dibatalkan",

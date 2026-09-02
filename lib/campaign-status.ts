@@ -11,6 +11,8 @@ export const COMMITTED_CAMPAIGN_STATUSES: readonly CampaignStatus[] = [
   "approved",
   "ongoing",
   "claim_submitted",
+  "claim_verified",
+  "ready_to_pay",
   "paid",
   "completed",
 ];
@@ -121,6 +123,14 @@ export const statusConfig: Record<
   claim_submitted: {
     label: "Klaim Diajukan",
     className: "bg-orange-500/15 text-orange-400 border-orange-500/25",
+  },
+  claim_verified: {
+    label: "Terverifikasi",
+    className: "bg-lime-500/15 text-lime-400 border-lime-500/25",
+  },
+  ready_to_pay: {
+    label: "Akan Segera Dibayar",
+    className: "bg-fuchsia-500/15 text-fuchsia-400 border-fuchsia-500/25",
   },
   paid: {
     label: "Paid",

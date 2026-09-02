@@ -32,6 +32,8 @@ const ALL_STATUSES: { value: CampaignStatus; label: string }[] = [
   { value: "rejected", label: "Ditolak" },
   { value: "ongoing", label: "Berjalan" },
   { value: "claim_submitted", label: "Klaim Diajukan" },
+  { value: "claim_verified", label: "Terverifikasi" },
+  { value: "ready_to_pay", label: "Akan Segera Dibayar" },
   { value: "paid", label: "Paid" },
   { value: "completed", label: "Selesai" },
   { value: "cancelled", label: "Dibatalkan" },

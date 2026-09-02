@@ -342,7 +342,7 @@ export function CampaignsClient({
                             <Pencil className="h-3 w-3" />
                           </Button>
                         )}
-                        {["approved", "ongoing", "claim_submitted", "paid", "completed"].includes(campaign.status) &&
+                        {["approved", "ongoing", "claim_submitted", "claim_verified", "ready_to_pay", "paid", "completed"].includes(campaign.status) &&
                           (!isDistributor || localReceiptedIds.has(campaign.id)) && (
                           <Button
                             asChild

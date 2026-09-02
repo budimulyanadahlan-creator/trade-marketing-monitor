@@ -4,6 +4,7 @@ import {
   computeAARemainingBudget,
   groupCampaignsByCommitment,
   isCommittedStatus,
+  statusConfig,
   sumCommittedBudgetByAA,
 } from "./campaign-status";
 
@@ -18,9 +19,19 @@ describe("COMMITTED_CAMPAIGN_STATUSES", () => {
         "approved",
         "ongoing",
         "claim_submitted",
+        "claim_verified",
+        "ready_to_pay",
         "paid",
         "completed",
       ].sort()
+    );
+  });
+
+  it("status verifikasi klaim baru punya label & warna badge sendiri", () => {
+    expect(statusConfig.claim_verified.label).toBe("Terverifikasi");
+    expect(statusConfig.ready_to_pay.label).toBe("Akan Segera Dibayar");
+    expect(statusConfig.claim_verified.className).not.toBe(
+      statusConfig.ready_to_pay.className
     );
   });
 

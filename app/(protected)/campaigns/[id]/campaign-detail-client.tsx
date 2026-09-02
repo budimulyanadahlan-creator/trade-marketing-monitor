@@ -44,6 +44,8 @@ import {
   deleteRealizationAction,
   submitKlaimAction,
   cancelKlaimAction,
+  approveClaimAction,
+  markReadyToPayAction,
   markAsPaidAction,
   markAsCompletedAction,
 } from "@/app/actions/realizations";
@@ -861,6 +863,8 @@ function RealizationsSection({
   canAddRealization,
   canSubmitKlaim,
   canCancelKlaim,
+  canApproveClaim,
+  canMarkReadyToPay,
   canMarkPaid,
   canMarkCompleted,
   unfulfilledClaimDocs,
@@ -870,6 +874,8 @@ function RealizationsSection({
   canAddRealization: boolean;
   canSubmitKlaim: boolean;
   canCancelKlaim: boolean;
+  canApproveClaim: boolean;
+  canMarkReadyToPay: boolean;
   canMarkPaid: boolean;
   canMarkCompleted: boolean;
   unfulfilledClaimDocs: string[];
@@ -880,6 +886,8 @@ function RealizationsSection({
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [, startDelete] = useTransition();
   const [isPendingCancel, startCancel] = useTransition();
+  const [isPendingApprove, startApprove] = useTransition();
+  const [isPendingReadyToPay, startReadyToPay] = useTransition();
   const [isPendingCompleted, startCompleted] = useTransition();
 
   function handleDelete(id: string) {
@@ -897,6 +905,22 @@ function RealizationsSection({
       const result = await cancelKlaimAction(campaign.id);
       if (result.error) toast.error(result.error);
       else toast.success("Pengajuan klaim dibatalkan");
+    });
+  }
+
+  function handleApproveClaim() {
+    startApprove(async () => {
+      const result = await approveClaimAction(campaign.id);
+      if (result.error) toast.error(result.error);
+      else toast.success("Klaim di-approve — SKP Terverifikasi");
+    });
+  }
+
+  function handleMarkReadyToPay() {
+    startReadyToPay(async () => {
+      const result = await markReadyToPayAction(campaign.id);
+      if (result.error) toast.error(result.error);
+      else toast.success("SKP ditandai Akan Segera Dibayar");
     });
   }
 
@@ -941,6 +965,38 @@ function RealizationsSection({
                 <XCircle className="h-4 w-4" />
               )}
               Batalkan Pengajuan
+            </Button>
+          )}
+          {canApproveClaim && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleApproveClaim}
+              disabled={isPendingApprove}
+              className="border-lime-500/40 text-lime-400 hover:bg-lime-500/10"
+            >
+              {isPendingApprove ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <CheckCircle2 className="h-4 w-4" />
+              )}
+              Approve Klaim
+            </Button>
+          )}
+          {canMarkReadyToPay && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleMarkReadyToPay}
+              disabled={isPendingReadyToPay}
+              className="border-fuchsia-500/40 text-fuchsia-400 hover:bg-fuchsia-500/10"
+            >
+              {isPendingReadyToPay ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <PackageCheck className="h-4 w-4" />
+              )}
+              Akan Segera Dibayar
             </Button>
           )}
           {canMarkPaid && (
@@ -1089,11 +1145,15 @@ function RealizationsSection({
 const claimEventIconMap: Record<string, React.ReactNode> = {
   submitted: <Send className="h-3.5 w-3.5 text-blue-400" />,
   cancelled: <XCircle className="h-3.5 w-3.5 text-rose-400" />,
+  claim_verified: <CheckCircle2 className="h-3.5 w-3.5 text-lime-400" />,
+  ready_to_pay: <PackageCheck className="h-3.5 w-3.5 text-fuchsia-400" />,
 };
 
 const claimEventLabelMap: Record<string, string> = {
   submitted: "Klaim Diajukan",
   cancelled: "Pengajuan Dibatalkan",
+  claim_verified: "Klaim Di-approve (Terverifikasi)",
+  ready_to_pay: "Akan Segera Dibayar",
 };
 
 function ClaimHistorySection({ events }: { events: ClaimEventWithActor[] }) {
@@ -1193,16 +1253,30 @@ export function CampaignDetailClient({
     ["distributor", "admin", "superadmin"].includes(userRole) &&
     campaign.status === "claim_submitted";
 
-  const canMarkPaid =
+  const canApproveClaim =
     ["finance", "admin", "superadmin"].includes(userRole) &&
     campaign.status === "claim_submitted";
+
+  const canMarkReadyToPay =
+    ["finance", "admin", "superadmin"].includes(userRole) &&
+    campaign.status === "claim_verified";
+
+  // Finance must walk the full verification flow; admin/superadmin keep the
+  // shortcut from claim_submitted/claim_verified for claims that predate it.
+  const canMarkPaid =
+    userRole === "finance"
+      ? campaign.status === "ready_to_pay"
+      : ["admin", "superadmin"].includes(userRole) &&
+        ["claim_submitted", "claim_verified", "ready_to_pay"].includes(
+          campaign.status
+        );
 
   const canMarkCompleted =
     ["finance", "admin", "superadmin"].includes(userRole) &&
     campaign.status === "paid";
 
   const PDF_ELIGIBLE_STATUSES = [
-    "approved", "ongoing", "claim_submitted", "paid", "completed",
+    "approved", "ongoing", "claim_submitted", "claim_verified", "ready_to_pay", "paid", "completed",
   ] as const;
   const canDownloadPdf = PDF_ELIGIBLE_STATUSES.includes(
     campaign.status as (typeof PDF_ELIGIBLE_STATUSES)[number]
@@ -1212,6 +1286,8 @@ export function CampaignDetailClient({
     canAddRealization ||
     canSubmitKlaim ||
     canCancelKlaim ||
+    canApproveClaim ||
+    canMarkReadyToPay ||
     canMarkPaid ||
     canMarkCompleted ||
     realizations.length > 0;
@@ -1507,6 +1583,8 @@ export function CampaignDetailClient({
           canAddRealization={canAddRealization}
           canSubmitKlaim={canSubmitKlaim}
           canCancelKlaim={canCancelKlaim}
+          canApproveClaim={canApproveClaim}
+          canMarkReadyToPay={canMarkReadyToPay}
           canMarkPaid={canMarkPaid}
           canMarkCompleted={canMarkCompleted}
           unfulfilledClaimDocs={unfulfilledClaimDocs}

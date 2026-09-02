@@ -10,7 +10,13 @@ vi.mock("@/lib/email", () => ({
   sendMarkedAsPaidEmail: vi.fn(),
 }));
 
-import { submitKlaimAction, cancelKlaimAction, markAsPaidAction } from "./realizations";
+import {
+  submitKlaimAction,
+  cancelKlaimAction,
+  markAsPaidAction,
+  approveClaimAction,
+  markReadyToPayAction,
+} from "./realizations";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { sendClaimSubmittedEmail, sendMarkedAsPaidEmail } from "@/lib/email";
@@ -344,6 +350,159 @@ describe("cancelKlaimAction", () => {
 });
 
 // -------------------------------------------------------
+// approveClaimAction & markReadyToPayAction
+// -------------------------------------------------------
+
+// Serves the verification transition actions: campaigns read/update +
+// best-effort claim_events insert. No email step in Phase 1.
+function setupVerificationMocks({
+  userId = "fin-1",
+  role = "finance",
+  isActive = true,
+  campaign = { id: "camp-1", status: "claim_submitted" } as
+    | { id: string; status: string }
+    | null,
+  updateError = null as { message: string } | null,
+} = {}) {
+  const campaignsChain = makeCampaignsChain(campaign, updateError);
+  const claimEventsChain = { insert: vi.fn().mockResolvedValue({ error: null }) };
+
+  const mockClient = {
+    auth: {
+      getUser: vi
+        .fn()
+        .mockResolvedValue({ data: { user: userId ? { id: userId } : null } }),
+    },
+    from: vi.fn().mockImplementation((table: string) => {
+      if (table === "users") return makeQueryChain({ role, is_active: isActive });
+      if (table === "campaigns") return campaignsChain;
+      if (table === "claim_events") return claimEventsChain;
+      return {};
+    }),
+  };
+
+  vi.mocked(createClient).mockResolvedValue(mockClient as never);
+
+  return { campaignsChain, claimEventsChain };
+}
+
+describe("approveClaimAction", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns error when user is not finance, admin, or superadmin", async () => {
+    setupVerificationMocks({ role: "distributor" });
+    const result = await approveClaimAction("camp-1");
+    expect(result).toEqual({
+      error: "Hanya Finance atau Admin yang dapat meng-approve klaim",
+    });
+  });
+
+  it("returns error when campaign is not claim_submitted", async () => {
+    setupVerificationMocks({
+      campaign: { id: "camp-1", status: "ongoing" },
+    });
+    const result = await approveClaimAction("camp-1");
+    expect(result).toEqual({
+      error: "Hanya SKP berstatus Klaim Diajukan yang dapat di-approve",
+    });
+  });
+
+  it("returns error when db update fails", async () => {
+    setupVerificationMocks({ updateError: { message: "DB constraint violation" } });
+    const result = await approveClaimAction("camp-1");
+    expect(result).toEqual({ error: "DB constraint violation" });
+  });
+
+  it("finance happy path: sets claim_verified, records event, revalidates", async () => {
+    const { campaignsChain, claimEventsChain } = setupVerificationMocks();
+
+    const result = await approveClaimAction("camp-1");
+
+    expect(result).toEqual({ success: true });
+    expect(campaignsChain.update).toHaveBeenCalledWith({
+      status: "claim_verified",
+    });
+    expect(claimEventsChain.insert).toHaveBeenCalledWith({
+      campaign_id: "camp-1",
+      actor_id: "fin-1",
+      action: "claim_verified",
+      claim_amount: null,
+    });
+    expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/campaigns/camp-1");
+    expect(vi.mocked(revalidatePath)).toHaveBeenCalledWith("/campaigns");
+  });
+
+  it("admin can approve as a fallback", async () => {
+    setupVerificationMocks({ userId: "admin-1", role: "admin" });
+    const result = await approveClaimAction("camp-1");
+    expect(result).toEqual({ success: true });
+  });
+
+  it("still succeeds even if the claim_events insert fails", async () => {
+    const { claimEventsChain } = setupVerificationMocks();
+    claimEventsChain.insert.mockRejectedValueOnce(new Error("db down"));
+    const result = await approveClaimAction("camp-1");
+    expect(result).toEqual({ success: true });
+  });
+});
+
+describe("markReadyToPayAction", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns error when user is not finance, admin, or superadmin", async () => {
+    setupVerificationMocks({ role: "manager" });
+    const result = await markReadyToPayAction("camp-1");
+    expect(result).toEqual({
+      error:
+        "Hanya Finance atau Admin yang dapat menandai SKP Akan Segera Dibayar",
+    });
+  });
+
+  it("returns error when campaign is not claim_verified", async () => {
+    setupVerificationMocks({
+      campaign: { id: "camp-1", status: "claim_submitted" },
+    });
+    const result = await markReadyToPayAction("camp-1");
+    expect(result).toEqual({
+      error:
+        "Hanya SKP berstatus Terverifikasi yang dapat ditandai Akan Segera Dibayar",
+    });
+  });
+
+  it("finance happy path: sets ready_to_pay, records event, revalidates", async () => {
+    const { campaignsChain, claimEventsChain } = setupVerificationMocks({
+      campaign: { id: "camp-1", status: "claim_verified" },
+    });
+
+    const result = await markReadyToPayAction("camp-1");
+
+    expect(result).toEqual({ success: true });
+    expect(campaignsChain.update).toHaveBeenCalledWith({
+      status: "ready_to_pay",
+    });
+    expect(claimEventsChain.insert).toHaveBeenCalledWith({
+      campaign_id: "camp-1",
+      actor_id: "fin-1",
+      action: "ready_to_pay",
+      claim_amount: null,
+    });
+  });
+
+  it("still succeeds even if the claim_events insert fails", async () => {
+    const { claimEventsChain } = setupVerificationMocks({
+      campaign: { id: "camp-1", status: "claim_verified" },
+    });
+    claimEventsChain.insert.mockRejectedValueOnce(new Error("db down"));
+    const result = await markReadyToPayAction("camp-1");
+    expect(result).toEqual({ success: true });
+  });
+});
+
+// -------------------------------------------------------
 // markAsPaidAction
 // -------------------------------------------------------
 
@@ -361,7 +520,7 @@ function setupMarkAsPaidMocks({
   isActive = true,
   campaign = {
     id: "camp-1",
-    status: "claim_submitted",
+    status: "ready_to_pay",
     name: "Promo A",
     claim_amount: 1_500_000,
     distributor_id: "dist-co-1",
@@ -434,8 +593,61 @@ describe("markAsPaidAction", () => {
     expect(result).toEqual({ success: true });
   });
 
-  it("returns error when campaign is not claim_submitted", async () => {
+  it("finance can NOT mark paid from claim_submitted (must go through verification)", async () => {
     setupMarkAsPaidMocks({
+      campaign: {
+        id: "camp-1",
+        status: "claim_submitted",
+        name: "Promo A",
+        claim_amount: 1_500_000,
+        distributor_id: "dist-co-1",
+      },
+    });
+    const result = await markAsPaidAction("camp-1");
+    expect(result).toEqual({
+      error: "Hanya SKP berstatus Akan Segera Dibayar yang dapat ditandai Paid",
+    });
+  });
+
+  it("finance can NOT mark paid from claim_verified", async () => {
+    setupMarkAsPaidMocks({
+      campaign: {
+        id: "camp-1",
+        status: "claim_verified",
+        name: "Promo A",
+        claim_amount: 1_500_000,
+        distributor_id: "dist-co-1",
+      },
+    });
+    const result = await markAsPaidAction("camp-1");
+    expect(result).toEqual({
+      error: "Hanya SKP berstatus Akan Segera Dibayar yang dapat ditandai Paid",
+    });
+  });
+
+  it.each(["claim_submitted", "claim_verified"])(
+    "admin can still mark paid from %s (transition fallback)",
+    async (status) => {
+      setupMarkAsPaidMocks({
+        userId: "admin-1",
+        role: "admin",
+        campaign: {
+          id: "camp-1",
+          status,
+          name: "Promo A",
+          claim_amount: 1_500_000,
+          distributor_id: "dist-co-1",
+        },
+      });
+      const result = await markAsPaidAction("camp-1");
+      expect(result).toEqual({ success: true });
+    }
+  );
+
+  it("returns error when campaign is not in a payable status (admin)", async () => {
+    setupMarkAsPaidMocks({
+      userId: "admin-1",
+      role: "admin",
       campaign: {
         id: "camp-1",
         status: "ongoing",
@@ -446,7 +658,8 @@ describe("markAsPaidAction", () => {
     });
     const result = await markAsPaidAction("camp-1");
     expect(result).toEqual({
-      error: "Hanya SKP berstatus Klaim Diajukan yang dapat ditandai Paid",
+      error:
+        "Hanya SKP berstatus Klaim Diajukan, Terverifikasi, atau Akan Segera Dibayar yang dapat ditandai Paid",
     });
   });
 
@@ -513,7 +726,7 @@ describe("markAsPaidAction", () => {
     setupMarkAsPaidMocks({
       campaign: {
         id: "camp-1",
-        status: "claim_submitted",
+        status: "ready_to_pay",
         name: "Promo A",
         claim_amount: 1_500_000,
         distributor_id: null,

@@ -338,7 +338,125 @@ async function notifyClaimSubmitted(opts: {
 }
 
 // ============================================================
-// MARK AS PAID (Finance/Admin/Superadmin — claim_submitted → paid)
+// APPROVE KLAIM (Finance/Admin/Superadmin —
+// claim_submitted → claim_verified)
+// ============================================================
+
+// Phase 1 "plain" version: a pure status transition with audit trail.
+// Phase 2 will gate this behind all per-item verifications being accepted,
+// and Phase 4 adds the "silakan kirim hardcopy" email.
+export async function approveClaimAction(
+  campaignId: string
+): Promise<{ error?: string; success?: boolean }> {
+  try {
+    const { supabase, userId, profile } = await requireActiveUser();
+
+    if (!["finance", "admin", "superadmin"].includes(profile.role)) {
+      return { error: "Hanya Finance atau Admin yang dapat meng-approve klaim" };
+    }
+
+    const { data: campaign } = await supabase
+      .from("campaigns")
+      .select("id, status")
+      .eq("id", campaignId)
+      .single();
+
+    if (!campaign || campaign.status !== "claim_submitted") {
+      return { error: "Hanya SKP berstatus Klaim Diajukan yang dapat di-approve" };
+    }
+
+    const { error } = await supabase
+      .from("campaigns")
+      .update({ status: "claim_verified" as CampaignStatus })
+      .eq("id", campaignId);
+
+    if (error) return { error: error.message };
+
+    revalidatePath(`/campaigns/${campaignId}`);
+    revalidatePath("/campaigns");
+
+    // Best-effort: the status change above already succeeded, so a failure
+    // recording history shouldn't fail the action.
+    try {
+      await supabase.from("claim_events").insert({
+        campaign_id: campaignId,
+        actor_id: userId,
+        action: "claim_verified",
+        claim_amount: null,
+      });
+    } catch (historyErr) {
+      console.error("[approveClaimAction] claim_events insert error:", historyErr);
+    }
+
+    return { success: true };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Terjadi kesalahan" };
+  }
+}
+
+// ============================================================
+// AKAN SEGERA DIBAYAR (Finance/Admin/Superadmin —
+// claim_verified → ready_to_pay; pure transition, no email/fields)
+// ============================================================
+
+export async function markReadyToPayAction(
+  campaignId: string
+): Promise<{ error?: string; success?: boolean }> {
+  try {
+    const { supabase, userId, profile } = await requireActiveUser();
+
+    if (!["finance", "admin", "superadmin"].includes(profile.role)) {
+      return {
+        error: "Hanya Finance atau Admin yang dapat menandai SKP Akan Segera Dibayar",
+      };
+    }
+
+    const { data: campaign } = await supabase
+      .from("campaigns")
+      .select("id, status")
+      .eq("id", campaignId)
+      .single();
+
+    if (!campaign || campaign.status !== "claim_verified") {
+      return {
+        error:
+          "Hanya SKP berstatus Terverifikasi yang dapat ditandai Akan Segera Dibayar",
+      };
+    }
+
+    const { error } = await supabase
+      .from("campaigns")
+      .update({ status: "ready_to_pay" as CampaignStatus })
+      .eq("id", campaignId);
+
+    if (error) return { error: error.message };
+
+    revalidatePath(`/campaigns/${campaignId}`);
+    revalidatePath("/campaigns");
+
+    // Best-effort: the status change above already succeeded, so a failure
+    // recording history shouldn't fail the action.
+    try {
+      await supabase.from("claim_events").insert({
+        campaign_id: campaignId,
+        actor_id: userId,
+        action: "ready_to_pay",
+        claim_amount: null,
+      });
+    } catch (historyErr) {
+      console.error("[markReadyToPayAction] claim_events insert error:", historyErr);
+    }
+
+    return { success: true };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Terjadi kesalahan" };
+  }
+}
+
+// ============================================================
+// MARK AS PAID (Finance: ready_to_pay → paid;
+// Admin/Superadmin also from claim_submitted/claim_verified as a
+// transition fallback for claims that predate the verification flow)
 // ============================================================
 
 const markAsPaidSchema = z.object({
@@ -375,10 +493,17 @@ export async function markAsPaidAction(
       .eq("id", campaignId)
       .single();
 
-    if (!campaign || campaign.status !== "claim_submitted") {
+    const payableStatuses: CampaignStatus[] =
+      profile.role === "finance"
+        ? ["ready_to_pay"]
+        : ["claim_submitted", "claim_verified", "ready_to_pay"];
+
+    if (!campaign || !payableStatuses.includes(campaign.status as CampaignStatus)) {
       return {
         error:
-          "Hanya SKP berstatus Klaim Diajukan yang dapat ditandai Paid",
+          profile.role === "finance"
+            ? "Hanya SKP berstatus Akan Segera Dibayar yang dapat ditandai Paid"
+            : "Hanya SKP berstatus Klaim Diajukan, Terverifikasi, atau Akan Segera Dibayar yang dapat ditandai Paid",
       };
     }
 

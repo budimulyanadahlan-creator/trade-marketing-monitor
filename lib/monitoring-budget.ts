@@ -70,6 +70,8 @@ export const MONITORING_COMMITTED_STATUSES: readonly CampaignStatus[] = [
   "approved",
   "ongoing",
   "claim_submitted",
+  "claim_verified",
+  "ready_to_pay",
   "paid",
   "completed",
 ];

@@ -11,6 +11,8 @@ export type CampaignStatus =
   | "rejected"
   | "ongoing"
   | "claim_submitted"
+  | "claim_verified"
+  | "ready_to_pay"
   | "paid"
   | "completed"
   | "cancelled";
@@ -241,7 +243,11 @@ export type DistributorClaimChecklistRow = {
   updated_at: string;
 };
 
-export type ClaimEventAction = "submitted" | "cancelled";
+export type ClaimEventAction =
+  | "submitted"
+  | "cancelled"
+  | "claim_verified"
+  | "ready_to_pay";
 
 export type ClaimEventRow = {
   id: string;

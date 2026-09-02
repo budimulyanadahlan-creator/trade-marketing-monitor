@@ -193,7 +193,7 @@ export default async function DashboardPage({
   // Total SKP Budget: sum requested_budget campaign (budget yang sudah diklaim di SKP)
   const totalSkpBudget = campaigns.reduce((s, c) => s + c.requested_budget, 0);
   // Total SKP Budget hanya yang disetujui (untuk role user)
-  const APPROVED_STATUSES: CampaignStatus[] = ["approved", "ongoing", "claim_submitted", "paid", "completed"];
+  const APPROVED_STATUSES: CampaignStatus[] = ["approved", "ongoing", "claim_submitted", "claim_verified", "ready_to_pay", "paid", "completed"];
   const totalSkpBudgetApproved = campaigns
     .filter((c) => APPROVED_STATUSES.includes(c.status))
     .reduce((s, c) => s + c.requested_budget, 0);

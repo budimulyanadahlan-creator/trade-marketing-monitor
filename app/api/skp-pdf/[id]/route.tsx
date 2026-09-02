@@ -504,7 +504,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
   };
 
   // Only generate PDF for fully-approved campaigns
-  if (campaign.status !== "approved" && campaign.status !== "ongoing" && campaign.status !== "claim_submitted" && campaign.status !== "paid" && campaign.status !== "completed") {
+  if (!["approved", "ongoing", "claim_submitted", "claim_verified", "ready_to_pay", "paid", "completed"].includes(campaign.status)) {
     return NextResponse.json(
       { error: "PDF hanya tersedia untuk SKP yang sudah fully approved" },
       { status: 403 }
@@ -555,7 +555,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
   // Determine if a level was passed based on campaign status (fallback when history is missing)
   function wasLevelPassed(levelSeq: number): boolean {
     const s = campaign.status;
-    if (["approved", "ongoing", "claim_submitted", "paid", "completed"].includes(s)) return true;
+    if (["approved", "ongoing", "claim_submitted", "claim_verified", "ready_to_pay", "paid", "completed"].includes(s)) return true;
     const m = s.match(/^approved_l(\d+)$/);
     if (m) return levelSeq <= parseInt(m[1]);
     return false;
