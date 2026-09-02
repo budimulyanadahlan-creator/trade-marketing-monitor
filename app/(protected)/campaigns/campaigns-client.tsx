@@ -56,6 +56,11 @@ interface Props {
   receiptedCampaignIds?: string[];
   /** Approved SKP only: required vs fulfilled claim-document checklist items. */
   checklistStatusByCampaignId?: Record<string, { required: number; fulfilled: number }>;
+  /** claim_submitted SKP only: per-item finance verification progress. */
+  claimVerificationProgressByCampaignId?: Record<
+    string,
+    { total: number; accepted: number; hasRevisionRequested: boolean }
+  >;
 }
 
 export function CampaignsClient({
@@ -73,6 +78,7 @@ export function CampaignsClient({
   lockedRegionId,
   receiptedCampaignIds = [],
   checklistStatusByCampaignId = {},
+  claimVerificationProgressByCampaignId = {},
 }: Props) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingCampaign, setEditingCampaign] = useState<CampaignWithJoins | null>(null);
@@ -93,6 +99,10 @@ export function CampaignsClient({
   const isDistributor = userRole === "distributor";
   const isAdminOrSuperadmin = userRole === "admin" || userRole === "superadmin";
   const canSeeChecklistReadiness = ["admin", "superadmin", "finance", "manager"].includes(userRole);
+  // Finance queue badge (Phase 5, verifikasi klaim finance) — narrower than
+  // checklist readiness: only the roles that actually act on claim_submitted
+  // items (per PRD, manager only monitors read-only at the detail page).
+  const canSeeClaimVerificationProgress = ["finance", "admin", "superadmin"].includes(userRole);
   const masterData = { departments, brands, regions, channels, categories, actionApprovals, vendors, distributors, masterBudgets, lockedRegionId };
 
   function isChecklistReady(campaignId: string): boolean {
@@ -221,6 +231,7 @@ export function CampaignsClient({
               visibleCampaigns.map((campaign) => {
                 const statusCfg = getStatusConfig(campaign.status);
                 const checklistStatus = checklistStatusByCampaignId[campaign.id];
+                const verificationProgress = claimVerificationProgressByCampaignId[campaign.id];
                 return (
                   <TableRow key={campaign.id} className="border-white/8">
                     <TableCell className="text-slate-400 text-xs font-mono">
@@ -263,6 +274,24 @@ export function CampaignsClient({
                           ) : (
                             <span className="text-xs text-slate-500">
                               {checklistStatus.fulfilled}/{checklistStatus.required} dokumen
+                            </span>
+                          ))}
+                        {canSeeClaimVerificationProgress &&
+                          campaign.status === "claim_submitted" &&
+                          verificationProgress &&
+                          verificationProgress.total > 0 &&
+                          (verificationProgress.hasRevisionRequested ? (
+                            <span className="text-xs text-amber-400">
+                              Menunggu revisi distributor
+                            </span>
+                          ) : verificationProgress.accepted >= verificationProgress.total ? (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-400">
+                              <CheckCircle2 className="h-3 w-3" />
+                              Siap Approve
+                            </span>
+                          ) : (
+                            <span className="text-xs text-slate-500">
+                              {verificationProgress.accepted}/{verificationProgress.total} item ✓
                             </span>
                           ))}
                       </div>

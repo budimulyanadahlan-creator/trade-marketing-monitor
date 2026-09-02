@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { computeChecklistReadinessByCampaignId } from "@/lib/claim-checklist-status";
+import { computeClaimVerificationProgressByCampaignId } from "@/lib/claim-verification-progress";
 import { CampaignsClient } from "./campaigns-client";
 
 export default async function CampaignsPage() {
@@ -113,6 +114,30 @@ export default async function CampaignsPage() {
     }
   }
 
+  // Claim verification progress (claim_submitted only) — the finance queue's
+  // "N/M item ✓" / "menunggu revisi distributor" badge, batch-fetched in one
+  // query for every claim_submitted campaign rather than per-row.
+  let claimVerificationProgressByCampaignId: Record<
+    string,
+    { total: number; accepted: number; hasRevisionRequested: boolean }
+  > = {};
+  if (!isDistributor) {
+    const claimSubmittedCampaignIds = (campaigns ?? [])
+      .filter((c) => c.status === "claim_submitted")
+      .map((c) => c.id);
+
+    if (claimSubmittedCampaignIds.length > 0) {
+      const { data: itemsRaw } = await supabase
+        .from("claim_item_verifications")
+        .select("campaign_id, status")
+        .in("campaign_id", claimSubmittedCampaignIds);
+
+      claimVerificationProgressByCampaignId = computeClaimVerificationProgressByCampaignId(
+        itemsRaw ?? []
+      );
+    }
+  }
+
   // Fetch receipted campaign IDs for distributor (to show Status Penerimaan column)
   let receiptedCampaignIds: string[] = [];
   if (isDistributor) {
@@ -182,6 +207,7 @@ export default async function CampaignsPage() {
       lockedRegionId={lockedRegionId}
       receiptedCampaignIds={receiptedCampaignIds}
       checklistStatusByCampaignId={checklistStatusByCampaignId}
+      claimVerificationProgressByCampaignId={claimVerificationProgressByCampaignId}
     />
   );
 }
