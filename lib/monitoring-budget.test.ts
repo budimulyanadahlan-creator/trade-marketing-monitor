@@ -12,7 +12,7 @@ import {
   buildKomitmenDrilldown,
   buildRealisasiDrilldown,
   allocateBudgetByRegion,
-  summarizeExcludedRegion,
+  summarizeNasionalRegion,
   REGION_CONTRIBUTIONS,
   type MonitoringCampaign,
   type MonitoringRealization,
@@ -158,8 +158,9 @@ describe("aggregateMonitoringBudget", () => {
       // Kedua kategori TP di sini punya budget kelipatan yang membulat pas
       // (1000 & 500), jadi hasil sum-per-baris = allocateBudgetByRegion(1500).
       regionAllocations: allocateBudgetByRegion(1500),
-      // Tidak ada campaign yang region_name-nya diisi di test ini → nol semua.
-      regionActuals: zeroActuals(),
+      // Tidak ada campaign yang region_name-nya diisi di test ini → semuanya
+      // jatuh ke bucket Nasional (100 dari tp1 + 700 dari tp3).
+      regionActuals: actualsFor({ Nasional: 800 }),
     });
     expect(result.totalCP).toEqual({
       budget: 2000,
@@ -167,7 +168,7 @@ describe("aggregateMonitoringBudget", () => {
       total: 300,
       variance: 1700,
       regionAllocations: allocateBudgetByRegion(2000),
-      regionActuals: zeroActuals(),
+      regionActuals: actualsFor({ Nasional: 300 }),
     });
     expect(result.grandTotal).toEqual({
       budget: 3500,
@@ -175,7 +176,7 @@ describe("aggregateMonitoringBudget", () => {
       total: 1100,
       variance: 2400,
       regionAllocations: allocateBudgetByRegion(3500),
-      regionActuals: zeroActuals(),
+      regionActuals: actualsFor({ Nasional: 1100 }),
     });
   });
 
@@ -217,7 +218,7 @@ describe("aggregateMonitoringBudget", () => {
     expect(result.uncategorized).toBeNull();
   });
 
-  it("menjumlahkan requested_budget SKP ke regionActuals per kategori berdasarkan region_name asli, mengecualikan region di luar 5 wilayah", () => {
+  it("menjumlahkan requested_budget SKP ke regionActuals per kategori berdasarkan region_name asli, mengelompokkan region di luar 5 wilayah ke bucket Nasional", () => {
     const result = aggregateMonitoringBudget({
       fiscalYear: 2026,
       quarter: 2,
@@ -227,17 +228,18 @@ describe("aggregateMonitoringBudget", () => {
         campaign("tp1", 100, "2026-07-05", "approved", "Greater Jakarta"),
         campaign("tp1", 50, "2026-08-10", "paid", "Greater Jakarta"),
         campaign("tp1", 200, "2026-09-01", "completed", "West Kalimantan"),
-        // "National" bukan salah satu dari 5 wilayah tetap → dikecualikan
+        // "National" bukan salah satu dari 5 wilayah geografis → bucket Nasional
         campaign("tp1", 999, "2026-07-15", "approved", "National"),
-        // region kosong → dikecualikan
+        // region kosong → bucket Nasional juga
         campaign("tp1", 999, "2026-07-20", "approved", null),
       ],
     });
 
     const row = result.tpRows[0];
-    expect(row.regionActuals).toEqual(actualsFor({ "Greater Jakarta": 150, "West Kalimantan": 200 }));
-    // Total Actual & months tetap menghitung semua SKP komitmen di kuartal ini,
-    // termasuk yang region-nya dikecualikan dari breakdown region.
+    expect(row.regionActuals).toEqual(
+      actualsFor({ "Greater Jakarta": 150, "West Kalimantan": 200, Nasional: 999 + 999 })
+    );
+    // Total Actual & months tetap menghitung semua SKP komitmen di kuartal ini.
     expect(row.total).toBe(100 + 50 + 200 + 999 + 999);
   });
 
@@ -260,9 +262,9 @@ describe("aggregateMonitoringBudget", () => {
   });
 });
 
-describe("summarizeExcludedRegion", () => {
+describe("summarizeNasionalRegion", () => {
   it("menjumlahkan SKP komitmen dalam kuartal yang region-nya bukan salah satu dari 5 wilayah tetap", () => {
-    const result = summarizeExcludedRegion(
+    const result = summarizeNasionalRegion(
       [
         campaign("tp1", 100, "2026-07-05", "approved", "National"),
         campaign("tp1", 200, "2026-08-05", "approved", null),
@@ -280,7 +282,7 @@ describe("summarizeExcludedRegion", () => {
   });
 
   it("mengembalikan nol jika semua SKP komitmen ber-region salah satu dari 5 wilayah tetap", () => {
-    const result = summarizeExcludedRegion(
+    const result = summarizeNasionalRegion(
       [campaign("tp1", 100, "2026-07-01", "approved", "Greater Jakarta")],
       2026,
       2
@@ -290,7 +292,7 @@ describe("summarizeExcludedRegion", () => {
 });
 
 describe("allocateBudgetByRegion", () => {
-  it("memecah budget kategori jadi 5 region sesuai persentase kontribusi tetap", () => {
+  it("memecah budget kategori jadi 5 wilayah geografis + Nasional (0%) sesuai persentase kontribusi tetap", () => {
     const result = allocateBudgetByRegion(2_000_000_000);
     expect(result).toEqual([
       { name: "Greater Jakarta", percentage: 0.28, amount: 560_000_000 },
@@ -298,6 +300,7 @@ describe("allocateBudgetByRegion", () => {
       { name: "East Java & Bali", percentage: 0.20, amount: 400_000_000 },
       { name: "North Sumatera etc", percentage: 0.20, amount: 400_000_000 },
       { name: "West Kalimantan", percentage: 0.10, amount: 200_000_000 },
+      { name: "Nasional", percentage: 0, amount: 0 },
     ]);
   });
 

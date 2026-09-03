@@ -7,10 +7,10 @@ import {
   buildRealisasiDrilldown,
   getQuarterDateRange,
   summarizeMissingStartDate,
-  summarizeExcludedRegion,
+  summarizeNasionalRegion,
   MONITORING_COMMITTED_STATUSES,
   type MissingStartDateSummary,
-  type MissingRegionSummary,
+  type NasionalRegionSummary,
   type MonitoringAggregate,
   type MonitoringCampaign,
   type MonitoringCategory,
@@ -26,7 +26,7 @@ type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
 export type MonitoringBudgetData = {
   aggregate: MonitoringAggregate;
   missingStartDate: MissingStartDateSummary;
-  missingRegion: MissingRegionSummary;
+  nasionalRegion: NasionalRegionSummary;
   drilldown: MonitoringDrilldown;
 };
 
@@ -138,7 +138,7 @@ export async function loadMonitoringBudgetData(
     return {
       aggregate,
       missingStartDate: { count: 0, total: 0 },
-      missingRegion: summarizeExcludedRegion(regionCampaigns, fiscalYear, quarter),
+      nasionalRegion: summarizeNasionalRegion(regionCampaigns, fiscalYear, quarter),
       drilldown: {
         mode: "realisasi",
         data: buildRealisasiDrilldown({ fiscalYear, quarter, realizations: drilldownRealizations }),
@@ -192,7 +192,7 @@ export async function loadMonitoringBudgetData(
   });
 
   const missingStartDate = summarizeMissingStartDate(missingStartDateResult.data ?? []);
-  const missingRegion = summarizeExcludedRegion(campaigns, fiscalYear, quarter);
+  const nasionalRegion = summarizeNasionalRegion(campaigns, fiscalYear, quarter);
 
   const drilldownCampaigns: DrilldownCampaignInput[] = rows.map((c) => ({
     id: c.id,
@@ -208,7 +208,7 @@ export async function loadMonitoringBudgetData(
   return {
     aggregate,
     missingStartDate,
-    missingRegion,
+    nasionalRegion,
     drilldown: {
       mode: "komitmen",
       data: buildKomitmenDrilldown({ fiscalYear, quarter, campaigns: drilldownCampaigns }),

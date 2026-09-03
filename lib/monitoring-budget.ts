@@ -98,13 +98,27 @@ export type RegionAllocation = { name: string; percentage: number; amount: numbe
 // Kontribusi tetap per region — dipakai untuk memecah kolom Budget setiap
 // baris menjadi alokasi target per region. Angka hitungan murni (%tetap ×
 // Budget kategori), TIDAK terkait dengan tabel regions/campaigns.region_id
-// (master data region yang bebas-isi, fitur terpisah). Total harus 100%.
-export const REGION_CONTRIBUTIONS: readonly { name: string; percentage: number }[] = [
+// (master data region yang bebas-isi, fitur terpisah). 5 wilayah geografis
+// harus berjumlah 100% (lihat GEOGRAPHIC_REGION_CONTRIBUTIONS di bawah).
+//
+// "Nasional" adalah bucket ke-6 khusus untuk SKP yang region_name-nya bukan
+// salah satu dari 5 wilayah geografis (mis. "National", kosong, atau nama
+// region lain yang belum masuk daftar) — lihat NASIONAL_REGION_NAME. Sengaja
+// diberi kontribusi 0% karena tidak ada target alokasi budget untuk bucket
+// ini; ia hanya menampung realisasi aktual di kolom Realisasi By Region.
+export const NASIONAL_REGION_NAME = "Nasional";
+
+const GEOGRAPHIC_REGION_CONTRIBUTIONS: readonly { name: string; percentage: number }[] = [
   { name: "Greater Jakarta", percentage: 0.28 },
   { name: "West & Central Java", percentage: 0.22 },
   { name: "East Java & Bali", percentage: 0.2 },
   { name: "North Sumatera etc", percentage: 0.2 },
   { name: "West Kalimantan", percentage: 0.1 },
+];
+
+export const REGION_CONTRIBUTIONS: readonly { name: string; percentage: number }[] = [
+  ...GEOGRAPHIC_REGION_CONTRIBUTIONS,
+  { name: NASIONAL_REGION_NAME, percentage: 0 },
 ];
 
 // Memecah satu nilai budget jadi alokasi per region. Tiap region dibulatkan
@@ -130,6 +144,14 @@ function addRegionAllocations(
 }
 
 const REGION_NAMES: readonly string[] = REGION_CONTRIBUTIONS.map((r) => r.name);
+
+// Nama-nama 5 wilayah geografis asli (tanpa "Nasional"), dipakai untuk
+// mencocokkan region_name SKP: cocok salah satunya → masuk region itu,
+// selain itu (termasuk kosong) → jatuh ke bucket "Nasional".
+const GEOGRAPHIC_REGION_NAMES: readonly string[] = GEOGRAPHIC_REGION_CONTRIBUTIONS.map(
+  (r) => r.name
+);
+const NASIONAL_INDEX = REGION_NAMES.indexOf(NASIONAL_REGION_NAME);
 
 export type RegionActual = { name: string; amount: number };
 
@@ -182,20 +204,21 @@ export function summarizeMissingStartDate(
   return { count, total };
 }
 
-export type MissingRegionSummary = { count: number; total: number };
+export type NasionalRegionSummary = { count: number; total: number };
 
 // SKP komitmen dalam kuartal ini yang region-nya bukan salah satu dari 5
-// wilayah tetap (mis. "National", region kosong, atau nama region baru yang
-// belum masuk daftar) dikecualikan dari breakdown Realisasi By Region —
-// jumlah dan nilainya ditampilkan sebagai catatan agar tidak hilang diam-diam.
-export function summarizeExcludedRegion(
+// wilayah geografis tetap (mis. "National", region kosong, atau nama region
+// baru yang belum masuk daftar) dikelompokkan ke bucket "Nasional" di
+// breakdown Realisasi By Region — jumlah dan nilainya ditampilkan sebagai
+// catatan informatif di halaman.
+export function summarizeNasionalRegion(
   campaigns: Pick<
     MonitoringCampaign,
     "status" | "requested_budget" | "start_date" | "region_name"
   >[],
   fiscalYear: number,
   quarter: number
-): MissingRegionSummary {
+): NasionalRegionSummary {
   const monthKeys = getQuarterMonths(fiscalYear, quarter).map(
     (m) => `${m.year}-${pad2(m.month)}`
   );
@@ -205,7 +228,7 @@ export function summarizeExcludedRegion(
     if (!MONITORING_COMMITTED_STATUSES.includes(c.status)) continue;
     if (!c.start_date) continue;
     if (!monthKeys.includes(c.start_date.slice(0, 7))) continue;
-    if (c.region_name && REGION_NAMES.includes(c.region_name)) continue;
+    if (c.region_name && GEOGRAPHIC_REGION_NAMES.includes(c.region_name)) continue;
     count++;
     total += c.requested_budget ?? 0;
   }
@@ -215,7 +238,10 @@ export function summarizeExcludedRegion(
 // Menjumlahkan requested_budget SKP komitmen ke bucket region×kategori untuk
 // Realisasi By Region — sumbernya SELALU nilai Budget di SKP (requested_budget),
 // terlepas dari mode Komitmen/Realisasi yang aktif di halaman. SKP dengan
-// region di luar 5 wilayah tetap (lihat summarizeExcludedRegion) dilewati.
+// region_name bukan salah satu dari 5 wilayah geografis tetap (mis.
+// "National", kosong, atau nama baru — lihat summarizeNasionalRegion) masuk
+// ke bucket "Nasional" alih-alih dilewati, supaya tidak ada SKP yang hilang
+// diam-diam dari breakdown region.
 function buildRegionActualsByCategory(
   campaigns: MonitoringCampaign[],
   fiscalYear: number,
@@ -229,8 +255,8 @@ function buildRegionActualsByCategory(
     if (!MONITORING_COMMITTED_STATUSES.includes(c.status)) continue;
     if (!c.start_date) continue;
     if (!monthKeys.includes(c.start_date.slice(0, 7))) continue;
-    const regionIndex = c.region_name ? REGION_NAMES.indexOf(c.region_name) : -1;
-    if (regionIndex === -1) continue;
+    const geoIndex = c.region_name ? GEOGRAPHIC_REGION_NAMES.indexOf(c.region_name) : -1;
+    const regionIndex = geoIndex === -1 ? NASIONAL_INDEX : geoIndex;
     const key = c.promotion_category_id ?? "";
     const bucket = map.get(key) ?? emptyRegionActuals();
     bucket[regionIndex].amount += c.requested_budget ?? 0;

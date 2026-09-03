@@ -12,7 +12,7 @@ import {
 import { cn, formatIDR } from "@/lib/utils";
 import { drilldownKey, REGION_CONTRIBUTIONS } from "@/lib/monitoring-budget";
 import type {
-  MissingRegionSummary,
+  NasionalRegionSummary,
   MissingStartDateSummary,
   MonitoringAggregate,
   MonitoringMode,
@@ -155,7 +155,7 @@ export function MonitoringTable({
   aggregate,
   mode,
   missingStartDate,
-  missingRegion,
+  nasionalRegion,
   periodSelector,
   modeToggle,
   drilldown,
@@ -164,7 +164,7 @@ export function MonitoringTable({
   aggregate: MonitoringAggregate;
   mode: MonitoringMode;
   missingStartDate: MissingStartDateSummary;
-  missingRegion: MissingRegionSummary;
+  nasionalRegion: NasionalRegionSummary;
   periodSelector: ReactNode;
   modeToggle: ReactNode;
   drilldown: MonitoringDrilldown;
@@ -218,12 +218,12 @@ export function MonitoringTable({
         </div>
       )}
 
-      {missingRegion.count > 0 && (
-        <div className="rounded-md border border-amber-500/20 bg-amber-500/8 px-4 py-2.5 text-sm text-amber-300">
-          {missingRegion.count} SKP komitmen senilai{" "}
-          {formatIDR(missingRegion.total)} berregion &quot;National&quot; atau
-          region lain di luar 5 wilayah, sehingga tidak masuk breakdown
-          Realisasi By Region.
+      {nasionalRegion.count > 0 && (
+        <div className="rounded-md border border-sky-500/20 bg-sky-500/8 px-4 py-2.5 text-sm text-sky-300">
+          {nasionalRegion.count} SKP komitmen senilai{" "}
+          {formatIDR(nasionalRegion.total)} berregion &quot;National&quot; atau
+          region lain di luar 5 wilayah tetap, dikelompokkan ke kolom region
+          &quot;Nasional&quot;.
         </div>
       )}
 

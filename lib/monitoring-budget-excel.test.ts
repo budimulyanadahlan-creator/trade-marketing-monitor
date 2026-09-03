@@ -65,19 +65,21 @@ describe("buildMonitoringBudgetWorkbook — header", () => {
     expect(String(monthRow.getCell(5).value)).toBe("September 2026");
   });
 
-  it("merge header 'Alokasi Budget by Region' dan 'Realisasi By Region' masing-masing di atas 5 kolom, nama region di baris bawahnya", () => {
+  it("merge header 'Alokasi Budget by Region' dan 'Realisasi By Region' masing-masing di atas 6 kolom (5 wilayah + Nasional), nama region di baris bawahnya", () => {
     const ws = sheet(aggregate());
     const headerRow = ws.getRow(3);
     expect(String(headerRow.getCell(8).value)).toBe("Alokasi Budget by Region");
-    expect(ws.getCell("L3").master).toBe(ws.getCell("H3")); // col 8-12 merged
-    expect(String(headerRow.getCell(13).value)).toBe("Realisasi By Region");
-    expect(ws.getCell("Q3").master).toBe(ws.getCell("M3")); // col 13-17 merged
+    expect(ws.getCell("M3").master).toBe(ws.getCell("H3")); // col 8-13 merged
+    expect(String(headerRow.getCell(14).value)).toBe("Realisasi By Region");
+    expect(ws.getCell("S3").master).toBe(ws.getCell("N3")); // col 14-19 merged
 
     const nameRow = ws.getRow(4);
     expect(String(nameRow.getCell(8).value)).toBe("Greater Jakarta");
     expect(String(nameRow.getCell(12).value)).toBe("West Kalimantan");
-    expect(String(nameRow.getCell(13).value)).toBe("Greater Jakarta");
-    expect(String(nameRow.getCell(17).value)).toBe("West Kalimantan");
+    expect(String(nameRow.getCell(13).value)).toBe("Nasional");
+    expect(String(nameRow.getCell(14).value)).toBe("Greater Jakarta");
+    expect(String(nameRow.getCell(18).value)).toBe("West Kalimantan");
+    expect(String(nameRow.getCell(19).value)).toBe("Nasional");
   });
 });
 
@@ -117,19 +119,20 @@ describe("buildMonitoringBudgetWorkbook — baris kategori & subtotal", () => {
     expect(catRow.getCell(3).value).toBe(100_000);
     expect(catRow.getCell(6).value).toBe(600_000);
     expect(catRow.getCell(7).value).toBe(400_000);
-    // Kolom 8-12: Alokasi Budget by Region (target)
+    // Kolom 8-13: Alokasi Budget by Region (target, termasuk Nasional 0%)
     expect(catRow.getCell(8).value).toBe(280_000); // Greater Jakarta 28% dari 1.000.000
     expect(catRow.getCell(12).value).toBe(100_000); // West Kalimantan 10% dari 1.000.000
-    // Kolom 13-17: Realisasi By Region (actual)
-    expect(catRow.getCell(13).value).toBe(90_000); // Greater Jakarta
-    expect(catRow.getCell(17).value).toBe(10_000); // West Kalimantan
+    expect(catRow.getCell(13).value).toBe(0); // Nasional 0%
+    // Kolom 14-19: Realisasi By Region (actual)
+    expect(catRow.getCell(14).value).toBe(90_000); // Greater Jakarta
+    expect(catRow.getCell(18).value).toBe(10_000); // West Kalimantan
 
     const totalRow = ws.getRow(6);
     expect(String(totalRow.getCell(1).value)).toBe("Total TP");
     expect(totalRow.getCell(2).value).toBe(1_000_000);
     expect(totalRow.getCell(7).value).toBe(400_000);
     expect(totalRow.getCell(8).value).toBe(280_000);
-    expect(totalRow.getCell(13).value).toBe(90_000);
+    expect(totalRow.getCell(14).value).toBe(90_000);
     // Baris subtotal diberi latar
     expect(totalRow.getCell(1).fill).toBeDefined();
   });
