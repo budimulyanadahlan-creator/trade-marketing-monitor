@@ -30,6 +30,9 @@ const EXTRACT_DIR2 =
 // Third batch - SKP Pak Adit.zip (fills in Adit's remaining "RAF-JR.KAM" rows)
 const EXTRACT_DIR3 =
   "C:\\Users\\Wantw\\AppData\\Local\\Temp\\claude\\d--Area-Hobby-Trade-Marketing-Monitor-Dashboard-V2\\a9fe2e5f-0f89-41df-ba7c-7130985de499\\scratchpad\\adit";
+// Fifth batch - SKP Update Pak Lucky.zip (fills in Lucky's remaining rows 129-132)
+const EXTRACT_DIR4 =
+  "C:\\Users\\Wantw\\AppData\\Local\\Temp\\claude\\d--Area-Hobby-Trade-Marketing-Monitor-Dashboard-V2\\81fa7e08-25ff-4a8a-a3cb-54ec7fa4f76d\\scratchpad\\skp-lucky";
 const OUT_DIR = path.resolve(__dirname, "..", "..", "..", "..", "tmp-tp1-import");
 
 // ---------------------------------------------------------------------------
@@ -179,6 +182,20 @@ const ADIT_MATCH = [
 ];
 for (const [file, noSurat] of ADIT_MATCH) {
   SKP_MATCH.push([`3:${file}`, 1, noSurat]);
+}
+
+// --- Fifth batch (SKP Update Pak Lucky.zip) ---
+// Fills in Lucky's remaining rows 129-132 (Excel recorded no space before
+// "RAF-KAM"; the signed letters print "241 RAF-KAM/VIII/2026" etc., matching
+// Excel's own text exactly - verified by reading each PDF).
+const LUCKY_MATCH = [
+  ["241_Surat Rafraksi Hero & Diskon Supermarket.pdf", "241 RAF-KAM/VIII/2026"],
+  ["242_Surat Rafraksi Hero & Diskon Supermarket.pdf", "242 RAF-KAM/VIII/2026"],
+  ["243_Surat Rafraksi Hero & Diskon Supermarket.pdf", "243 RAF-KAM/VIII/2026"],
+  ["244_Surat Rafraksi Prima Freshmart.pdf", "244 RAF-KAM/VIII/2026"],
+];
+for (const [file, noSurat] of LUCKY_MATCH) {
+  SKP_MATCH.push([`4:${file}`, 1, noSurat]);
 }
 
 function norm(s) {
@@ -409,7 +426,9 @@ async function execute() {
   for (const r of rows) {
     try {
       // 1. Extract the SKP page(s) as a standalone PDF
-      const srcPath = r.sourceFile.startsWith("3:")
+      const srcPath = r.sourceFile.startsWith("4:")
+        ? path.join(EXTRACT_DIR4, r.sourceFile.slice(2))
+        : r.sourceFile.startsWith("3:")
         ? path.join(EXTRACT_DIR3, r.sourceFile.slice(2))
         : r.sourceFile.startsWith("2:")
         ? path.join(EXTRACT_DIR2, r.sourceFile.slice(2))
