@@ -33,6 +33,10 @@ const EXTRACT_DIR3 =
 // Fifth batch - SKP Update Pak Lucky.zip (fills in Lucky's remaining rows 129-132)
 const EXTRACT_DIR4 =
   "C:\\Users\\Wantw\\AppData\\Local\\Temp\\claude\\d--Area-Hobby-Trade-Marketing-Monitor-Dashboard-V2\\81fa7e08-25ff-4a8a-a3cb-54ec7fa4f76d\\scratchpad\\skp-lucky";
+// Sixth batch - AEON (127) and FoodHall (128) retroactive 2025 SKPs, made late
+// this quarter after the previous manager missed filing them at the time.
+const EXTRACT_DIR5 =
+  "C:\\Users\\Wantw\\AppData\\Local\\Temp\\claude\\d--Area-Hobby-Trade-Marketing-Monitor-Dashboard-V2\\81fa7e08-25ff-4a8a-a3cb-54ec7fa4f76d\\scratchpad\\skp-lucky2";
 const OUT_DIR = path.resolve(__dirname, "..", "..", "..", "..", "tmp-tp1-import");
 
 // ---------------------------------------------------------------------------
@@ -198,6 +202,14 @@ for (const [file, noSurat] of LUCKY_MATCH) {
   SKP_MATCH.push([`4:${file}`, 1, noSurat]);
 }
 
+// --- Sixth batch (AEON + FoodHall retroactive SKPs) ---
+// AEON letter's own number matches Excel exactly. FoodHall's letter prints
+// "050/RAF-KAM/XI/2025" (November) but Excel recorded ".../IX/2025"
+// (September, typo) - budget (Rp 9.884.200) matches exactly either way, so
+// use Excel's own text per the same convention as the other typo cases above.
+SKP_MATCH.push([`5:002_Surat Rafraksi AEON periode Agustus 2025.pdf`, 1, "002/RAF-KAM/VII/2026"]);
+SKP_MATCH.push([`5:050_Surat Rafraksi FoodHall periode Desember 2025.pdf`, 1, "050/RAF-KAM/IX/2025"]);
+
 function norm(s) {
   return String(s).toUpperCase().replace(/[\s\-._]/g, "");
 }
@@ -328,6 +340,14 @@ function buildRows() {
       startDate = "2026-08-01";
       endDate = "2026-12-31";
     }
+    // Row 128 (FoodHall): Excel's "Periode" cell is a raw date serial
+    // (45992 = 2025-12-01) instead of text, so parsePeriode can't read a
+    // month name from it. The signed letter says "1-31 Desember 2025" -
+    // use that full month directly.
+    if (row[0] === 128) {
+      startDate = "2025-12-01";
+      endDate = "2025-12-31";
+    }
     const programLabel = program || "Trade Promo Fund";
     // Confirmed data-entry typo: Excel recorded "220" but the signed SKP
     // letter itself says 221 (and 221 is otherwise missing from the
@@ -426,7 +446,9 @@ async function execute() {
   for (const r of rows) {
     try {
       // 1. Extract the SKP page(s) as a standalone PDF
-      const srcPath = r.sourceFile.startsWith("4:")
+      const srcPath = r.sourceFile.startsWith("5:")
+        ? path.join(EXTRACT_DIR5, r.sourceFile.slice(2))
+        : r.sourceFile.startsWith("4:")
         ? path.join(EXTRACT_DIR4, r.sourceFile.slice(2))
         : r.sourceFile.startsWith("3:")
         ? path.join(EXTRACT_DIR3, r.sourceFile.slice(2))
