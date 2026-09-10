@@ -2,9 +2,39 @@ import { createClient } from "@/lib/supabase/server";
 import { computeChecklistReadinessByCampaignId } from "@/lib/claim-checklist-status";
 import { computeClaimVerificationProgressByCampaignId } from "@/lib/claim-verification-progress";
 import { CampaignsClient } from "./campaigns-client";
+import type { ClaimItemStatus, UserRole } from "@/types/database";
 
 export default async function CampaignsPage() {
   const supabase = await createClient();
+
+  // Master data for the new campaign form doesn't depend on the logged-in
+  // user at all — fire it off immediately so it runs concurrently with
+  // everything below instead of waiting until the very end
+  // (plans/perf-skp-pages.md, Fase 1b). Awaited just before it's needed for
+  // the final render.
+  const masterDataPromise = Promise.all([
+    supabase.from("departments").select("id, name").order("name"),
+    supabase.from("brands").select("id, name").eq("is_active", true).order("name"),
+    supabase.from("regions").select("id, name").eq("is_active", true).order("name"),
+    supabase.from("channels").select("id, name").eq("is_active", true).order("name"),
+    supabase
+      .from("promotion_categories")
+      .select("id, name, type, account_code")
+      .eq("is_active", true)
+      .order("name"),
+    supabase
+      .from("action_approvals")
+      .select(
+        "id, name, brand_id, start_date, end_date, target_budget, master_budget:master_budgets(promotion_category_id)"
+      )
+      .order("name"),
+    supabase.from("vendors").select("id, name").eq("is_active", true).order("name"),
+    supabase.from("distributors").select("id, name").eq("is_active", true).order("name"),
+    supabase
+      .from("master_budgets")
+      .select("id, promotion_category_id, fiscal_year, quarter, total_amount")
+      .order("fiscal_year", { ascending: false }),
+  ]);
 
   const {
     data: { user },
@@ -12,24 +42,29 @@ export default async function CampaignsPage() {
 
   if (!user) return null;
 
-  const { data: profile } = await supabase
-    .from("users")
-    .select("role, department_id, region_id")
-    .eq("id", user.id)
-    .single();
+  // Profile (role + department name via nested select, one round-trip
+  // instead of two) and the full department list (only needed for
+  // distributors below, but fetched for everyone to keep this batched —
+  // departments is a tiny table) are independent of each other.
+  const [{ data: profileRaw }, { data: allDepts }] = await Promise.all([
+    supabase
+      .from("users")
+      .select("role, department_id, region_id, department:departments(name)")
+      .eq("id", user.id)
+      .single(),
+    supabase.from("departments").select("id, name"),
+  ]);
+  const profile = profileRaw as
+    | {
+        role: UserRole;
+        department_id: string | null;
+        region_id: string | null;
+        department: { name: string } | null;
+      }
+    | null;
 
   const isDistributor = profile?.role === "distributor";
-
-  // Fetch department name upfront — needed for region-lock logic
-  let deptName: string | null = null;
-  if (profile?.department_id) {
-    const { data: dept } = await supabase
-      .from("departments")
-      .select("name")
-      .eq("id", profile.department_id)
-      .single();
-    deptName = dept?.name?.toLowerCase() ?? null;
-  }
+  const deptName = profile?.department?.name?.toLowerCase() ?? null;
 
   // Distributors in finance/controller dept are not region-locked (can see all regions)
   const REGION_EXEMPT_DEPTS = ["finance", "controller"];
@@ -39,14 +74,15 @@ export default async function CampaignsPage() {
   // Distributors only see campaigns from the Sales and Trade Marketing departments
   let visibleDeptIds: string[] = [];
   if (isDistributor) {
-    const { data: allDepts } = await supabase.from("departments").select("id, name");
     const allowedDeptNames = ["sales", "trade marketing"];
     visibleDeptIds = (allDepts ?? [])
       .filter((d) => allowedDeptNames.includes((d.name ?? "").toLowerCase()))
       .map((d) => d.id);
   }
 
-  // Fetch campaigns with joined display names
+  // Fetch campaigns with joined display names. Needs isDistributor +
+  // visibleDeptIds from above, so this stays sequential — can't be batched
+  // with the block that produces them.
   let campaignQuery = supabase
     .from("campaigns")
     .select(
@@ -79,7 +115,19 @@ export default async function CampaignsPage() {
   // filled in, so they know it's ready for "Tambah" (realisasi) to move it to
   // ongoing. Not relevant for the distributor's own list (already filtered to
   // approved, and it's their own checklist they're filling in).
+  //
+  // Claim verification progress (claim_submitted only) — the finance queue's
+  // "N/M item ✓" / "menunggu revisi distributor" badge.
+  //
+  // Both batch-fetched in one query each rather than per-row, and — since
+  // "approved" and "claim_submitted" campaigns are disjoint sets — the two
+  // are independent of each other, so both round-trips fire together.
   let checklistStatusByCampaignId: Record<string, { required: number; fulfilled: number }> = {};
+  let claimVerificationProgressByCampaignId: Record<
+    string,
+    { total: number; accepted: number; hasRevisionRequested: boolean }
+  > = {};
+
   if (!isDistributor) {
     const approvedCampaigns = (campaigns ?? []).filter((c) => c.status === "approved");
     const categoryIds = [
@@ -90,19 +138,38 @@ export default async function CampaignsPage() {
       ),
     ];
     const campaignIds = approvedCampaigns.map((c) => c.id);
+    const claimSubmittedCampaignIds = (campaigns ?? [])
+      .filter((c) => c.status === "claim_submitted")
+      .map((c) => c.id);
 
-    if (categoryIds.length > 0 && campaignIds.length > 0) {
-      const [{ data: requirementsRaw }, { data: checklistsRaw }] = await Promise.all([
-        supabase
-          .from("claim_requirements")
-          .select("promotion_category_id, document_type_id")
-          .in("promotion_category_id", categoryIds),
-        supabase
-          .from("distributor_claim_checklists")
-          .select("campaign_id, document_type_id, is_fulfilled")
-          .in("campaign_id", campaignIds),
+    const wantsChecklist = categoryIds.length > 0 && campaignIds.length > 0;
+    const wantsClaimProgress = claimSubmittedCampaignIds.length > 0;
+
+    const [{ data: requirementsRaw }, { data: checklistsRaw }, { data: claimItemsRaw }] =
+      await Promise.all([
+        wantsChecklist
+          ? supabase
+              .from("claim_requirements")
+              .select("promotion_category_id, document_type_id")
+              .in("promotion_category_id", categoryIds)
+          : Promise.resolve({ data: [] as { promotion_category_id: string; document_type_id: string }[] }),
+        wantsChecklist
+          ? supabase
+              .from("distributor_claim_checklists")
+              .select("campaign_id, document_type_id, is_fulfilled")
+              .in("campaign_id", campaignIds)
+          : Promise.resolve({
+              data: [] as { campaign_id: string; document_type_id: string; is_fulfilled: boolean }[],
+            }),
+        wantsClaimProgress
+          ? supabase
+              .from("claim_item_verifications")
+              .select("campaign_id, status")
+              .in("campaign_id", claimSubmittedCampaignIds)
+          : Promise.resolve({ data: [] as { campaign_id: string; status: ClaimItemStatus }[] }),
       ]);
 
+    if (wantsChecklist) {
       checklistStatusByCampaignId = computeChecklistReadinessByCampaignId({
         campaigns: approvedCampaigns.map((c) => ({
           id: c.id,
@@ -112,28 +179,9 @@ export default async function CampaignsPage() {
         checklists: checklistsRaw ?? [],
       });
     }
-  }
-
-  // Claim verification progress (claim_submitted only) — the finance queue's
-  // "N/M item ✓" / "menunggu revisi distributor" badge, batch-fetched in one
-  // query for every claim_submitted campaign rather than per-row.
-  let claimVerificationProgressByCampaignId: Record<
-    string,
-    { total: number; accepted: number; hasRevisionRequested: boolean }
-  > = {};
-  if (!isDistributor) {
-    const claimSubmittedCampaignIds = (campaigns ?? [])
-      .filter((c) => c.status === "claim_submitted")
-      .map((c) => c.id);
-
-    if (claimSubmittedCampaignIds.length > 0) {
-      const { data: itemsRaw } = await supabase
-        .from("claim_item_verifications")
-        .select("campaign_id, status")
-        .in("campaign_id", claimSubmittedCampaignIds);
-
+    if (wantsClaimProgress) {
       claimVerificationProgressByCampaignId = computeClaimVerificationProgressByCampaignId(
-        itemsRaw ?? []
+        claimItemsRaw ?? []
       );
     }
   }
@@ -156,7 +204,6 @@ export default async function CampaignsPage() {
     lockedRegionId = profile.region_id;
   }
 
-  // Master data for the new campaign form
   const [
     { data: departments },
     { data: brands },
@@ -167,29 +214,7 @@ export default async function CampaignsPage() {
     { data: vendors },
     { data: distributors },
     { data: masterBudgets },
-  ] = await Promise.all([
-    supabase.from("departments").select("id, name").order("name"),
-    supabase.from("brands").select("id, name").eq("is_active", true).order("name"),
-    supabase.from("regions").select("id, name").eq("is_active", true).order("name"),
-    supabase.from("channels").select("id, name").eq("is_active", true).order("name"),
-    supabase
-      .from("promotion_categories")
-      .select("id, name, type, account_code")
-      .eq("is_active", true)
-      .order("name"),
-    supabase
-      .from("action_approvals")
-      .select(
-        "id, name, brand_id, start_date, end_date, target_budget, master_budget:master_budgets(promotion_category_id)"
-      )
-      .order("name"),
-    supabase.from("vendors").select("id, name").eq("is_active", true).order("name"),
-    supabase.from("distributors").select("id, name").eq("is_active", true).order("name"),
-    supabase
-      .from("master_budgets")
-      .select("id, promotion_category_id, fiscal_year, quarter, total_amount")
-      .order("fiscal_year", { ascending: false }),
-  ]);
+  ] = await masterDataPromise;
 
   return (
     <CampaignsClient
