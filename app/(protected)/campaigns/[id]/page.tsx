@@ -57,6 +57,23 @@ type CampaignWithJoins = CampaignRow & {
   distributor: { name: string } | null;
 };
 
+type ClaimItemRow = {
+  id: string;
+  item_type: "document" | "amount";
+  document_type_id: string | null;
+  status: ClaimItemStatus;
+  note: string | null;
+  decided_at: string | null;
+  actor: { full_name: string } | null;
+};
+
+type ClaimRequirementRow = {
+  document_type_id: string;
+  claim_document_types: { name: string; sort_order: number } | null;
+};
+
+type ChecklistRow = { document_type_id: string; is_fulfilled: boolean };
+
 interface Props {
   params: Promise<{ id: string }>;
 }
@@ -70,78 +87,85 @@ export default async function CampaignDetailPage({ params }: Props) {
   } = await supabase.auth.getUser();
   if (!user) notFound();
 
-  const { data: userProfile } = await supabase
-    .from("users")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-  const userRole = (userProfile?.role ?? "user") as UserRole;
-
-  const { data: campaignRaw } = await supabase
-    .from("campaigns")
-    .select(
+  // Batch 1: none of these depend on each other's data — only on `id`
+  // (route param) and `user.id`, both already known — so they fire as one
+  // round-trip instead of the six sequential ones this used to be
+  // (plans/perf-skp-pages.md, Fase 1a). distributor_receipts is fetched
+  // unconditionally here too: its RLS lets more staff roles (finance,
+  // manager) read it than the app actually shows it to, so the showReceipts
+  // gate below — not the fetch itself — still decides what reaches the
+  // client, same as before.
+  const [
+    { data: userProfile },
+    { data: campaignRaw },
+    { data: filesRaw },
+    { data: historyRaw },
+    { data: realizationsRaw },
+    { data: receiptsRaw },
+    { data: claimEventsRaw },
+  ] = await Promise.all([
+    supabase.from("users").select("role").eq("id", user.id).single(),
+    supabase
+      .from("campaigns")
+      .select(
+        `
+        *,
+        department:departments(name),
+        brand:brands(name),
+        region:regions(name),
+        channel:channels(name),
+        promotion_category:promotion_categories(name, account_code),
+        action_approval:action_approvals(name),
+        vendor:vendors(name),
+        distributor:distributors(name)
       `
-      *,
-      department:departments(name),
-      brand:brands(name),
-      region:regions(name),
-      channel:channels(name),
-      promotion_category:promotion_categories(name, account_code),
-      action_approval:action_approvals(name),
-      vendor:vendors(name),
-      distributor:distributors(name)
-    `
-    )
-    .eq("id", id)
-    .single();
+      )
+      .eq("id", id)
+      .single(),
+    supabase.from("campaign_files").select("*").eq("campaign_id", id).order("uploaded_at"),
+    supabase
+      .from("approval_history")
+      .select("*, actor:users!approval_history_actor_id_fkey(full_name)")
+      .eq("campaign_id", id)
+      .order("created_at", { ascending: true }),
+    supabase
+      .from("realizations")
+      .select("*, creator:created_by(full_name)")
+      .eq("campaign_id", id)
+      .order("realization_date", { ascending: true }),
+    supabase
+      .from("distributor_receipts")
+      .select("*, receiver:received_by(full_name)")
+      .eq("campaign_id", id)
+      .order("received_at", { ascending: true }),
+    // Riwayat ajukan/batalkan klaim — visible to whoever the RLS policy on
+    // claim_events lets see this campaign's events (admin/superadmin/
+    // finance/manager always, distributor for their own visible SKP).
+    supabase
+      .from("claim_events")
+      .select("*, actor:actor_id(full_name)")
+      .eq("campaign_id", id)
+      .order("created_at", { ascending: true }),
+  ]);
+
+  const userRole = (userProfile?.role ?? "user") as UserRole;
 
   if (!campaignRaw) notFound();
   const campaign = campaignRaw as unknown as CampaignWithJoins;
 
-  const { data: filesRaw } = await supabase
-    .from("campaign_files")
-    .select("*")
-    .eq("campaign_id", id)
-    .order("uploaded_at");
   const files = (filesRaw ?? []) as CampaignFileRow[];
-
-  const { data: historyRaw } = await supabase
-    .from("approval_history")
-    .select("*, actor:users!approval_history_actor_id_fkey(full_name)")
-    .eq("campaign_id", id)
-    .order("created_at", { ascending: true });
   const approvalHistory = (historyRaw ?? []) as unknown as ApprovalHistoryWithActor[];
-
-  const { data: realizationsRaw } = await supabase
-    .from("realizations")
-    .select("*, creator:created_by(full_name)")
-    .eq("campaign_id", id)
-    .order("realization_date", { ascending: true });
   const realizations = (realizationsRaw ?? []) as (RealizationRow & {
     creator: { full_name: string } | null;
   })[];
 
-  // Fetch distributor receipts (visible to distributor + admin/superadmin)
   const showReceipts = ["distributor", "admin", "superadmin"].includes(userRole);
-  const { data: receiptsRaw } = showReceipts
-    ? await supabase
-        .from("distributor_receipts")
-        .select("*, receiver:received_by(full_name)")
-        .eq("campaign_id", id)
-        .order("received_at", { ascending: true })
-    : { data: [] };
-  const distributorReceipts = (receiptsRaw ?? []) as (DistributorReceiptRow & {
-    receiver: { full_name: string } | null;
-  })[];
+  const distributorReceipts = showReceipts
+    ? ((receiptsRaw ?? []) as (DistributorReceiptRow & {
+        receiver: { full_name: string } | null;
+      })[])
+    : [];
 
-  // Riwayat ajukan/batalkan klaim — visible to whoever the RLS policy on
-  // claim_events lets see this campaign's events (admin/superadmin/finance/
-  // manager always, distributor for their own visible SKP).
-  const { data: claimEventsRaw } = await supabase
-    .from("claim_events")
-    .select("*, actor:actor_id(full_name)")
-    .eq("campaign_id", id)
-    .order("created_at", { ascending: true });
   const claimEvents = (claimEventsRaw ?? []) as (ClaimEventRow & {
     actor: { full_name: string } | null;
   })[];
@@ -160,105 +184,110 @@ export default async function CampaignDetailPage({ params }: Props) {
   const verificationByDocType = new Map<string, ClaimItemVerificationInfo>();
   let claimAmountVerification: ClaimItemVerificationInfo | null = null;
 
-  if (showClaimSection && ITEM_VERIFICATION_STATUSES.includes(campaign.status)) {
-    // Item rows are created when the claim is submitted (submitKlaimAction,
-    // app/actions/realizations.ts) via ensureClaimItemVerifications. The
-    // page used to also self-heal here on every load as a safety net for
-    // claims that predated this feature — those have all been backfilled
-    // (scripts/backfill-claim-item-verifications.js, plans/perf-skp-pages.md
-    // Fase 0), so that per-load call was removed to cut two round-trips off
-    // every claim_submitted+ page view.
-    const { data: itemsRaw } = await supabase
-      .from("claim_item_verifications")
-      .select("id, item_type, document_type_id, status, note, decided_at, actor:actor_id(full_name)")
-      .eq("campaign_id", id);
+  // Batch 2: item verifications, claim requirements and the distributor's
+  // checklist are all independent of each other (each only needs `id` and/or
+  // campaign.promotion_category_id, both already known from Batch 1) — one
+  // more round-trip instead of two sequential ones.
+  const wantsItemVerifications = showClaimSection && ITEM_VERIFICATION_STATUSES.includes(campaign.status);
+  const wantsClaimRequirements = showClaimSection && !!campaign.promotion_category_id;
 
-    for (const row of (itemsRaw ?? []) as unknown as {
-      id: string;
-      item_type: "document" | "amount";
-      document_type_id: string | null;
-      status: ClaimItemStatus;
-      note: string | null;
-      decided_at: string | null;
-      actor: { full_name: string } | null;
-    }[]) {
-      const info: ClaimItemVerificationInfo = {
-        id: row.id,
-        status: row.status,
-        note: row.note,
-        actorName: row.actor?.full_name ?? null,
-        decidedAt: row.decided_at,
-      };
-      if (row.item_type === "amount") {
-        claimAmountVerification = info;
-      } else if (row.document_type_id) {
-        verificationByDocType.set(row.document_type_id, info);
-      }
+  const [
+    { data: itemsRaw },
+    { data: requirementsRaw },
+    { data: checklistsRaw },
+  ] = await Promise.all([
+    wantsItemVerifications
+      ? supabase
+          .from("claim_item_verifications")
+          // Item rows are created when the claim is submitted
+          // (submitKlaimAction, app/actions/realizations.ts). This page used
+          // to also self-heal here on every load as a safety net for claims
+          // that predated this feature — those have all been backfilled
+          // (scripts/backfill-claim-item-verifications.js,
+          // plans/perf-skp-pages.md Fase 0), so that per-load call was
+          // removed.
+          .select("id, item_type, document_type_id, status, note, decided_at, actor:actor_id(full_name)")
+          .eq("campaign_id", id)
+      : Promise.resolve({ data: [] as unknown as ClaimItemRow[] }),
+    wantsClaimRequirements
+      ? supabase
+          .from("claim_requirements")
+          .select("document_type_id, claim_document_types(name, sort_order)")
+          .eq("promotion_category_id", campaign.promotion_category_id!)
+      : Promise.resolve({ data: [] as unknown as ClaimRequirementRow[] }),
+    wantsClaimRequirements
+      ? supabase
+          .from("distributor_claim_checklists")
+          .select("document_type_id, is_fulfilled")
+          .eq("campaign_id", id)
+      : Promise.resolve({ data: [] as ChecklistRow[] }),
+  ]);
+
+  for (const row of (itemsRaw ?? []) as unknown as ClaimItemRow[]) {
+    const info: ClaimItemVerificationInfo = {
+      id: row.id,
+      status: row.status,
+      note: row.note,
+      actorName: row.actor?.full_name ?? null,
+      decidedAt: row.decided_at,
+    };
+    if (row.item_type === "amount") {
+      claimAmountVerification = info;
+    } else if (row.document_type_id) {
+      verificationByDocType.set(row.document_type_id, info);
     }
   }
 
-  if (showClaimSection && campaign.promotion_category_id) {
-    const { data: requirementsRaw } = await supabase
-      .from("claim_requirements")
-      .select("document_type_id, claim_document_types(name, sort_order)")
-      .eq("promotion_category_id", campaign.promotion_category_id);
+  if (requirementsRaw && requirementsRaw.length > 0) {
+    const docs = requirementsRaw
+      .map((r) => {
+        const dt = r.claim_document_types as { name: string; sort_order: number } | null;
+        return {
+          documentTypeId: r.document_type_id,
+          name: dt?.name ?? "",
+          sortOrder: dt?.sort_order ?? 999,
+        };
+      })
+      .filter((d) => d.name)
+      .sort((a, b) => a.sortOrder - b.sortOrder);
 
-    if (requirementsRaw && requirementsRaw.length > 0) {
-      const docs = requirementsRaw
-        .map((r) => {
-          const dt = r.claim_document_types as { name: string; sort_order: number } | null;
-          return {
-            documentTypeId: r.document_type_id,
-            name: dt?.name ?? "",
-            sortOrder: dt?.sort_order ?? 999,
-          };
-        })
-        .filter((d) => d.name)
-        .sort((a, b) => a.sortOrder - b.sortOrder);
-
-      const { data: checklistsRaw } = await supabase
-        .from("distributor_claim_checklists")
-        .select("document_type_id, is_fulfilled")
-        .eq("campaign_id", id);
-
-      // True if any distributor has fulfilled the document (admin view) or own entry (distributor view via RLS)
-      const fulfilledMap = new Map<string, boolean>();
-      for (const row of checklistsRaw ?? []) {
-        if (row.is_fulfilled) {
-          fulfilledMap.set(row.document_type_id, true);
-        } else if (!fulfilledMap.has(row.document_type_id)) {
-          fulfilledMap.set(row.document_type_id, false);
-        }
+    // True if any distributor has fulfilled the document (admin view) or own entry (distributor view via RLS)
+    const fulfilledMap = new Map<string, boolean>();
+    for (const row of checklistsRaw ?? []) {
+      if (row.is_fulfilled) {
+        fulfilledMap.set(row.document_type_id, true);
+      } else if (!fulfilledMap.has(row.document_type_id)) {
+        fulfilledMap.set(row.document_type_id, false);
       }
-
-      // Claim document files (document_type_id set) grouped per checklist item.
-      // filesRaw is already ordered by uploaded_at, so the last entry pushed
-      // per document type is the most recent one.
-      const claimFilesByDocType = new Map<string, ClaimDocumentFile[]>();
-      for (const f of (filesRaw ?? []) as CampaignFileRow[]) {
-        if (!f.document_type_id) continue;
-        const list = claimFilesByDocType.get(f.document_type_id) ?? [];
-        list.push({
-          id: f.id,
-          fileName: f.file_name,
-          uploadedBy: f.uploaded_by,
-          uploadedAt: f.uploaded_at,
-          isLatest: false, // corrected below once each list is complete
-        });
-        claimFilesByDocType.set(f.document_type_id, list);
-      }
-      for (const list of claimFilesByDocType.values()) {
-        if (list.length > 0) list[list.length - 1].isLatest = true;
-      }
-
-      claimDocuments = docs.map((d) => ({
-        documentTypeId: d.documentTypeId,
-        name: d.name,
-        isFulfilled: fulfilledMap.get(d.documentTypeId) ?? false,
-        files: claimFilesByDocType.get(d.documentTypeId) ?? [],
-        verification: verificationByDocType.get(d.documentTypeId) ?? null,
-      }));
     }
+
+    // Claim document files (document_type_id set) grouped per checklist item.
+    // filesRaw is already ordered by uploaded_at, so the last entry pushed
+    // per document type is the most recent one.
+    const claimFilesByDocType = new Map<string, ClaimDocumentFile[]>();
+    for (const f of (filesRaw ?? []) as CampaignFileRow[]) {
+      if (!f.document_type_id) continue;
+      const list = claimFilesByDocType.get(f.document_type_id) ?? [];
+      list.push({
+        id: f.id,
+        fileName: f.file_name,
+        uploadedBy: f.uploaded_by,
+        uploadedAt: f.uploaded_at,
+        isLatest: false, // corrected below once each list is complete
+      });
+      claimFilesByDocType.set(f.document_type_id, list);
+    }
+    for (const list of claimFilesByDocType.values()) {
+      if (list.length > 0) list[list.length - 1].isLatest = true;
+    }
+
+    claimDocuments = docs.map((d) => ({
+      documentTypeId: d.documentTypeId,
+      name: d.name,
+      isFulfilled: fulfilledMap.get(d.documentTypeId) ?? false,
+      files: claimFilesByDocType.get(d.documentTypeId) ?? [],
+      verification: verificationByDocType.get(d.documentTypeId) ?? null,
+    }));
   }
 
   // Budget AA untuk approver: sisa terkini + selisih jika campaign melebihi.
