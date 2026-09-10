@@ -1639,7 +1639,7 @@ export function CampaignDetailClient({
   const statusCfg = getStatusConfig(campaign.status);
 
   const canAddRealization =
-    ["admin", "superadmin"].includes(userRole) &&
+    ["admin", "superadmin", "finance"].includes(userRole) &&
     (campaign.status === "approved" || campaign.status === "ongoing" || campaign.status === "paid");
 
   // Claim document files are shown per checklist item in ClaimChecklistSection

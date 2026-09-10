@@ -29,7 +29,7 @@ async function requireActiveUser() {
 }
 
 // ============================================================
-// ADD REALIZATION (Admin only — approved or ongoing campaigns)
+// ADD REALIZATION (Admin/Superadmin/Finance — approved or ongoing campaigns)
 // ============================================================
 
 const addRealizationSchema = z.object({
@@ -58,8 +58,8 @@ export async function addRealizationAction(
   try {
     const { supabase, userId, profile } = await requireActiveUser();
 
-    if (!["admin", "superadmin"].includes(profile.role)) {
-      return { error: "Hanya Admin yang dapat mencatat realisasi" };
+    if (!["admin", "superadmin", "finance"].includes(profile.role)) {
+      return { error: "Hanya Admin atau Finance yang dapat mencatat realisasi" };
     }
 
     const parsed = addRealizationSchema.safeParse(data);
@@ -131,7 +131,7 @@ export async function addRealizationAction(
 }
 
 // ============================================================
-// DELETE REALIZATION (Admin only)
+// DELETE REALIZATION (Admin/Superadmin/Finance)
 // ============================================================
 
 export async function deleteRealizationAction(
@@ -141,8 +141,8 @@ export async function deleteRealizationAction(
   try {
     const { supabase, profile } = await requireActiveUser();
 
-    if (!["admin", "superadmin"].includes(profile.role)) {
-      return { error: "Hanya Admin yang dapat menghapus realisasi" };
+    if (!["admin", "superadmin", "finance"].includes(profile.role)) {
+      return { error: "Hanya Admin atau Finance yang dapat menghapus realisasi" };
     }
 
     const { error } = await supabase
