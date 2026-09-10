@@ -476,7 +476,21 @@ async function execute() {
       if (upErr) throw new Error(`upload: ${upErr.message}`);
       const { data: urlData } = sb.storage.from("campaign-documents").getPublicUrl(safeName);
 
-      // 3. Insert campaign
+      // 3. Generate marmot's own SKP number too (not just reference_number),
+      // based on the row's actual submitted_at month - so a bulk-imported
+      // campaign looks the same as one approved through the UI instead of
+      // showing "-" in the campaigns list. Confirmed with user 2026-09-10
+      // after the first TP1 Q2 batch shipped without this and had to be
+      // backfilled (see scripts/backfill-bulk-import-skp-numbers.js).
+      const skpDate = r.submittedAt ? new Date(`${r.submittedAt}T00:00:00Z`) : new Date();
+      const { data: skpSeq, error: skpErr } = await sb.rpc("increment_skp_counter", {
+        p_year: skpDate.getUTCFullYear(),
+        p_month: skpDate.getUTCMonth() + 1,
+      });
+      if (skpErr) throw new Error(`increment_skp_counter: ${skpErr.message}`);
+      const skpNumber = `${String(skpSeq).padStart(4, "0")}/WWI/${String(skpDate.getUTCMonth() + 1).padStart(2, "0")}/${skpDate.getUTCFullYear()}`;
+
+      // 4. Insert campaign
       const { data: campaign, error: campErr } = await sb
         .from("campaigns")
         .insert({
@@ -496,12 +510,13 @@ async function execute() {
           end_date: r.endDate,
           submitted_at: r.submittedAt ? `${r.submittedAt}T00:00:00Z` : null,
           reference_number: r.noSurat,
+          skp_number: skpNumber,
         })
         .select()
         .single();
       if (campErr) throw new Error(`campaign insert: ${campErr.message}`);
 
-      // 4. campaign_files
+      // 5. campaign_files
       const { error: fileErr } = await sb.from("campaign_files").insert({
         campaign_id: campaign.id,
         file_name: path.basename(safeName),
@@ -512,7 +527,7 @@ async function execute() {
       });
       if (fileErr) throw new Error(`campaign_files insert: ${fileErr.message}`);
 
-      // 5. approval_history (synthetic, clearly labeled)
+      // 6. approval_history (synthetic, clearly labeled)
       const { error: histErr } = await sb.from("approval_history").insert({
         campaign_id: campaign.id,
         actor_id: r.createdBy,
