@@ -1,7 +1,6 @@
 import { notFound } from "next/navigation";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { computeAARemainingBudget } from "@/lib/campaign-status";
-import { ensureClaimItemVerifications } from "@/lib/claim-item-verifications";
 import { CampaignDetailClient } from "./campaign-detail-client";
 import type { CampaignRow, CampaignFileRow, ApprovalHistoryRow, RealizationRow, DistributorReceiptRow, ClaimEventRow, ClaimItemStatus, UserRole, CampaignStatus } from "@/types/database";
 
@@ -162,21 +161,13 @@ export default async function CampaignDetailPage({ params }: Props) {
   let claimAmountVerification: ClaimItemVerificationInfo | null = null;
 
   if (showClaimSection && ITEM_VERIFICATION_STATUSES.includes(campaign.status)) {
-    // Self-heal: creates any missing item rows (documents + nominal) so a
-    // claim that was already claim_submitted when this feature shipped
-    // still gets a full set to verify, per the PRD's transition note.
-    if (campaign.status === "claim_submitted") {
-      try {
-        await ensureClaimItemVerifications(
-          createAdminClient(),
-          id,
-          campaign.promotion_category_id
-        );
-      } catch (syncErr) {
-        console.error("[CampaignDetailPage] claim_item_verifications sync error:", syncErr);
-      }
-    }
-
+    // Item rows are created when the claim is submitted (submitKlaimAction,
+    // app/actions/realizations.ts) via ensureClaimItemVerifications. The
+    // page used to also self-heal here on every load as a safety net for
+    // claims that predated this feature — those have all been backfilled
+    // (scripts/backfill-claim-item-verifications.js, plans/perf-skp-pages.md
+    // Fase 0), so that per-load call was removed to cut two round-trips off
+    // every claim_submitted+ page view.
     const { data: itemsRaw } = await supabase
       .from("claim_item_verifications")
       .select("id, item_type, document_type_id, status, note, decided_at, actor:actor_id(full_name)")
