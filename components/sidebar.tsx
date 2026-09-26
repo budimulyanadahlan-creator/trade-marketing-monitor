@@ -10,6 +10,7 @@ import {
   Users,
   Database,
   LogOut,
+  Package,
   TableProperties,
   Wallet,
 } from "lucide-react";
@@ -53,6 +54,12 @@ const navItems: NavItem[] = [
     label: "Monitoring Budget",
     icon: <Wallet className="h-4 w-4" />,
     roles: ["admin", "superadmin"],
+  },
+  {
+    href: "/monitoring-posm",
+    label: "Monitoring POSM",
+    icon: <Package className="h-4 w-4" />,
+    roles: ["user", "manager", "finance", "admin", "superadmin"],
   },
   {
     href: "/admin/users",

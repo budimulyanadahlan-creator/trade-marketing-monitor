@@ -290,6 +290,46 @@ export type ClaimItemVerificationRow = {
   updated_at: string;
 };
 
+export type PosmCategory =
+  | "Poster"
+  | "Wobbler"
+  | "Shelf Talker"
+  | "Hanger"
+  | "Banner"
+  | "Sticker"
+  | "Lainnya";
+export type PosmUnit = "pcs" | "lembar" | "roll" | "set";
+
+export type PosmItemRow = {
+  id: string;
+  code: string;
+  name: string;
+  brand_id: string | null;
+  category: PosmCategory;
+  unit: PosmUnit;
+  min_stock: number | null;
+  photo_path: string | null;
+  is_active: boolean;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+};
+
+export type PosmAuditAction = "insert" | "update" | "soft_delete";
+
+export type PosmAuditLogRow = {
+  id: string;
+  table_name: string;
+  record_id: string;
+  action: PosmAuditAction;
+  old_data: Record<string, unknown> | null;
+  new_data: Record<string, unknown> | null;
+  changed_by: string | null;
+  changed_at: string;
+};
+
 // Convenience aliases
 export type Department = DepartmentRow;
 export type UserProfile = UserRow;
@@ -757,9 +797,51 @@ export type Database = {
           }
         ];
       };
+      posm_items: {
+        Row: PosmItemRow;
+        Insert: {
+          id?: string;
+          code: string;
+          name: string;
+          brand_id?: string | null;
+          category: PosmCategory;
+          unit: PosmUnit;
+          min_stock?: number | null;
+          photo_path?: string | null;
+          is_active?: boolean;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: Partial<Omit<PosmItemRow, "id" | "created_at" | "created_by">>;
+        Relationships: [
+          {
+            foreignKeyName: "posm_items_brand_id_fkey";
+            columns: ["brand_id"];
+            isOneToOne: false;
+            referencedRelation: "brands";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      posm_audit_log: {
+        Row: PosmAuditLogRow;
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: {
+      can_manage_posm: {
+        Args: Record<string, never>;
+        Returns: boolean;
+      };
+      is_posm_reader: {
+        Args: Record<string, never>;
+        Returns: boolean;
+      };
       increment_skp_counter: {
         Args: { p_year: number; p_month: number };
         Returns: number;
