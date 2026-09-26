@@ -151,3 +151,62 @@ export function withRunningBalance<T extends BalanceMovement & { created_at: str
     )
     .map((m) => ({ ...m, running_balance: (balance += m.quantity) }));
 }
+
+// ============================================================
+// DAFTAR MUTASI (filter di query string)
+// ============================================================
+
+export const POSM_MOVEMENTS_PAGE_SIZE = 50;
+
+export type PosmMovementFilters = {
+  from?: string;
+  to?: string;
+  type?: PosmMovementType;
+  item?: string;
+  region?: string;
+  distributor?: string;
+  page: number;
+};
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Nilai filter yang tidak valid diabaikan agar query tidak gagal. */
+export function parseMovementFilters(
+  params: Record<string, string | string[] | undefined>
+): PosmMovementFilters {
+  const one = (key: string) => {
+    const v = params[key];
+    return typeof v === "string" ? v.trim() : undefined;
+  };
+  const matching = (key: string, pattern: RegExp) => {
+    const v = one(key);
+    return v && pattern.test(v) ? v : undefined;
+  };
+
+  const type = one("type");
+  const page = Number(one("page"));
+  const filters: PosmMovementFilters = {
+    from: matching("from", ISO_DATE),
+    to: matching("to", ISO_DATE),
+    type: POSM_MOVEMENT_TYPES.includes(type as PosmMovementType) ? (type as PosmMovementType) : undefined,
+    item: matching("item", UUID),
+    region: matching("region", UUID),
+    distributor: matching("distributor", UUID),
+    page: Number.isInteger(page) && page > 1 ? page : 1,
+  };
+  return Object.fromEntries(
+    Object.entries(filters).filter(([, v]) => v !== undefined)
+  ) as PosmMovementFilters;
+}
+
+/** Query string untuk filter (halaman 1 dan nilai kosong dihilangkan). */
+export function movementFiltersQuery(filters: Partial<PosmMovementFilters>): string {
+  const params = new URLSearchParams();
+  for (const key of ["from", "to", "type", "item", "region", "distributor"] as const) {
+    const v = filters[key];
+    if (v) params.set(key, v);
+  }
+  if (filters.page && filters.page > 1) params.set("page", String(filters.page));
+  return params.toString();
+}

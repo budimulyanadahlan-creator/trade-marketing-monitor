@@ -8,6 +8,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 import {
   deletePosmItemAction,
   deletePosmMovementAction,
+  searchPosmCampaignsAction,
   savePosmItemAction,
   savePosmMovementAction,
   togglePosmItemActiveAction,
@@ -56,6 +57,8 @@ function fakeTable(rows: Row[], { insertError = null, updateError = null }: { in
 
 const ITEM_ID = "33333333-3333-4333-8333-333333333333";
 const REGION_ID = "44444444-4444-4444-8444-444444444444";
+const DISTRIBUTOR_ID = "55555555-5555-4555-8555-555555555555";
+const CAMPAIGN_ID = "66666666-6666-4666-8666-666666666666";
 
 function setupMocks({
   role = "user",
@@ -76,6 +79,7 @@ function setupMocks({
   const movementsTable = fakeTable(movements, { insertError: movementError, updateError: movementError });
 
   const mockClient = {
+    rpc: vi.fn(),
     auth: {
       getUser: vi.fn().mockResolvedValue({ data: { user: { id: "user-1" } } }),
     },
@@ -95,7 +99,7 @@ function setupMocks({
   (createClient as ReturnType<typeof vi.fn>).mockResolvedValue(mockClient);
 
   const { insert, update, updateEq, updateIs } = itemsTable;
-  return { insert, update, updateEq, updateIs, movements: movementsTable };
+  return { insert, update, updateEq, updateIs, movements: movementsTable, client: mockClient };
 }
 
 function formDataOf(entries: Record<string, string>) {
@@ -277,6 +281,8 @@ describe("savePosmMovementAction", () => {
       type: "in",
       quantity: 100,
       region_id: null,
+      distributor_id: null,
+      campaign_id: null,
       notes: "Dari percetakan",
     });
   });
@@ -305,6 +311,41 @@ describe("savePosmMovementAction balance rules", () => {
     expect(result.success).toBe(true);
     expect(movements.insert).toHaveBeenCalledWith(
       expect.objectContaining({ type: "out", quantity: -20, region_id: REGION_ID })
+    );
+  });
+
+  it("links an out movement to an optional distributor and SKP", async () => {
+    const { movements } = setupMocks({ movements: stock });
+
+    const result = await savePosmMovementAction(
+      {},
+      formDataOf({ ...out("20"), distributor_id: DISTRIBUTOR_ID, campaign_id: CAMPAIGN_ID })
+    );
+
+    expect(result.success).toBe(true);
+    expect(movements.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ region_id: REGION_ID, distributor_id: DISTRIBUTOR_ID, campaign_id: CAMPAIGN_ID })
+    );
+  });
+
+  it("clears distributor and SKP on non-out movements", async () => {
+    const { movements } = setupMocks({ movements: stock });
+
+    const result = await savePosmMovementAction(
+      {},
+      formDataOf({
+        item_id: ITEM_ID,
+        movement_date: "2026-01-10",
+        type: "in",
+        quantity: "5",
+        distributor_id: DISTRIBUTOR_ID,
+        campaign_id: CAMPAIGN_ID,
+      })
+    );
+
+    expect(result.success).toBe(true);
+    expect(movements.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ distributor_id: null, campaign_id: null })
     );
   });
 
@@ -441,4 +482,33 @@ describe("editing and deleting movements", () => {
     expect(result.error).toBe("Anda tidak memiliki akses.");
     expect(movements.update).not.toHaveBeenCalled();
   });
+});
+
+describe("searchPosmCampaignsAction", () => {
+  const found = [{ id: CAMPAIGN_ID, skp_number: "SKP/2026/01/0007", name: "Promo Lebaran Jabar" }];
+
+
+  it("searches campaigns by SKP number or name for writers", async () => {
+    const { client } = setupMocks();
+    client.rpc.mockResolvedValue({ data: found, error: null });
+
+    const result = await searchPosmCampaignsAction("  0007 ");
+
+    expect(client.rpc).toHaveBeenCalledWith("search_posm_campaigns", { p_query: "0007" });
+    expect(result).toEqual({ campaigns: found });
+  });
+
+  it("skips the lookup for queries shorter than two characters", async () => {
+    const { client } = setupMocks();
+
+    expect(await searchPosmCampaignsAction("a")).toEqual({ campaigns: [] });
+    expect(client.rpc).not.toHaveBeenCalled();
+  });
+
+  it("refuses non-writers", async () => {
+    setupMocks({ role: "finance", department: null });
+
+    expect(await searchPosmCampaignsAction("0007")).toEqual({ campaigns: [], error: "Anda tidak memiliki akses." });
+  });
+
 });

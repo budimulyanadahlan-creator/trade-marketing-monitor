@@ -34,17 +34,23 @@ import { toast } from "sonner";
 import { cn, formatDate } from "@/lib/utils";
 import { POSM_MOVEMENT_LABELS, POSM_MOVEMENT_TYPES, type AdjustmentDirection } from "@/lib/posm";
 import type { PosmMovementRow, PosmMovementType } from "@/types/database";
+import { MovementDestination } from "../../movement-destination";
+import { SkpPicker } from "../../skp-picker";
 
 export type PosmMovementListRow = Pick<
   PosmMovementRow,
-  "id" | "movement_date" | "type" | "quantity" | "region_id" | "notes" | "created_at"
+  "id" | "movement_date" | "type" | "quantity" | "region_id" | "distributor_id" | "campaign_id" | "notes" | "created_at"
 > & {
   region_name: string | null;
+  distributor_name: string | null;
+  campaign_skp: string | null;
+  campaign_name: string | null;
   creator_name: string | null;
   running_balance: number;
 };
 
 type RegionOption = { id: string; name: string; is_active: boolean };
+type DistributorOption = { id: string; name: string; is_active: boolean };
 type ItemInfo = { id: string; unit: string; is_active: boolean };
 
 const TYPE_BADGE: Record<PosmMovementType, "default" | "secondary" | "warning" | "outline"> = {
@@ -69,11 +75,13 @@ function MovementDialog({
   item,
   movement,
   regions,
+  distributors,
   trigger,
 }: {
   item: ItemInfo;
   movement: PosmMovementListRow | null;
   regions: RegionOption[];
+  distributors: DistributorOption[];
   trigger: React.ReactNode;
 }) {
   const isEdit = movement !== null;
@@ -94,6 +102,7 @@ function MovementDialog({
   const defaultDirection: AdjustmentDirection = movement && movement.quantity < 0 ? "minus" : "plus";
   // Region nonaktif tetap ditampilkan jika sedang dipakai mutasi ini.
   const regionOptions = regions.filter((r) => r.is_active || r.id === movement?.region_id);
+  const distributorOptions = distributors.filter((d) => d.is_active || d.id === movement?.distributor_id);
 
   return (
     <Dialog
@@ -191,6 +200,43 @@ function MovementDialog({
             )}
           </div>
 
+          {type === "out" && (
+            <>
+              <div className="space-y-1.5">
+                <Label htmlFor="mv-distributor">Distributor (opsional)</Label>
+                <Select
+                  id="mv-distributor"
+                  name="distributor_id"
+                  defaultValue={movement?.distributor_id ?? ""}
+                  disabled={isPending}
+                >
+                  <option value="">Tanpa distributor</option>
+                  {distributorOptions.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>SKP Terkait (opsional)</Label>
+                <SkpPicker
+                  name="campaign_id"
+                  defaultValue={
+                    movement?.campaign_id
+                      ? {
+                          id: movement.campaign_id,
+                          skp_number: movement.campaign_skp,
+                          name: movement.campaign_name ?? "",
+                        }
+                      : null
+                  }
+                  disabled={isPending}
+                />
+              </div>
+            </>
+          )}
+
           <div className="space-y-1.5">
             <Label htmlFor="mv-notes">{type === "adjustment" ? "Alasan" : "Keterangan (opsional)"}</Label>
             <Textarea
@@ -287,11 +333,13 @@ export function PosmMovementsPanel({
   item,
   movements,
   regions,
+  distributors,
   canManage,
 }: {
   item: ItemInfo;
   movements: PosmMovementListRow[];
   regions: RegionOption[];
+  distributors: DistributorOption[];
   canManage: boolean;
 }) {
   const colSpan = canManage ? 8 : 7;
@@ -306,6 +354,7 @@ export function PosmMovementsPanel({
               item={item}
               movement={null}
               regions={regions}
+              distributors={distributors}
               trigger={
                 <Button size="sm">
                   <Plus className="h-4 w-4" />
@@ -326,7 +375,7 @@ export function PosmMovementsPanel({
               <TableHead>Tipe</TableHead>
               <TableHead className="text-right">Qty</TableHead>
               <TableHead className="text-right">Saldo</TableHead>
-              <TableHead>Region</TableHead>
+              <TableHead>Tujuan</TableHead>
               <TableHead>Keterangan</TableHead>
               <TableHead>Dicatat Oleh</TableHead>
               {canManage && <TableHead className="text-right">Aksi</TableHead>}
@@ -351,7 +400,14 @@ export function PosmMovementsPanel({
                   <TableCell className="text-right tabular-nums text-slate-100">
                     {m.running_balance.toLocaleString("id-ID")}
                   </TableCell>
-                  <TableCell className="text-slate-400">{m.region_name ?? "—"}</TableCell>
+                  <TableCell>
+                    <MovementDestination
+                      regionName={m.region_name}
+                      distributorName={m.distributor_name}
+                      campaignSkp={m.campaign_skp}
+                      campaignName={m.campaign_name}
+                    />
+                  </TableCell>
                   <TableCell className="max-w-xs text-slate-400">{m.notes ?? "—"}</TableCell>
                   <TableCell className="text-slate-500">{m.creator_name ?? "—"}</TableCell>
                   {canManage && (
@@ -361,6 +417,7 @@ export function PosmMovementsPanel({
                           item={item}
                           movement={m}
                           regions={regions}
+                          distributors={distributors}
                           trigger={
                             <Button variant="outline" size="sm">
                               <Pencil className="h-3 w-3" />

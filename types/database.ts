@@ -936,6 +936,14 @@ export type Database = {
         Args: Record<string, never>;
         Returns: boolean;
       };
+      search_posm_campaigns: {
+        Args: { p_query: string };
+        Returns: { id: string; skp_number: string | null; name: string }[];
+      };
+      posm_campaign_refs: {
+        Args: { p_ids: string[] };
+        Returns: { id: string; skp_number: string | null; name: string }[];
+      };
       increment_skp_counter: {
         Args: { p_year: number; p_month: number };
         Returns: number;

@@ -4,7 +4,9 @@ import {
   balanceOf,
   canManagePosm,
   findBalanceViolation,
+  movementFiltersQuery,
   nextCode,
+  parseMovementFilters,
   withRunningBalance,
   signedQuantity,
   stockStatus,
@@ -165,5 +167,39 @@ describe("withRunningBalance", () => {
       ["b", 120],
       ["c", 90],
     ]);
+  });
+});
+
+describe("parseMovementFilters", () => {
+  const UUID = "44444444-4444-4444-8444-444444444444";
+
+  it("keeps valid filters and defaults to page 1", () => {
+    expect(
+      parseMovementFilters({
+        from: "2026-01-01",
+        to: "2026-03-31",
+        type: "out",
+        item: UUID,
+        region: UUID,
+        distributor: UUID,
+      })
+    ).toEqual({ from: "2026-01-01", to: "2026-03-31", type: "out", item: UUID, region: UUID, distributor: UUID, page: 1 });
+  });
+
+  it("drops malformed values instead of failing the query", () => {
+    expect(
+      parseMovementFilters({ from: "kemarin", type: "transfer", item: "abc", region: ["x", "y"], page: "-3" })
+    ).toEqual({ page: 1 });
+  });
+
+  it("reads the page number", () => {
+    expect(parseMovementFilters({ page: "4" })).toEqual({ page: 4 });
+  });
+});
+
+describe("movementFiltersQuery", () => {
+  it("serialises filters, omitting page 1 and empty values", () => {
+    expect(movementFiltersQuery({ type: "out", region: "r1", page: 1 })).toBe("type=out&region=r1");
+    expect(movementFiltersQuery({ from: "2026-01-01", page: 3 })).toBe("from=2026-01-01&page=3");
   });
 });

@@ -196,6 +196,8 @@ const movementSchema = z
       .positive("Qty harus lebih dari 0"),
     direction: z.enum(["plus", "minus"]).optional(),
     region_id: z.string().uuid("Region tidak valid").optional(),
+    distributor_id: z.string().uuid("Distributor tidak valid").optional(),
+    campaign_id: z.string().uuid("SKP tidak valid").optional(),
     notes: z.string().trim().optional(),
   })
   .superRefine((v, ctx) => {
@@ -229,6 +231,8 @@ export async function savePosmMovementAction(
       quantity: optionalText(formData.get("quantity")),
       direction: optionalText(formData.get("direction")),
       region_id: optionalText(formData.get("region_id")),
+      distributor_id: optionalText(formData.get("distributor_id")),
+      campaign_id: optionalText(formData.get("campaign_id")),
       notes: optionalText(formData.get("notes")),
     });
 
@@ -236,7 +240,8 @@ export async function savePosmMovementAction(
       return { error: parsed.error.issues[0]?.message ?? "Input tidak valid" };
     }
 
-    const { id, item_id, movement_date, type, quantity, direction, region_id, notes } = parsed.data;
+    const { id, item_id, movement_date, type, quantity, direction, region_id, distributor_id, campaign_id, notes } =
+      parsed.data;
     const signed = signedQuantity(type, quantity, direction);
 
     const { data: item } = await supabase
@@ -269,7 +274,10 @@ export async function savePosmMovementAction(
       movement_date,
       type,
       quantity: signed,
+      // Tujuan (region wajib, distributor & SKP opsional) hanya untuk Keluar.
       region_id: type === "out" ? region_id! : null,
+      distributor_id: type === "out" ? (distributor_id ?? null) : null,
+      campaign_id: type === "out" ? (campaign_id ?? null) : null,
       notes: notes ?? null,
     };
 
@@ -340,5 +348,29 @@ export async function deletePosmMovementAction(id: string): Promise<{ error?: st
     return {};
   } catch {
     return { error: FORBIDDEN };
+  }
+}
+
+// ============================================================
+// PENCARIAN SKP (mutasi Keluar)
+// ============================================================
+
+export type PosmCampaignOption = { id: string; skp_number: string | null; name: string };
+
+// Lewat fungsi database search_posm_campaigns (migrasi 045) karena RLS
+// campaigns membatasi user Marketing hanya melihat SKP miliknya sendiri.
+export async function searchPosmCampaignsAction(
+  query: string
+): Promise<{ campaigns: PosmCampaignOption[]; error?: string }> {
+  const q = query.trim();
+  try {
+    const { supabase } = await requirePosmWriter();
+    if (q.length < 2) return { campaigns: [] };
+
+    const { data, error } = await supabase.rpc("search_posm_campaigns", { p_query: q });
+    if (error) return { campaigns: [], error: error.message };
+    return { campaigns: data ?? [] };
+  } catch {
+    return { campaigns: [], error: FORBIDDEN };
   }
 }

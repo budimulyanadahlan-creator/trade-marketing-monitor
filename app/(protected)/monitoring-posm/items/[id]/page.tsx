@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { balanceOf, stockStatus, withRunningBalance } from "@/lib/posm";
+import { withCampaignRefs } from "../../campaign-refs";
 import { StockStatusBadge } from "../../stock-status-badge";
 import { requirePosmViewer } from "../../viewer";
 import { PosmMovementsPanel, type PosmMovementListRow } from "./posm-movements-panel";
@@ -11,7 +12,7 @@ export default async function PosmItemDetailPage({ params }: { params: Promise<{
   const { id } = await params;
   const { supabase, canManage } = await requirePosmViewer();
 
-  const [{ data: item }, { data: movements }, { data: regions }] = await Promise.all([
+  const [{ data: item }, { data: movements }, { data: regions }, { data: distributors }] = await Promise.all([
     supabase
       .from("posm_items")
       .select("id, code, name, category, unit, min_stock, is_active, brand:brands(name)")
@@ -21,19 +22,22 @@ export default async function PosmItemDetailPage({ params }: { params: Promise<{
     supabase
       .from("posm_movements")
       .select(
-        "id, movement_date, type, quantity, region_id, notes, created_at, region:regions(name), creator:created_by(full_name)"
+        "id, movement_date, type, quantity, region_id, distributor_id, campaign_id, notes, created_at, region:regions(name), distributor:distributors(name), creator:created_by(full_name)"
       )
       .eq("item_id", id)
       .is("deleted_at", null),
     supabase.from("regions").select("id, name, is_active").order("name"),
+    supabase.from("distributors").select("id, name, is_active").order("name"),
   ]);
 
   if (!item) notFound();
 
+  const linked = await withCampaignRefs(supabase, movements ?? []);
   const rows: PosmMovementListRow[] = withRunningBalance(
-    (movements ?? []).map(({ region, creator, ...m }) => ({
+    linked.map(({ region, distributor, creator, ...m }) => ({
       ...m,
       region_name: (region as { name: string } | null)?.name ?? null,
+      distributor_name: (distributor as { name: string } | null)?.name ?? null,
       creator_name: (creator as { full_name: string } | null)?.full_name ?? null,
     }))
   ).reverse();
@@ -79,6 +83,7 @@ export default async function PosmItemDetailPage({ params }: { params: Promise<{
         item={{ id: item.id, unit: item.unit, is_active: item.is_active }}
         movements={rows}
         regions={regions ?? []}
+        distributors={distributors ?? []}
         canManage={canManage}
       />
     </div>
