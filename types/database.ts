@@ -317,6 +317,32 @@ export type PosmItemRow = {
   deleted_at: string | null;
 };
 
+export type PosmMovementType = "opening" | "in" | "out" | "adjustment";
+
+export type PosmMovementRow = {
+  id: string;
+  item_id: string;
+  movement_date: string;
+  type: PosmMovementType;
+  quantity: number;
+  region_id: string | null;
+  distributor_id: string | null;
+  campaign_id: string | null;
+  notes: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+};
+
+export type PosmStockBalanceRow = {
+  item_id: string;
+  balance: number;
+  last_movement_date: string | null;
+  movement_count_all: number;
+};
+
 export type PosmAuditAction = "insert" | "update" | "soft_delete";
 
 export type PosmAuditLogRow = {
@@ -608,6 +634,13 @@ export type Database = {
             isOneToOne: false;
             referencedRelation: "campaigns";
             referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "realizations_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "users";
+            referencedColumns: ["id"];
           }
         ];
       };
@@ -825,6 +858,62 @@ export type Database = {
           }
         ];
       };
+      posm_movements: {
+        Row: PosmMovementRow;
+        Insert: {
+          id?: string;
+          item_id: string;
+          movement_date: string;
+          type: PosmMovementType;
+          quantity: number;
+          region_id?: string | null;
+          distributor_id?: string | null;
+          campaign_id?: string | null;
+          notes?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: Partial<Omit<PosmMovementRow, "id" | "item_id" | "created_at" | "created_by">>;
+        Relationships: [
+          {
+            foreignKeyName: "posm_movements_item_id_fkey";
+            columns: ["item_id"];
+            isOneToOne: false;
+            referencedRelation: "posm_items";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "posm_movements_region_id_fkey";
+            columns: ["region_id"];
+            isOneToOne: false;
+            referencedRelation: "regions";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "posm_movements_distributor_id_fkey";
+            columns: ["distributor_id"];
+            isOneToOne: false;
+            referencedRelation: "distributors";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "posm_movements_campaign_id_fkey";
+            columns: ["campaign_id"];
+            isOneToOne: false;
+            referencedRelation: "campaigns";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "posm_movements_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "users";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
       posm_audit_log: {
         Row: PosmAuditLogRow;
         Insert: never;
@@ -832,7 +921,12 @@ export type Database = {
         Relationships: [];
       };
     };
-    Views: Record<string, never>;
+    Views: {
+      posm_stock_balances: {
+        Row: PosmStockBalanceRow;
+        Relationships: [];
+      };
+    };
     Functions: {
       can_manage_posm: {
         Args: Record<string, never>;

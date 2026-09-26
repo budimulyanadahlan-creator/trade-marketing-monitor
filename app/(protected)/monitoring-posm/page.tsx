@@ -1,10 +1,10 @@
-import { redirect } from "next/navigation";
 import { Boxes } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
-import { canManagePosm, nextCode, POSM_CODE_PREFIX } from "@/lib/posm";
-import type { UserRole } from "@/types/database";
+import { nextCode, POSM_CODE_PREFIX, stockStatus } from "@/lib/posm";
+import { KpiCard } from "@/components/dashboard/kpi-card";
 import { MonitoringPosmTabs, type MonitoringPosmTab } from "./monitoring-posm-tabs";
 import { PosmItemsTable, type PosmItemListRow } from "./posm-items-table";
+import { requirePosmViewer } from "./viewer";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
@@ -18,27 +18,7 @@ export default async function MonitoringPosmPage({
 }: {
   searchParams: SearchParams;
 }) {
-  const supabase = await createClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) redirect("/login");
-
-  const { data: profile } = await supabase
-    .from("users")
-    .select("role, department:departments(name)")
-    .eq("id", user.id)
-    .single();
-
-  if (!profile) redirect("/login");
-  if (profile.role === "distributor") redirect("/campaigns");
-
-  const canManage = canManagePosm({
-    role: profile.role as UserRole,
-    departmentName: (profile.department as { name: string } | null)?.name,
-  });
+  const { canManage } = await requirePosmViewer();
 
   const tab = resolveTab((await searchParams).tab);
 
@@ -69,26 +49,47 @@ export default async function MonitoringPosmPage({
 async function PosmTab({ canManage }: { canManage: boolean }) {
   const supabase = await createClient();
 
-  const [{ data: items }, { data: brands }] = await Promise.all([
+  const [{ data: items }, { data: brands }, { data: balances }] = await Promise.all([
     supabase
       .from("posm_items")
       .select("id, code, name, brand_id, category, unit, min_stock, is_active, brand:brands(name)")
       .is("deleted_at", null)
       .order("code"),
     supabase.from("brands").select("id, name, is_active").order("name"),
+    supabase.from("posm_stock_balances").select("item_id, balance, last_movement_date, movement_count_all"),
   ]);
 
-  const rows: PosmItemListRow[] = (items ?? []).map(({ brand, ...item }) => ({
-    ...item,
-    brand_name: (brand as { name: string } | null)?.name ?? null,
-  }));
+  const balanceByItem = new Map((balances ?? []).map((b) => [b.item_id, b]));
+
+  const rows: PosmItemListRow[] = (items ?? []).map(({ brand, ...item }) => {
+    const b = balanceByItem.get(item.id);
+    const balance = b?.balance ?? 0;
+    return {
+      ...item,
+      brand_name: (brand as { name: string } | null)?.name ?? null,
+      balance,
+      stock_status: stockStatus(balance, item.min_stock),
+      last_movement_date: b?.last_movement_date ?? null,
+      has_movements: (b?.movement_count_all ?? 0) > 0,
+    };
+  });
+
+  const active = rows.filter((r) => r.is_active);
 
   return (
-    <PosmItemsTable
-      items={rows}
-      brands={brands ?? []}
-      canManage={canManage}
-      suggestedCode={nextCode(POSM_CODE_PREFIX, rows.map((r) => r.code))}
-    />
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <KpiCard label="Item Aktif" value={active.length} type="count" />
+        <KpiCard label="Stok Menipis" value={active.filter((r) => r.stock_status === "menipis").length} type="count" />
+        <KpiCard label="Stok Habis" value={active.filter((r) => r.stock_status === "habis").length} type="count" />
+      </div>
+
+      <PosmItemsTable
+        items={rows}
+        brands={brands ?? []}
+        canManage={canManage}
+        suggestedCode={nextCode(POSM_CODE_PREFIX, rows.map((r) => r.code))}
+      />
+    </div>
   );
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState, useMemo, useState, useTransition } from "react";
 import {
   deletePosmItemAction,
@@ -32,13 +33,21 @@ import {
 import { AlertCircle, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { filterBySearch } from "@/lib/search";
-import { POSM_CATEGORIES, POSM_UNITS } from "@/lib/posm";
+import { POSM_CATEGORIES, POSM_UNITS, type PosmStockStatus } from "@/lib/posm";
+import { formatDate } from "@/lib/utils";
+import { STOCK_STATUS_LABELS, StockStatusBadge } from "./stock-status-badge";
 import type { PosmItemRow } from "@/types/database";
 
 export type PosmItemListRow = Pick<
   PosmItemRow,
   "id" | "code" | "name" | "brand_id" | "category" | "unit" | "min_stock" | "is_active"
-> & { brand_name: string | null };
+> & {
+  brand_name: string | null;
+  balance: number;
+  stock_status: PosmStockStatus;
+  last_movement_date: string | null;
+  has_movements: boolean;
+};
 
 type BrandOption = { id: string; name: string; is_active: boolean };
 
@@ -287,16 +296,18 @@ export function PosmItemsTable({
   const [brandFilter, setBrandFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("active");
+  const [stockFilter, setStockFilter] = useState<PosmStockStatus | "">("");
 
   const filtered = useMemo(() => {
     const byFilters = items.filter(
       (item) =>
         (!brandFilter || item.brand_id === brandFilter) &&
         (!categoryFilter || item.category === categoryFilter) &&
+        (!stockFilter || item.stock_status === stockFilter) &&
         (statusFilter === "all" || item.is_active === (statusFilter === "active"))
     );
     return filterBySearch(byFilters, query, (i) => [i.code, i.name, i.brand_name]);
-  }, [items, query, brandFilter, categoryFilter, statusFilter]);
+  }, [items, query, brandFilter, categoryFilter, stockFilter, statusFilter]);
 
   // Hanya brand yang dipakai item yang relevan sebagai filter.
   const usedBrands = useMemo(() => {
@@ -304,8 +315,9 @@ export function PosmItemsTable({
     return brands.filter((b) => used.has(b.id));
   }, [items, brands]);
 
-  const hasFilter = query.trim() !== "" || brandFilter !== "" || categoryFilter !== "" || statusFilter !== "active";
-  const colSpan = canManage ? 8 : 7;
+  const hasFilter =
+    query.trim() !== "" || brandFilter !== "" || categoryFilter !== "" || stockFilter !== "" || statusFilter !== "active";
+  const colSpan = canManage ? 11 : 10;
 
   return (
     <div className="space-y-4">
@@ -345,6 +357,19 @@ export function PosmItemsTable({
             ))}
           </Select>
           <Select
+            aria-label="Filter stok"
+            value={stockFilter}
+            onChange={(e) => setStockFilter(e.target.value as PosmStockStatus | "")}
+            className="h-9 w-36"
+          >
+            <option value="">Semua stok</option>
+            {(Object.keys(STOCK_STATUS_LABELS) as PosmStockStatus[]).map((s) => (
+              <option key={s} value={s}>
+                {STOCK_STATUS_LABELS[s]}
+              </option>
+            ))}
+          </Select>
+          <Select
             aria-label="Filter status"
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
@@ -379,7 +404,10 @@ export function PosmItemsTable({
               <TableHead>Brand</TableHead>
               <TableHead>Kategori</TableHead>
               <TableHead>Satuan</TableHead>
+              <TableHead className="text-right">Saldo</TableHead>
               <TableHead className="text-right">Stok Min.</TableHead>
+              <TableHead>Stok</TableHead>
+              <TableHead>Terakhir Diperbarui</TableHead>
               <TableHead>Status</TableHead>
               {canManage && <TableHead className="text-right">Aksi</TableHead>}
             </TableRow>
@@ -391,12 +419,32 @@ export function PosmItemsTable({
                   <TableCell>
                     <code className="rounded bg-white/5 px-2 py-0.5 text-xs text-slate-300">{item.code}</code>
                   </TableCell>
-                  <TableCell className="font-medium">{item.name}</TableCell>
+                  <TableCell className="font-medium">
+                    <Link
+                      href={`/monitoring-posm/items/${item.id}`}
+                      className="hover:text-emerald-300 hover:underline underline-offset-4"
+                    >
+                      {item.name}
+                    </Link>
+                  </TableCell>
                   <TableCell className="text-slate-400">{item.brand_name ?? "—"}</TableCell>
                   <TableCell className="text-slate-300">{item.category}</TableCell>
                   <TableCell className="text-slate-400">{item.unit}</TableCell>
-                  <TableCell className="text-right text-slate-300">
+                  <TableCell className="text-right font-medium tabular-nums text-slate-100">
+                    {item.balance.toLocaleString("id-ID")}
+                  </TableCell>
+                  <TableCell className="text-right text-slate-300 tabular-nums">
                     {item.min_stock ?? <span className="text-slate-600">—</span>}
+                  </TableCell>
+                  <TableCell>
+                    <StockStatusBadge status={item.stock_status} />
+                  </TableCell>
+                  <TableCell className="text-slate-400 whitespace-nowrap">
+                    {item.last_movement_date ? (
+                      formatDate(item.last_movement_date)
+                    ) : (
+                      <span className="text-slate-600">Belum ada mutasi</span>
+                    )}
                   </TableCell>
                   <TableCell>
                     <Badge variant={item.is_active ? "default" : "outline"}>
@@ -418,7 +466,10 @@ export function PosmItemsTable({
                           }
                         />
                         <ToggleActiveButton id={item.id} isActive={item.is_active} />
-                        <DeleteButton id={item.id} label={`${item.code} — ${item.name}`} />
+                        {/* Item yang sudah punya mutasi hanya bisa dinonaktifkan. */}
+                        {!item.has_movements && (
+                          <DeleteButton id={item.id} label={`${item.code} — ${item.name}`} />
+                        )}
                       </div>
                     </TableCell>
                   )}
