@@ -11,6 +11,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
+import { SearchInput } from "@/components/ui/search-input";
 import {
   Dialog,
   DialogContent,
@@ -22,6 +23,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Plus, ExternalLink, Pencil, CheckSquare, Download, Trash2, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate, formatIDR } from "@/lib/utils";
+import { filterBySearch } from "@/lib/search";
 import { getStatusConfig } from "@/lib/campaign-status";
 import { BudgetProgress } from "@/components/budget-progress";
 import { CampaignFormModal } from "./campaign-form-modal";
@@ -84,6 +86,7 @@ export function CampaignsClient({
   const [editingCampaign, setEditingCampaign] = useState<CampaignWithJoins | null>(null);
   const [editingCampaignFiles, setEditingCampaignFiles] = useState<CampaignFileRow[]>([]);
   const [onlyChecklistReady, setOnlyChecklistReady] = useState(false);
+  const [query, setQuery] = useState("");
 
   const [checklistCampaign, setChecklistCampaign] = useState<CampaignWithJoins | null>(null);
   const [checklistNotes, setChecklistNotes] = useState("");
@@ -110,10 +113,20 @@ export function CampaignsClient({
     return !!status && status.required > 0 && status.fulfilled >= status.required;
   }
 
-  const visibleCampaigns =
+  const checklistFilteredCampaigns =
     canSeeChecklistReadiness && onlyChecklistReady
       ? campaigns.filter((c) => c.status === "approved" && isChecklistReady(c.id))
       : campaigns;
+  const visibleCampaigns = filterBySearch(checklistFilteredCampaigns, query, (c) => [
+    c.skp_number,
+    c.name,
+    c.brand?.name,
+    c.department?.name,
+    c.region?.name,
+    c.distributor?.name,
+    c.vendor?.name,
+    getStatusConfig(c.status).label,
+  ]);
 
   function canAdminDelete(status: CampaignStatus): boolean {
     if (userRole === "superadmin") return true;
@@ -177,14 +190,20 @@ export function CampaignsClient({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold text-slate-100">SKP</h1>
           <p className="text-slate-400 text-sm mt-0.5">
             {visibleCampaigns.length} SKP ditemukan
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap justify-end">
+          <SearchInput
+            value={query}
+            onChange={setQuery}
+            placeholder="Cari no. SKP, nama, brand, status..."
+            className="w-72"
+          />
           {canSeeChecklistReadiness && (
             <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer select-none">
               <input
@@ -403,7 +422,9 @@ export function CampaignsClient({
                   colSpan={isDistributor ? 11 : 10}
                   className="text-center py-16 text-slate-500"
                 >
-                  {onlyChecklistReady
+                  {query.trim()
+                    ? `Tidak ada SKP yang cocok dengan "${query.trim()}".`
+                    : onlyChecklistReady
                     ? "Tidak ada SKP approved dengan checklist yang sudah lengkap."
                     : 'Belum ada SKP. Klik "SKP Baru" untuk memulai.'}
                 </TableCell>
