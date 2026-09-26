@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRightLeft, Boxes } from "lucide-react";
+import { ArrowRightLeft, Boxes, Table2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/server";
 import { nextCode, POSM_CODE_PREFIX, stockStatus } from "@/lib/posm";
@@ -86,7 +86,13 @@ async function PosmTab({ canManage }: { canManage: boolean }) {
         <KpiCard label="Stok Habis" value={active.filter((r) => r.stock_status === "habis").length} type="count" />
       </div>
 
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <Button asChild variant="outline" size="sm">
+          <Link href="/monitoring-posm/rekap">
+            <Table2 className="h-4 w-4" />
+            Rekap Keluar per Region
+          </Link>
+        </Button>
         <Button asChild variant="outline" size="sm">
           <Link href="/monitoring-posm/movements">
             <ArrowRightLeft className="h-4 w-4" />

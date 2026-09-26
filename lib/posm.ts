@@ -210,3 +210,137 @@ export function movementFiltersQuery(filters: Partial<PosmMovementFilters>): str
   if (filters.page && filters.page > 1) params.set("page", String(filters.page));
   return params.toString();
 }
+
+// ============================================================
+// REKAP POSM KELUAR PER REGION PER BULAN
+// ============================================================
+
+export type RekapMovement = {
+  item_id: string;
+  item_code: string;
+  item_name: string;
+  unit: string;
+  region_id: string | null;
+  region_name: string | null;
+  movement_date: string;
+  type: PosmMovementType;
+  quantity: number;
+};
+
+export type RekapRow = {
+  item_id: string;
+  item_code: string;
+  item_name: string;
+  unit: string;
+  region_id: string | null;
+  region_name: string | null;
+  /** Total qty keluar per bulan, sejajar dengan `months`. */
+  months: number[];
+  total: number;
+};
+
+export type OutRekap = { rows: RekapRow[]; monthTotals: number[]; grandTotal: number };
+
+/**
+ * Matriks item × region × bulan dari mutasi Keluar (nilai absolut). Tipe
+ * lain dan mutasi di luar `months` (format `YYYY-MM`) diabaikan. Hanya
+ * kombinasi item-region yang punya pengiriman yang menjadi baris.
+ */
+export function aggregateOutRekap(movements: RekapMovement[], months: string[]): OutRekap {
+  const monthIndex = new Map(months.map((m, i) => [m, i]));
+  const rows = new Map<string, RekapRow>();
+
+  for (const m of movements) {
+    if (m.type !== "out") continue;
+    const i = monthIndex.get(m.movement_date.slice(0, 7));
+    if (i === undefined) continue;
+
+    const key = `${m.item_id}|${m.region_id ?? ""}`;
+    let row = rows.get(key);
+    if (!row) {
+      row = {
+        item_id: m.item_id,
+        item_code: m.item_code,
+        item_name: m.item_name,
+        unit: m.unit,
+        region_id: m.region_id,
+        region_name: m.region_name,
+        months: months.map(() => 0),
+        total: 0,
+      };
+      rows.set(key, row);
+    }
+    const qty = Math.abs(m.quantity);
+    row.months[i] += qty;
+    row.total += qty;
+  }
+
+  const sorted = [...rows.values()].sort(
+    (a, b) =>
+      a.item_code.localeCompare(b.item_code) || (a.region_name ?? "").localeCompare(b.region_name ?? "")
+  );
+  const monthTotals = months.map((_, i) => sorted.reduce((sum, r) => sum + r.months[i], 0));
+  return { rows: sorted, monthTotals, grandTotal: monthTotals.reduce((a, b) => a + b, 0) };
+}
+
+// Filter rekap (query string): rentang bulan `YYYY-MM`, item, dan brand.
+
+export const REKAP_DEFAULT_MONTHS = 6;
+export const REKAP_MAX_MONTHS = 24;
+
+export type RekapFilters = { from: string; to: string; item?: string; brand?: string };
+
+const YEAR_MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+function toMonthIndex(month: string): number {
+  const [y, m] = month.split("-").map(Number);
+  return y * 12 + (m - 1);
+}
+
+function fromMonthIndex(index: number): string {
+  return `${Math.floor(index / 12)}-${String((index % 12) + 1).padStart(2, "0")}`;
+}
+
+/** Semua bulan dari `from` sampai `to` (inklusif). */
+export function monthRange(from: string, to: string): string[] {
+  const months: string[] = [];
+  for (let i = toMonthIndex(from); i <= toMonthIndex(to); i++) months.push(fromMonthIndex(i));
+  return months;
+}
+
+/** Tanggal pertama dan terakhir rentang bulan, untuk filter movement_date. */
+export function monthDateBounds(from: string, to: string): { start: string; end: string } {
+  const [y, m] = to.split("-").map(Number);
+  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return { start: `${from}-01`, end: `${to}-${String(lastDay).padStart(2, "0")}` };
+}
+
+/**
+ * Default 6 bulan terakhir termasuk bulan `today`. Rentang terbalik ditukar,
+ * dan rentang lebih dari 24 bulan dipotong dari bulan akhir ke belakang.
+ */
+export function parseRekapFilters(
+  params: Record<string, string | string[] | undefined>,
+  today: string
+): RekapFilters {
+  const one = (key: string, pattern: RegExp) => {
+    const v = params[key];
+    return typeof v === "string" && pattern.test(v.trim()) ? v.trim() : undefined;
+  };
+
+  const current = today.slice(0, 7);
+  let from = one("from", YEAR_MONTH);
+  let to = one("to", YEAR_MONTH);
+  if (!from && !to) {
+    to = current;
+    from = fromMonthIndex(toMonthIndex(current) - (REKAP_DEFAULT_MONTHS - 1));
+  }
+  from ??= to!;
+  to ??= from;
+  if (from > to) [from, to] = [to, from];
+  const earliest = toMonthIndex(to) - (REKAP_MAX_MONTHS - 1);
+  if (toMonthIndex(from) < earliest) from = fromMonthIndex(earliest);
+
+  const filters: RekapFilters = { from, to, item: one("item", UUID), brand: one("brand", UUID) };
+  return Object.fromEntries(Object.entries(filters).filter(([, v]) => v !== undefined)) as RekapFilters;
+}

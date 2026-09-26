@@ -1,12 +1,16 @@
 import { describe, it, expect } from "vitest";
 import {
+  aggregateOutRekap,
   availableFrom,
   balanceOf,
   canManagePosm,
   findBalanceViolation,
+  monthDateBounds,
+  monthRange,
   movementFiltersQuery,
   nextCode,
   parseMovementFilters,
+  parseRekapFilters,
   withRunningBalance,
   signedQuantity,
   stockStatus,
@@ -201,5 +205,95 @@ describe("movementFiltersQuery", () => {
   it("serialises filters, omitting page 1 and empty values", () => {
     expect(movementFiltersQuery({ type: "out", region: "r1", page: 1 })).toBe("type=out&region=r1");
     expect(movementFiltersQuery({ from: "2026-01-01", page: 3 })).toBe("from=2026-01-01&page=3");
+  });
+});
+
+describe("aggregateOutRekap", () => {
+  const months = ["2026-01", "2026-02", "2026-03"];
+  const out = (item_code: string, region_name: string, movement_date: string, quantity: number, type = "out") => ({
+    item_id: item_code,
+    item_code,
+    item_name: `Item ${item_code}`,
+    unit: "pcs",
+    region_id: region_name,
+    region_name,
+    movement_date,
+    type: type as "opening" | "in" | "out" | "adjustment",
+    quantity,
+  });
+
+  it("sums absolute out quantities per item × region × month with row, column and grand totals", () => {
+    const rekap = aggregateOutRekap(
+      [
+        out("P1", "Jawa", "2026-01-05", -10),
+        out("P1", "Jawa", "2026-01-20", -5),
+        out("P1", "Jawa", "2026-03-01", -7),
+        out("P1", "Bali", "2026-02-10", -3),
+      ],
+      months
+    );
+
+    expect(rekap.rows.map((r) => [r.item_code, r.region_name, r.months, r.total])).toEqual([
+      ["P1", "Bali", [0, 3, 0], 3],
+      ["P1", "Jawa", [15, 0, 7], 22],
+    ]);
+    expect(rekap.monthTotals).toEqual([15, 3, 7]);
+    expect(rekap.grandTotal).toBe(25);
+  });
+
+  it("ignores opening, in and adjustment movements, and months outside the range", () => {
+    const rekap = aggregateOutRekap(
+      [
+        out("P1", "Jawa", "2026-01-01", 100, "opening"),
+        out("P1", "Jawa", "2026-01-02", 50, "in"),
+        out("P1", "Jawa", "2026-01-03", -4, "adjustment"),
+        out("P1", "Jawa", "2025-12-31", -9),
+        out("P1", "Jawa", "2026-04-01", -9),
+      ],
+      months
+    );
+
+    expect(rekap).toEqual({ rows: [], monthTotals: [0, 0, 0], grandTotal: 0 });
+  });
+});
+
+describe("parseRekapFilters", () => {
+  const UUID = "44444444-4444-4444-8444-444444444444";
+  const today = "2026-09-27";
+
+  it("defaults to the last 6 months including the current month", () => {
+    expect(parseRekapFilters({}, today)).toEqual({ from: "2026-04", to: "2026-09" });
+  });
+
+  it("keeps valid months and item/brand filters", () => {
+    expect(parseRekapFilters({ from: "2026-01", to: "2026-03", item: UUID, brand: UUID }, today)).toEqual({
+      from: "2026-01",
+      to: "2026-03",
+      item: UUID,
+      brand: UUID,
+    });
+  });
+
+  it("swaps a reversed range and drops malformed values", () => {
+    expect(parseRekapFilters({ from: "2026-05", to: "2026-02", item: "abc", brand: ["x"] }, today)).toEqual({
+      from: "2026-02",
+      to: "2026-05",
+    });
+    expect(parseRekapFilters({ from: "2026-13", to: "Mei" }, today)).toEqual({ from: "2026-04", to: "2026-09" });
+  });
+
+  it("caps the range at 24 months counted back from the end month", () => {
+    expect(parseRekapFilters({ from: "2020-01", to: "2026-09" }, today)).toEqual({ from: "2024-10", to: "2026-09" });
+  });
+});
+
+describe("monthRange", () => {
+  it("lists months inclusively across a year boundary", () => {
+    expect(monthRange("2025-11", "2026-02")).toEqual(["2025-11", "2025-12", "2026-01", "2026-02"]);
+  });
+
+  it("gives the first and last day for the date filter", () => {
+    expect(monthDateBounds("2026-01", "2026-02")).toEqual({ start: "2026-01-01", end: "2026-02-28" });
+    expect(monthDateBounds("2024-02", "2024-02")).toEqual({ start: "2024-02-01", end: "2024-02-29" });
   });
 });
