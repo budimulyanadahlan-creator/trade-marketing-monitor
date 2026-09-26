@@ -9,6 +9,7 @@ import {
   monthRange,
   movementFiltersQuery,
   nextCode,
+  summarizeAssets,
   parseMovementFilters,
   parseRekapFilters,
   withRunningBalance,
@@ -295,5 +296,40 @@ describe("monthRange", () => {
   it("gives the first and last day for the date filter", () => {
     expect(monthDateBounds("2026-01", "2026-02")).toEqual({ start: "2026-01-01", end: "2026-02-28" });
     expect(monthDateBounds("2024-02", "2024-02")).toEqual({ start: "2024-02-01", end: "2024-02-29" });
+  });
+});
+
+describe("summarizeAssets", () => {
+  const asset = (acquisition_value: number, condition: string, destination: "warehouse" | "placed") => ({
+    acquisition_value,
+    condition: condition as "Baik",
+    destination,
+  });
+
+  it("counts units, totals acquisition value, and splits by condition and location", () => {
+    const summary = summarizeAssets([
+      asset(5_000_000, "Baik", "placed"),
+      asset(2_500_000, "Baik", "warehouse"),
+      asset(1_000_000, "Rusak Ringan", "placed"),
+    ]);
+
+    expect(summary.totalUnits).toBe(3);
+    expect(summary.totalValue).toBe(8_500_000);
+    expect(summary.byCondition).toEqual({
+      Baik: 2,
+      "Rusak Ringan": 1,
+      "Rusak Berat": 0,
+      Hilang: 0,
+      Dihapusbukukan: 0,
+    });
+    expect(summary.inWarehouse).toBe(1);
+    expect(summary.placed).toBe(2);
+  });
+
+  it("returns zeros for no assets", () => {
+    const summary = summarizeAssets([]);
+    expect(summary.totalUnits).toBe(0);
+    expect(summary.totalValue).toBe(0);
+    expect(summary.inWarehouse + summary.placed).toBe(0);
   });
 });

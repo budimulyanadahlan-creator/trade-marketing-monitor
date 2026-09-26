@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase/server";
 import { z } from "zod";
 import { formatDate } from "@/lib/utils";
 import {
+  ASSET_CONDITIONS,
+  ASSET_TYPES,
   availableFrom,
   canManagePosm,
   findBalanceViolation,
@@ -13,7 +15,14 @@ import {
   POSM_UNITS,
   signedQuantity,
 } from "@/lib/posm";
-import type { PosmCategory, PosmMovementType, PosmUnit, UserRole } from "@/types/database";
+import type {
+  AssetCondition,
+  AssetType,
+  PosmCategory,
+  PosmMovementType,
+  PosmUnit,
+  UserRole,
+} from "@/types/database";
 
 const PAGE_PATH = "/monitoring-posm";
 const FORBIDDEN = "Anda tidak memiliki akses.";
@@ -372,5 +381,178 @@ export async function searchPosmCampaignsAction(
     return { campaigns: data ?? [] };
   } catch {
     return { campaigns: [], error: FORBIDDEN };
+  }
+}
+
+// ============================================================
+// ASSET MARKETING
+// ============================================================
+
+const assetMasterSchema = z.object({
+  id: z.string().uuid().optional(),
+  code: z
+    .string({ error: "Kode asset harus diisi" })
+    .trim()
+    .min(1, "Kode asset harus diisi")
+    .max(30, "Kode maksimal 30 karakter")
+    .transform((v) => v.toUpperCase()),
+  name: z.string({ error: "Nama asset harus diisi" }).trim().min(1, "Nama asset harus diisi"),
+  asset_type: z.enum(ASSET_TYPES as [AssetType, ...AssetType[]], { error: "Jenis asset tidak valid" }),
+  brand_id: z.string().uuid("Brand tidak valid").optional(),
+  serial_number: z.string().trim().optional(),
+  acquisition_date: z
+    .string({ error: "Tanggal perolehan harus diisi" })
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Tanggal perolehan harus diisi"),
+  acquisition_value: z.coerce
+    .number({ error: "Nilai perolehan harus berupa angka" })
+    .min(0, "Nilai perolehan tidak boleh negatif"),
+});
+
+// Lokasi awal, hanya saat mendaftarkan asset baru.
+const assetPlacementSchema = z.object({
+  event_date: z
+    .string({ error: "Tanggal lokasi awal harus diisi" })
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Tanggal lokasi awal harus diisi"),
+  destination: z.enum(["warehouse", "placed"], { error: "Lokasi awal tidak valid" }),
+  region_id: z.string().uuid("Region tidak valid").optional(),
+  distributor_id: z.string().uuid("Distributor tidak valid").optional(),
+  store_name: z.string().trim().optional(),
+  store_address: z.string().trim().optional(),
+  pic_name: z.string().trim().optional(),
+  condition: z.enum(ASSET_CONDITIONS as [AssetCondition, ...AssetCondition[]], {
+    error: "Kondisi tidak valid",
+  }),
+  notes: z.string().trim().optional(),
+}).superRefine((v, ctx) => {
+  // Sama dengan constraint asset_placements_placed_location (migrasi 046).
+  if (v.destination !== "placed") return;
+  if (!v.region_id)
+    ctx.addIssue({ code: "custom", message: "Region harus diisi untuk asset yang ditempatkan" });
+  if (!v.store_name)
+    ctx.addIssue({ code: "custom", message: "Nama toko harus diisi untuk asset yang ditempatkan" });
+});
+
+export type SaveMarketingAssetState = { error?: string; success?: boolean };
+
+function assetErrorMessage(error: { message: string; code?: string }, code: string) {
+  if (error.code === "23505") return `Kode ${code} sudah dipakai asset lain. Gunakan kode lain.`;
+  return error.message;
+}
+
+export async function saveMarketingAssetAction(
+  _prevState: SaveMarketingAssetState,
+  formData: FormData
+): Promise<SaveMarketingAssetState> {
+  try {
+    const { supabase } = await requirePosmWriter();
+
+    const master = assetMasterSchema.safeParse({
+      id: optionalText(formData.get("id")),
+      code: formData.get("code") ?? undefined,
+      name: formData.get("name") ?? undefined,
+      asset_type: formData.get("asset_type") ?? undefined,
+      brand_id: optionalText(formData.get("brand_id")),
+      serial_number: optionalText(formData.get("serial_number")),
+      acquisition_date: formData.get("acquisition_date") ?? undefined,
+      acquisition_value: optionalText(formData.get("acquisition_value")),
+    });
+    if (!master.success) return { error: master.error.issues[0]?.message ?? "Input tidak valid" };
+
+    const { id, ...a } = master.data;
+    const assetData = {
+      code: a.code,
+      name: a.name,
+      asset_type: a.asset_type,
+      brand_id: a.brand_id ?? null,
+      serial_number: a.serial_number ?? null,
+      acquisition_date: a.acquisition_date,
+      acquisition_value: a.acquisition_value,
+    };
+
+    // Edit hanya mengubah data master; lokasi & kondisi berubah lewat
+    // catatan penempatan.
+    if (id) {
+      const { error } = await supabase
+        .from("marketing_assets")
+        .update(assetData)
+        .eq("id", id)
+        .is("deleted_at", null);
+      if (error) return { error: assetErrorMessage(error, a.code) };
+      revalidatePath(PAGE_PATH);
+      return { success: true };
+    }
+
+    const placement = assetPlacementSchema.safeParse({
+      event_date: formData.get("event_date") ?? undefined,
+      destination: formData.get("destination") ?? undefined,
+      region_id: optionalText(formData.get("region_id")),
+      distributor_id: optionalText(formData.get("distributor_id")),
+      store_name: optionalText(formData.get("store_name")),
+      store_address: optionalText(formData.get("store_address")),
+      pic_name: optionalText(formData.get("pic_name")),
+      condition: formData.get("condition") ?? undefined,
+      notes: optionalText(formData.get("notes")),
+    });
+    if (!placement.success) return { error: placement.error.issues[0]?.message ?? "Input tidak valid" };
+
+    const p = placement.data;
+    const placed = p.destination === "placed";
+
+    const { error } = await supabase.rpc("create_marketing_asset", {
+      p_code: assetData.code,
+      p_name: assetData.name,
+      p_asset_type: assetData.asset_type,
+      p_brand_id: assetData.brand_id,
+      p_serial_number: assetData.serial_number,
+      p_acquisition_date: assetData.acquisition_date,
+      p_acquisition_value: assetData.acquisition_value,
+      p_event_date: p.event_date,
+      p_destination: p.destination,
+      p_region_id: placed ? p.region_id! : null,
+      p_distributor_id: placed ? (p.distributor_id ?? null) : null,
+      p_store_name: placed ? p.store_name! : null,
+      p_store_address: placed ? (p.store_address ?? null) : null,
+      p_pic_name: p.pic_name ?? null,
+      p_condition: p.condition,
+      p_notes: p.notes ?? null,
+    });
+    if (error) return { error: assetErrorMessage(error, a.code) };
+
+    revalidatePath(PAGE_PATH);
+    return { success: true };
+  } catch {
+    return { error: FORBIDDEN };
+  }
+}
+
+const ASSET_HAS_HISTORY =
+  "Asset sudah punya riwayat penempatan dan tidak bisa dihapus. Beri kondisi Dihapusbukukan saja.";
+
+// Hapus = soft delete, hanya selama asset baru punya catatan pendaftaran
+// (termasuk catatan yang sudah dihapus). Trigger marketing_assets_guard_delete
+// (migrasi 046) menegakkan aturan yang sama di database.
+export async function deleteMarketingAssetAction(id: string): Promise<{ error?: string }> {
+  try {
+    const { supabase } = await requirePosmWriter();
+
+    const { count } = await supabase
+      .from("asset_placements")
+      .select("id", { count: "exact", head: true })
+      .eq("asset_id", id);
+    if ((count ?? 0) > 1) return { error: ASSET_HAS_HISTORY };
+
+    const { error } = await supabase
+      .from("marketing_assets")
+      .update({ deleted_at: new Date().toISOString() })
+      .eq("id", id)
+      .is("deleted_at", null);
+    if (error) {
+      if (error.message.includes("ASSET_PUNYA_RIWAYAT")) return { error: ASSET_HAS_HISTORY };
+      return { error: error.message };
+    }
+    revalidatePath(PAGE_PATH);
+    return {};
+  } catch {
+    return { error: FORBIDDEN };
   }
 }

@@ -1,0 +1,625 @@
+"use client";
+
+import { useActionState, useMemo, useState, useTransition } from "react";
+import {
+  deleteMarketingAssetAction,
+  saveMarketingAssetAction,
+  type SaveMarketingAssetState,
+} from "@/app/actions/posm";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { DatePicker } from "@/components/ui/date-picker";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { SearchInput } from "@/components/ui/search-input";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { AlertCircle, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { toast } from "sonner";
+import { filterBySearch } from "@/lib/search";
+import { ASSET_CONDITIONS, ASSET_DESTINATION_LABELS, ASSET_TYPES } from "@/lib/posm";
+import { formatIDR } from "@/lib/utils";
+import type { AssetCondition, AssetDestination, MarketingAssetRow } from "@/types/database";
+
+export type AssetListRow = Pick<
+  MarketingAssetRow,
+  | "id"
+  | "code"
+  | "name"
+  | "asset_type"
+  | "brand_id"
+  | "serial_number"
+  | "acquisition_date"
+  | "acquisition_value"
+> & {
+  brand_name: string | null;
+  // Dari catatan penempatan terakhir (view asset_current_status).
+  condition: AssetCondition;
+  destination: AssetDestination;
+  region_id: string | null;
+  region_name: string | null;
+  distributor_name: string | null;
+  store_name: string | null;
+  /** Hanya punya catatan pendaftaran, jadi masih boleh dihapus. */
+  can_delete: boolean;
+};
+
+type Option = { id: string; name: string; is_active: boolean };
+
+const CONDITION_VARIANT: Record<AssetCondition, "default" | "warning" | "destructive" | "outline"> = {
+  Baik: "default",
+  "Rusak Ringan": "warning",
+  "Rusak Berat": "destructive",
+  Hilang: "destructive",
+  Dihapusbukukan: "outline",
+};
+
+export function AssetConditionBadge({ condition }: { condition: AssetCondition }) {
+  return <Badge variant={CONDITION_VARIANT[condition]}>{condition}</Badge>;
+}
+
+function todayIso() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// ---- Add / Edit Dialog ----
+
+function AssetDialog({
+  asset,
+  brands,
+  regions,
+  distributors,
+  suggestedCode,
+  trigger,
+}: {
+  asset: AssetListRow | null;
+  brands: Option[];
+  regions: Option[];
+  distributors: Option[];
+  suggestedCode: string;
+  trigger: React.ReactNode;
+}) {
+  const isEdit = asset !== null;
+  const [open, setOpen] = useState(false);
+  const [destination, setDestination] = useState<AssetDestination>("warehouse");
+  const [state, formAction, isPending] = useActionState(
+    async (prev: SaveMarketingAssetState, formData: FormData) => {
+      const result = await saveMarketingAssetAction(prev, formData);
+      if (result.success) {
+        toast.success(isEdit ? "Asset diperbarui" : "Asset didaftarkan");
+        setOpen(false);
+      }
+      return result;
+    },
+    {}
+  );
+
+  const brandOptions = brands.filter((b) => b.is_active || b.id === asset?.brand_id);
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (next) setDestination("warehouse");
+      }}
+    >
+      <DialogTrigger asChild>{trigger}</DialogTrigger>
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{isEdit ? "Edit Asset" : "Daftarkan Asset"}</DialogTitle>
+        </DialogHeader>
+
+        <form action={formAction} className="space-y-4">
+          {asset && <input type="hidden" name="id" value={asset.id} />}
+
+          {state.error && (
+            <div className="flex items-center gap-2 rounded-md border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-400">
+              <AlertCircle className="h-4 w-4 flex-shrink-0" />
+              <span>{state.error}</span>
+            </div>
+          )}
+
+          <div className="grid grid-cols-3 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="asset-code">Kode</Label>
+              <Input
+                id="asset-code"
+                name="code"
+                defaultValue={asset?.code ?? suggestedCode}
+                required
+                disabled={isPending}
+                className="uppercase"
+              />
+            </div>
+            <div className="col-span-2 space-y-1.5">
+              <Label htmlFor="asset-name">Nama Asset</Label>
+              <Input
+                id="asset-name"
+                name="name"
+                defaultValue={asset?.name ?? ""}
+                placeholder="Contoh: Cooler Showcase 2 Pintu"
+                required
+                disabled={isPending}
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="asset-type">Jenis</Label>
+              <Select
+                id="asset-type"
+                name="asset_type"
+                defaultValue={asset?.asset_type ?? ""}
+                placeholder="Pilih jenis"
+                required
+                disabled={isPending}
+              >
+                {ASSET_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="asset-brand">Brand (opsional)</Label>
+              <Select id="asset-brand" name="brand_id" defaultValue={asset?.brand_id ?? ""} disabled={isPending}>
+                <option value="">— Tanpa brand —</option>
+                {brandOptions.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="asset-serial">Nomor Seri / Merk (opsional)</Label>
+            <Input
+              id="asset-serial"
+              name="serial_number"
+              defaultValue={asset?.serial_number ?? ""}
+              disabled={isPending}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Tanggal Perolehan</Label>
+              <DatePicker
+                name="acquisition_date"
+                defaultValue={asset?.acquisition_date ?? todayIso()}
+                disabled={isPending}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="asset-value">Nilai Perolehan (Rp)</Label>
+              <Input
+                id="asset-value"
+                name="acquisition_value"
+                type="number"
+                min={0}
+                step={1}
+                defaultValue={asset?.acquisition_value ?? ""}
+                required
+                disabled={isPending}
+              />
+            </div>
+          </div>
+
+          {/* Lokasi awal hanya saat pendaftaran; perpindahan lewat form terpisah. */}
+          {!isEdit && (
+            <fieldset className="space-y-4 rounded-lg border border-white/8 p-4">
+              <legend className="px-1 text-xs font-medium uppercase tracking-wider text-slate-500">
+                Lokasi Awal
+              </legend>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="asset-destination">Lokasi</Label>
+                  <Select
+                    id="asset-destination"
+                    name="destination"
+                    value={destination}
+                    onChange={(e) => setDestination(e.target.value as AssetDestination)}
+                    disabled={isPending}
+                  >
+                    {(Object.keys(ASSET_DESTINATION_LABELS) as AssetDestination[]).map((d) => (
+                      <option key={d} value={d}>
+                        {ASSET_DESTINATION_LABELS[d]}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Tanggal</Label>
+                  <DatePicker name="event_date" defaultValue={todayIso()} disabled={isPending} />
+                </div>
+              </div>
+
+              {destination === "placed" && (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="asset-region">Region</Label>
+                      <Select
+                        id="asset-region"
+                        name="region_id"
+                        defaultValue=""
+                        placeholder="Pilih region"
+                        required
+                        disabled={isPending}
+                      >
+                        {regions
+                          .filter((r) => r.is_active)
+                          .map((r) => (
+                            <option key={r.id} value={r.id}>
+                              {r.name}
+                            </option>
+                          ))}
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="asset-distributor">Distributor (opsional)</Label>
+                      <Select id="asset-distributor" name="distributor_id" defaultValue="" disabled={isPending}>
+                        <option value="">Tanpa distributor</option>
+                        {distributors
+                          .filter((d) => d.is_active)
+                          .map((d) => (
+                            <option key={d.id} value={d.id}>
+                              {d.name}
+                            </option>
+                          ))}
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="asset-store">Nama Toko</Label>
+                    <Input id="asset-store" name="store_name" required disabled={isPending} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="asset-address">Alamat (opsional)</Label>
+                    <Input id="asset-address" name="store_address" disabled={isPending} />
+                  </div>
+                </>
+              )}
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="asset-condition">Kondisi</Label>
+                  <Select id="asset-condition" name="condition" defaultValue="Baik" disabled={isPending}>
+                    {ASSET_CONDITIONS.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="asset-pic">PIC / Penerima (opsional)</Label>
+                  <Input id="asset-pic" name="pic_name" disabled={isPending} />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="asset-notes">Keterangan (opsional)</Label>
+                <Textarea id="asset-notes" name="notes" disabled={isPending} className="min-h-[64px]" />
+              </div>
+            </fieldset>
+          )}
+
+          <DialogFooter className="pt-2">
+            <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={isPending}>
+              Batal
+            </Button>
+            <Button type="submit" disabled={isPending}>
+              {isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Menyimpan...
+                </>
+              ) : (
+                "Simpan"
+              )}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---- Delete Button ----
+
+function DeleteAssetButton({ id, label }: { id: string; label: string }) {
+  const [open, setOpen] = useState(false);
+  const [isPending, startTransition] = useTransition();
+
+  function handleDelete() {
+    startTransition(async () => {
+      const result = await deleteMarketingAssetAction(id);
+      if (result.error) {
+        toast.error(result.error);
+      } else {
+        toast.success("Asset dihapus");
+        setOpen(false);
+      }
+    });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm" className="text-rose-400 hover:text-rose-300 hover:border-rose-500/50">
+          <Trash2 className="h-3 w-3" />
+          Hapus
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Hapus Asset</DialogTitle>
+        </DialogHeader>
+        <p className="text-sm text-slate-400">
+          Yakin ingin menghapus asset <span className="font-medium text-slate-200">{label}</span>? Hapus hanya
+          untuk salah input. Asset yang sudah tidak dipakai cukup diberi kondisi Dihapusbukukan.
+        </p>
+        <DialogFooter className="pt-2">
+          <Button variant="outline" onClick={() => setOpen(false)} disabled={isPending}>
+            Batal
+          </Button>
+          <Button variant="destructive" onClick={handleDelete} disabled={isPending}>
+            {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Hapus"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---- Location Cell ----
+
+function AssetLocation({ asset }: { asset: AssetListRow }) {
+  if (asset.destination === "warehouse") return <span className="text-slate-300">Gudang Pusat</span>;
+  return (
+    <div className="space-y-0.5">
+      <p className="text-slate-300">{asset.store_name}</p>
+      <p className="text-xs text-slate-500">
+        {[asset.region_name, asset.distributor_name].filter(Boolean).join(" • ")}
+      </p>
+    </div>
+  );
+}
+
+// ---- Main Table ----
+
+export function AssetsTable({
+  assets,
+  brands,
+  regions,
+  distributors,
+  canManage,
+  suggestedCode,
+}: {
+  assets: AssetListRow[];
+  brands: Option[];
+  regions: Option[];
+  distributors: Option[];
+  canManage: boolean;
+  suggestedCode: string;
+}) {
+  const [query, setQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState("");
+  const [brandFilter, setBrandFilter] = useState("");
+  const [conditionFilter, setConditionFilter] = useState("");
+  const [regionFilter, setRegionFilter] = useState("");
+
+  const filtered = useMemo(() => {
+    const byFilters = assets.filter(
+      (a) =>
+        (!typeFilter || a.asset_type === typeFilter) &&
+        (!brandFilter || a.brand_id === brandFilter) &&
+        (!conditionFilter || a.condition === conditionFilter) &&
+        (!regionFilter || a.region_id === regionFilter)
+    );
+    return filterBySearch(byFilters, query, (a) => [
+      a.code,
+      a.name,
+      a.brand_name,
+      a.serial_number,
+      a.store_name,
+    ]);
+  }, [assets, query, typeFilter, brandFilter, conditionFilter, regionFilter]);
+
+  // Hanya brand/region yang dipakai asset yang relevan sebagai filter.
+  const usedBrands = useMemo(() => {
+    const used = new Set(assets.map((a) => a.brand_id));
+    return brands.filter((b) => used.has(b.id));
+  }, [assets, brands]);
+  const usedRegions = useMemo(() => {
+    const used = new Set(assets.map((a) => a.region_id));
+    return regions.filter((r) => used.has(r.id));
+  }, [assets, regions]);
+
+  const hasFilter =
+    query.trim() !== "" || typeFilter !== "" || brandFilter !== "" || conditionFilter !== "" || regionFilter !== "";
+  const colSpan = canManage ? 8 : 7;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <p className="text-sm text-slate-400">{filtered.length} asset</p>
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          <SearchInput
+            value={query}
+            onChange={setQuery}
+            placeholder="Cari kode, nama, toko..."
+            className="w-64"
+          />
+          <Select
+            aria-label="Filter jenis"
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
+            className="h-9 w-40"
+          >
+            <option value="">Semua jenis</option>
+            {ASSET_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </Select>
+          <Select
+            aria-label="Filter brand"
+            value={brandFilter}
+            onChange={(e) => setBrandFilter(e.target.value)}
+            className="h-9 w-36"
+          >
+            <option value="">Semua brand</option>
+            {usedBrands.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </Select>
+          <Select
+            aria-label="Filter kondisi"
+            value={conditionFilter}
+            onChange={(e) => setConditionFilter(e.target.value)}
+            className="h-9 w-40"
+          >
+            <option value="">Semua kondisi</option>
+            {ASSET_CONDITIONS.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </Select>
+          <Select
+            aria-label="Filter region"
+            value={regionFilter}
+            onChange={(e) => setRegionFilter(e.target.value)}
+            className="h-9 w-36"
+          >
+            <option value="">Semua region</option>
+            {usedRegions.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name}
+              </option>
+            ))}
+          </Select>
+          {canManage && (
+            <AssetDialog
+              asset={null}
+              brands={brands}
+              regions={regions}
+              distributors={distributors}
+              suggestedCode={suggestedCode}
+              trigger={
+                <Button size="sm">
+                  <Plus className="h-4 w-4" />
+                  Daftarkan Asset
+                </Button>
+              }
+            />
+          )}
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-white/8 bg-white/2 overflow-hidden">
+        <Table>
+          <TableHeader>
+            <TableRow className="border-white/8 hover:bg-transparent">
+              <TableHead>Kode</TableHead>
+              <TableHead>Nama Asset</TableHead>
+              <TableHead>Jenis</TableHead>
+              <TableHead>Brand</TableHead>
+              <TableHead>Kondisi</TableHead>
+              <TableHead>Lokasi Terkini</TableHead>
+              <TableHead className="text-right">Nilai Perolehan</TableHead>
+              {canManage && <TableHead className="text-right">Aksi</TableHead>}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {filtered.length > 0 ? (
+              filtered.map((asset) => (
+                <TableRow key={asset.id}>
+                  <TableCell>
+                    <code className="rounded bg-white/5 px-2 py-0.5 text-xs text-slate-300">{asset.code}</code>
+                  </TableCell>
+                  <TableCell className="font-medium">
+                    <p>{asset.name}</p>
+                    {asset.serial_number && <p className="text-xs text-slate-500">{asset.serial_number}</p>}
+                  </TableCell>
+                  <TableCell className="text-slate-300">{asset.asset_type}</TableCell>
+                  <TableCell className="text-slate-400">{asset.brand_name ?? "—"}</TableCell>
+                  <TableCell>
+                    <AssetConditionBadge condition={asset.condition} />
+                  </TableCell>
+                  <TableCell>
+                    <AssetLocation asset={asset} />
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums text-slate-100 whitespace-nowrap">
+                    {formatIDR(Number(asset.acquisition_value))}
+                  </TableCell>
+                  {canManage && (
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <AssetDialog
+                          asset={asset}
+                          brands={brands}
+                          regions={regions}
+                          distributors={distributors}
+                          suggestedCode={suggestedCode}
+                          trigger={
+                            <Button variant="outline" size="sm">
+                              <Pencil className="h-3 w-3" />
+                              Edit
+                            </Button>
+                          }
+                        />
+                        {/* Asset dengan riwayat perpindahan tidak bisa dihapus. */}
+                        {asset.can_delete && (
+                          <DeleteAssetButton id={asset.id} label={`${asset.code} — ${asset.name}`} />
+                        )}
+                      </div>
+                    </TableCell>
+                  )}
+                </TableRow>
+              ))
+            ) : (
+              <TableRow>
+                <TableCell colSpan={colSpan} className="text-center py-12 text-slate-500">
+                  {hasFilter
+                    ? "Tidak ada asset yang cocok dengan filter."
+                    : canManage
+                      ? "Belum ada asset. Daftarkan asset pertama Anda."
+                      : "Belum ada asset."}
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
+    </div>
+  );
+}

@@ -2,7 +2,15 @@
  * Logika murni Monitoring POSM & Asset (plans/prd-monitoring-posm-asset.md).
  */
 
-import type { PosmCategory, PosmMovementType, PosmUnit, UserRole } from "@/types/database";
+import type {
+  AssetCondition,
+  AssetDestination,
+  AssetType,
+  PosmCategory,
+  PosmMovementType,
+  PosmUnit,
+  UserRole,
+} from "@/types/database";
 
 // Daftar tetap — harus sama dengan check constraint posm_items (migrasi 043).
 export const POSM_CATEGORIES: readonly PosmCategory[] = [
@@ -343,4 +351,59 @@ export function parseRekapFilters(
 
   const filters: RekapFilters = { from, to, item: one("item", UUID), brand: one("brand", UUID) };
   return Object.fromEntries(Object.entries(filters).filter(([, v]) => v !== undefined)) as RekapFilters;
+}
+
+// ============================================================
+// ASSET MARKETING
+// ============================================================
+
+// Daftar tetap — harus sama dengan check constraint marketing_assets dan
+// asset_placements (migrasi 046).
+export const ASSET_TYPES: readonly AssetType[] = [
+  "Cooler/Chiller",
+  "Rak Display",
+  "Gondola",
+  "Standing Banner",
+  "Tenda/Booth",
+  "Lainnya",
+];
+export const ASSET_CONDITIONS: readonly AssetCondition[] = [
+  "Baik",
+  "Rusak Ringan",
+  "Rusak Berat",
+  "Hilang",
+  "Dihapusbukukan",
+];
+export const ASSET_DESTINATION_LABELS: Record<AssetDestination, string> = {
+  warehouse: "Gudang Pusat",
+  placed: "Ditempatkan",
+};
+
+export const ASSET_CODE_PREFIX = "AST";
+
+export type AssetSummaryInput = {
+  acquisition_value: number;
+  condition: AssetCondition;
+  destination: AssetDestination;
+};
+
+export type AssetSummary = {
+  totalUnits: number;
+  totalValue: number;
+  byCondition: Record<AssetCondition, number>;
+  inWarehouse: number;
+  placed: number;
+};
+
+/** Kartu ringkas tab Asset; kondisi & lokasi dari penempatan terakhir. */
+export function summarizeAssets(assets: AssetSummaryInput[]): AssetSummary {
+  const byCondition = Object.fromEntries(ASSET_CONDITIONS.map((c) => [c, 0])) as Record<AssetCondition, number>;
+  let totalValue = 0;
+  let inWarehouse = 0;
+  for (const a of assets) {
+    totalValue += Number(a.acquisition_value);
+    byCondition[a.condition] += 1;
+    if (a.destination === "warehouse") inWarehouse += 1;
+  }
+  return { totalUnits: assets.length, totalValue, byCondition, inWarehouse, placed: assets.length - inWarehouse };
 }

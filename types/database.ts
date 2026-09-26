@@ -343,6 +343,66 @@ export type PosmStockBalanceRow = {
   movement_count_all: number;
 };
 
+export type AssetType =
+  | "Cooler/Chiller"
+  | "Rak Display"
+  | "Gondola"
+  | "Standing Banner"
+  | "Tenda/Booth"
+  | "Lainnya";
+export type AssetCondition = "Baik" | "Rusak Ringan" | "Rusak Berat" | "Hilang" | "Dihapusbukukan";
+export type AssetDestination = "warehouse" | "placed";
+
+export type MarketingAssetRow = {
+  id: string;
+  code: string;
+  name: string;
+  asset_type: AssetType;
+  brand_id: string | null;
+  serial_number: string | null;
+  acquisition_date: string;
+  acquisition_value: number;
+  photo_path: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+};
+
+export type AssetPlacementRow = {
+  id: string;
+  asset_id: string;
+  event_date: string;
+  destination: AssetDestination;
+  region_id: string | null;
+  distributor_id: string | null;
+  store_name: string | null;
+  store_address: string | null;
+  pic_name: string | null;
+  condition: AssetCondition;
+  notes: string | null;
+  photo_path: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+};
+
+/** Catatan penempatan terakhir per asset (view asset_current_status). */
+export type AssetCurrentStatusRow = {
+  asset_id: string;
+  placement_id: string;
+  event_date: string;
+  destination: AssetDestination;
+  region_id: string | null;
+  distributor_id: string | null;
+  store_name: string | null;
+  condition: AssetCondition;
+  placement_count_all: number;
+};
+
 export type PosmAuditAction = "insert" | "update" | "soft_delete";
 
 export type PosmAuditLogRow = {
@@ -914,6 +974,79 @@ export type Database = {
           }
         ];
       };
+      marketing_assets: {
+        Row: MarketingAssetRow;
+        Insert: {
+          id?: string;
+          code: string;
+          name: string;
+          asset_type: AssetType;
+          brand_id?: string | null;
+          serial_number?: string | null;
+          acquisition_date: string;
+          acquisition_value: number;
+          photo_path?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: Partial<Omit<MarketingAssetRow, "id" | "created_at" | "created_by">>;
+        Relationships: [
+          {
+            foreignKeyName: "marketing_assets_brand_id_fkey";
+            columns: ["brand_id"];
+            isOneToOne: false;
+            referencedRelation: "brands";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      asset_placements: {
+        Row: AssetPlacementRow;
+        Insert: {
+          id?: string;
+          asset_id: string;
+          event_date: string;
+          destination: AssetDestination;
+          region_id?: string | null;
+          distributor_id?: string | null;
+          store_name?: string | null;
+          store_address?: string | null;
+          pic_name?: string | null;
+          condition: AssetCondition;
+          notes?: string | null;
+          photo_path?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: Partial<Omit<AssetPlacementRow, "id" | "asset_id" | "created_at" | "created_by">>;
+        Relationships: [
+          {
+            foreignKeyName: "asset_placements_asset_id_fkey";
+            columns: ["asset_id"];
+            isOneToOne: false;
+            referencedRelation: "marketing_assets";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "asset_placements_region_id_fkey";
+            columns: ["region_id"];
+            isOneToOne: false;
+            referencedRelation: "regions";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "asset_placements_distributor_id_fkey";
+            columns: ["distributor_id"];
+            isOneToOne: false;
+            referencedRelation: "distributors";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
       posm_audit_log: {
         Row: PosmAuditLogRow;
         Insert: never;
@@ -924,6 +1057,10 @@ export type Database = {
     Views: {
       posm_stock_balances: {
         Row: PosmStockBalanceRow;
+        Relationships: [];
+      };
+      asset_current_status: {
+        Row: AssetCurrentStatusRow;
         Relationships: [];
       };
     };
@@ -943,6 +1080,27 @@ export type Database = {
       posm_campaign_refs: {
         Args: { p_ids: string[] };
         Returns: { id: string; skp_number: string | null; name: string }[];
+      };
+      create_marketing_asset: {
+        Args: {
+          p_code: string;
+          p_name: string;
+          p_asset_type: AssetType;
+          p_brand_id: string | null;
+          p_serial_number: string | null;
+          p_acquisition_date: string;
+          p_acquisition_value: number;
+          p_event_date: string;
+          p_destination: AssetDestination;
+          p_region_id: string | null;
+          p_distributor_id: string | null;
+          p_store_name: string | null;
+          p_store_address: string | null;
+          p_pic_name: string | null;
+          p_condition: AssetCondition;
+          p_notes: string | null;
+        };
+        Returns: string;
       };
       increment_skp_counter: {
         Args: { p_year: number; p_month: number };
