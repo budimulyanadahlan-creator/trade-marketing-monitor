@@ -337,8 +337,13 @@ describe("resolveFiscalPeriod", () => {
   it("fallback ke kuartal fiskal berjalan jika parameter tidak valid", () => {
     const now = new Date(2026, 7, 6);
     expect(resolveFiscalPeriod("abc", "9", now)).toEqual({ fiscalYear: 2026, quarter: 2 });
-    expect(resolveFiscalPeriod("2025", "0", now)).toEqual({ fiscalYear: 2026, quarter: 2 });
-    expect(resolveFiscalPeriod("2025", undefined, now)).toEqual({ fiscalYear: 2026, quarter: 2 });
+  });
+
+  it("me-resolve fy dan q secara terpisah", () => {
+    const now = new Date(2026, 7, 6);
+    expect(resolveFiscalPeriod(undefined, "3", now)).toEqual({ fiscalYear: 2026, quarter: 3 });
+    expect(resolveFiscalPeriod("2025", undefined, now)).toEqual({ fiscalYear: 2025, quarter: 2 });
+    expect(resolveFiscalPeriod("2025", "0", now)).toEqual({ fiscalYear: 2025, quarter: 2 });
   });
 });
 

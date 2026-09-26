@@ -20,18 +20,20 @@ const MONTH_NAMES_ID = [
 ];
 
 // Menentukan periode fiskal dari parameter URL (`fy`, `q`); fallback ke
-// kuartal fiskal berjalan jika parameter kosong atau tidak valid.
+// kuartal fiskal berjalan per parameter — `fy` dan `q` di-resolve terpisah,
+// jadi URL yang hanya berisi `q` (atau hanya `fy`) tetap dihormati.
 export function resolveFiscalPeriod(
   fyParam: string | undefined,
   qParam: string | undefined,
   now: Date = new Date()
 ): FiscalPeriod {
+  const current = getFiscalPeriod(now);
   const fy = fyParam ? Number(fyParam) : NaN;
   const q = qParam ? Number(qParam) : NaN;
-  if (Number.isInteger(fy) && Number.isInteger(q) && q >= 1 && q <= 4) {
-    return { fiscalYear: fy, quarter: q };
-  }
-  return getFiscalPeriod(now);
+  return {
+    fiscalYear: Number.isInteger(fy) ? fy : current.fiscalYear,
+    quarter: Number.isInteger(q) && q >= 1 && q <= 4 ? q : current.quarter,
+  };
 }
 
 export type QuarterMonth = { year: number; month: number; label: string };
