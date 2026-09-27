@@ -71,6 +71,7 @@ function formDataOf(entries: Record<string, string>) {
 }
 
 const incoming = { item_id: ITEM, movement_date: "2026-09-01", type: "in", cartons: "3", pcs: "5" };
+const NO_DESTINATION = { destination: null, region_id: null, distributor_id: null, campaign_id: null, recipient_name: null };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -89,6 +90,7 @@ describe("saveGimmickMovementAction", () => {
       type: "in",
       quantity: 77,
       notes: null,
+      ...NO_DESTINATION,
     });
   });
 });
@@ -130,20 +132,101 @@ describe("saveGimmickMovementAction — validation", () => {
     expect(insert).toHaveBeenCalledWith(expect.objectContaining({ quantity: 5 }));
   });
 
-  it("rejects the Keluar type until destinations exist", async () => {
-    const { insert } = setupMocks();
-
-    const result = await saveGimmickMovementAction({}, formDataOf({ ...incoming, type: "out" }));
-
-    expect(result.error).toBe("Tipe mutasi tidak valid");
-    expect(insert).not.toHaveBeenCalled();
-  });
-
   it("rejects a non-writer", async () => {
     const { insert } = setupMocks({ role: "manager", department: "Sales" });
 
     expect((await saveGimmickMovementAction({}, formDataOf(incoming))).error).toBe("Anda tidak memiliki akses.");
     expect(insert).not.toHaveBeenCalled();
+  });
+});
+
+describe("saveGimmickMovementAction — Keluar", () => {
+  const REGION = "44444444-4444-4444-8444-444444444444";
+  const DISTRIBUTOR = "55555555-5555-4555-8555-555555555555";
+  const CAMPAIGN = "66666666-6666-4666-8666-666666666666";
+  const stock = [{ id: "m1", item_id: ITEM, movement_date: "2026-09-01", quantity: 77 }];
+  const outgoing = { ...incoming, type: "out", cartons: "1", pcs: "0" };
+
+  it("stores a negative quantity with region, distributor, SKP and PIC", async () => {
+    const { insert } = setupMocks({ movements: stock });
+
+    const result = await saveGimmickMovementAction(
+      {},
+      formDataOf({
+        ...outgoing,
+        destination: "region_distributor",
+        region_id: REGION,
+        distributor_id: DISTRIBUTOR,
+        campaign_id: CAMPAIGN,
+        recipient_name: " Pak Budi ",
+      })
+    );
+
+    expect(result).toEqual({ success: true });
+    expect(insert).toHaveBeenCalledWith({
+      item_id: ITEM,
+      movement_date: "2026-09-01",
+      type: "out",
+      quantity: -24,
+      notes: null,
+      destination: "region_distributor",
+      region_id: REGION,
+      distributor_id: DISTRIBUTOR,
+      campaign_id: CAMPAIGN,
+      recipient_name: "Pak Budi",
+    });
+  });
+
+  it("rejects Keluar without a destination, a region, or a description", async () => {
+    const { insert } = setupMocks({ movements: stock });
+
+    expect((await saveGimmickMovementAction({}, formDataOf(outgoing))).error).toBe("Pilih tujuan keluar");
+    expect(
+      (await saveGimmickMovementAction({}, formDataOf({ ...outgoing, destination: "region_distributor" }))).error
+    ).toBe("Region tujuan harus diisi");
+    expect((await saveGimmickMovementAction({}, formDataOf({ ...outgoing, destination: "internal" }))).error).toBe(
+      "Keterangan keperluan internal harus diisi"
+    );
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it("drops the region and distributor for Internal", async () => {
+    const { insert } = setupMocks({ movements: stock });
+
+    await saveGimmickMovementAction(
+      {},
+      formDataOf({ ...outgoing, destination: "internal", region_id: REGION, distributor_id: DISTRIBUTOR, notes: "Hadiah HUT" })
+    );
+
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({ destination: "internal", region_id: null, distributor_id: null, notes: "Hadiah HUT" })
+    );
+  });
+
+  it("rejects Keluar above the available balance", async () => {
+    const { insert } = setupMocks({ movements: stock });
+
+    const result = await saveGimmickMovementAction(
+      {},
+      formDataOf({ ...outgoing, cartons: "4", destination: "event", notes: "Pameran" })
+    );
+
+    expect(result.error).toBe("Saldo tidak cukup. Saldo tersedia per 1 Sep 2026: 77 pcs (3 krt + 5 pcs).");
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it("translates a destination check-constraint error from the database", async () => {
+    setupMocks({
+      movements: stock,
+      writeError: { message: 'new row violates check constraint "gimmick_movements_destination_region"' },
+    });
+
+    const result = await saveGimmickMovementAction(
+      {},
+      formDataOf({ ...outgoing, destination: "region_distributor", region_id: REGION })
+    );
+
+    expect(result.error).toBe("Region tujuan harus diisi");
   });
 });
 
@@ -161,7 +244,7 @@ describe("saveGimmickMovementAction — edit", () => {
     );
 
     expect(result.success).toBe(true);
-    expect(update).toHaveBeenCalledWith({ movement_date: "2026-09-02", type: "in", quantity: 24, notes: null });
+    expect(update).toHaveBeenCalledWith({ movement_date: "2026-09-02", type: "in", quantity: 24, notes: null, ...NO_DESTINATION });
     expect(updateEq).toHaveBeenCalledWith("id", MOVEMENT);
   });
 

@@ -6,6 +6,10 @@ import {
   summarizeGimmickStock,
   withRunningValue,
   distinctPrograms,
+  gimmickDestination,
+  gimmickMovementFiltersQuery,
+  outValueInMonth,
+  parseGimmickMovementFilters,
   GIMMICK_CATEGORIES,
   GIMMICK_CODE_PREFIX,
   GIMMICK_UNITS,
@@ -122,5 +126,86 @@ describe("withRunningValue", () => {
       [77, 77, 77 * 45000],
       [-5, 72, -5 * 50000],
     ]);
+  });
+});
+
+describe("gimmickDestination", () => {
+  const out = { type: "out" as const, region_id: "r1", distributor_id: "d1", campaign_id: "c1", recipient_name: "Budi" };
+
+  it("requires a destination for Keluar and a region for Region/Distributor", () => {
+    expect(gimmickDestination(out)).toEqual({ error: "Pilih tujuan keluar" });
+    expect(gimmickDestination({ ...out, destination: "region_distributor", region_id: undefined })).toEqual({
+      error: "Region tujuan harus diisi",
+    });
+  });
+
+  it("requires a description for Event, Internal and Lainnya", () => {
+    expect(gimmickDestination({ ...out, destination: "event", notes: " " })).toEqual({ error: "Nama event harus diisi" });
+    expect(gimmickDestination({ ...out, destination: "internal" })).toEqual({
+      error: "Keterangan keperluan internal harus diisi",
+    });
+    expect(gimmickDestination({ ...out, destination: "other" })).toEqual({ error: "Keterangan harus diisi" });
+  });
+
+  it("keeps only the fields that belong to the destination; SKP and PIC for every destination", () => {
+    expect(gimmickDestination({ ...out, destination: "region_distributor" })).toEqual({
+      fields: { destination: "region_distributor", region_id: "r1", distributor_id: "d1", campaign_id: "c1", recipient_name: "Budi" },
+    });
+    expect(gimmickDestination({ ...out, destination: "event", notes: "Pameran JIExpo" })).toEqual({
+      fields: { destination: "event", region_id: "r1", distributor_id: null, campaign_id: "c1", recipient_name: "Budi" },
+    });
+    expect(gimmickDestination({ ...out, destination: "internal", notes: "Hadiah karyawan" })).toEqual({
+      fields: { destination: "internal", region_id: null, distributor_id: null, campaign_id: "c1", recipient_name: "Budi" },
+    });
+  });
+
+  it("clears every destination field for non-Keluar types", () => {
+    expect(gimmickDestination({ ...out, type: "in", destination: "event" })).toEqual({
+      fields: { destination: null, region_id: null, distributor_id: null, campaign_id: null, recipient_name: null },
+    });
+  });
+});
+
+describe("gimmick movement filters", () => {
+  const UUID_A = "11111111-1111-4111-8111-111111111111";
+
+  it("parses valid filters incl. destination and program, and drops invalid values", () => {
+    expect(
+      parseGimmickMovementFilters({
+        from: "2026-09-01",
+        to: "bukan-tanggal",
+        type: "out",
+        destination: "event",
+        item: UUID_A,
+        region: "x",
+        program: "  Imlek 2027 ",
+        page: "3",
+      })
+    ).toEqual({ from: "2026-09-01", type: "out", destination: "event", item: UUID_A, program: "Imlek 2027", page: 3 });
+    expect(parseGimmickMovementFilters({ destination: "gudang", type: "hilang", page: "0" })).toEqual({ page: 1 });
+  });
+
+  it("round-trips through the query string, dropping page 1", () => {
+    const filters = { from: "2026-09-01", destination: "internal" as const, program: "Imlek 2027", page: 1 };
+    const qs = gimmickMovementFiltersQuery(filters);
+    expect(qs).toBe("from=2026-09-01&destination=internal&program=Imlek+2027");
+    expect(parseGimmickMovementFilters(Object.fromEntries(new URLSearchParams(qs)))).toEqual(filters);
+    expect(gimmickMovementFiltersQuery({ ...filters, page: 2 })).toContain("page=2");
+  });
+});
+
+describe("outValueInMonth", () => {
+  it("sums |qty| × snapshot of Keluar in the month only", () => {
+    const value = outValueInMonth(
+      [
+        { type: "out", movement_date: "2026-09-01", quantity: -10, unit_cost_snapshot: 45000 },
+        { type: "out", movement_date: "2026-09-30", quantity: -2, unit_cost_snapshot: 12500 },
+        { type: "out", movement_date: "2026-08-31", quantity: -100, unit_cost_snapshot: 1000 },
+        { type: "in", movement_date: "2026-09-05", quantity: 50, unit_cost_snapshot: 45000 },
+        { type: "adjustment", movement_date: "2026-09-05", quantity: -3, unit_cost_snapshot: 45000 },
+      ],
+      "2026-09"
+    );
+    expect(value).toBe(10 * 45000 + 2 * 12500);
   });
 });

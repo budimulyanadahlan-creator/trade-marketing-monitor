@@ -5,13 +5,19 @@ import { createClient } from "@/lib/supabase/server";
 import {
   ASSET_CODE_PREFIX,
   ASSET_CONDITIONS,
+  monthDateBounds,
   nextCode,
   POSM_CODE_PREFIX,
   posmExportHref,
   stockStatus,
   summarizeAssets,
 } from "@/lib/posm";
-import { GIMMICK_CODE_PREFIX, resolveMonitoringPosmTab, summarizeGimmickStock } from "@/lib/gimmick";
+import {
+  GIMMICK_CODE_PREFIX,
+  outValueInMonth,
+  resolveMonitoringPosmTab,
+  summarizeGimmickStock,
+} from "@/lib/gimmick";
 import { KpiCard } from "@/components/dashboard/kpi-card";
 import { AssetConditionBadge, AssetsTable, type AssetListRow } from "./assets-table";
 import { ExportExcelButton } from "./export-excel-button";
@@ -223,7 +229,11 @@ async function AssetTab({ canManage }: { canManage: boolean }) {
 async function GimmickTab() {
   const supabase = await createClient();
 
-  const [{ data: items }, { data: brands }, { data: balances }] = await Promise.all([
+  // Bulan berjalan (WIB) untuk kartu "nilai keluar bulan ini".
+  const month = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta" }).format(new Date()).slice(0, 7);
+  const { start, end } = monthDateBounds(month, month);
+
+  const [{ data: items }, { data: brands }, { data: balances }, { data: outMovements }] = await Promise.all([
     supabase
       .from("gimmick_items")
       .select(
@@ -235,6 +245,13 @@ async function GimmickTab() {
     supabase
       .from("gimmick_stock_balances")
       .select("item_id, balance, last_movement_date, movement_count_all, stock_value"),
+    supabase
+      .from("gimmick_movements")
+      .select("type, movement_date, quantity, unit_cost_snapshot")
+      .eq("type", "out")
+      .gte("movement_date", start)
+      .lte("movement_date", end)
+      .is("deleted_at", null),
   ]);
 
   const balanceByItem = new Map((balances ?? []).map((b) => [b.item_id, b]));
@@ -256,14 +273,28 @@ async function GimmickTab() {
   });
 
   const summary = summarizeGimmickStock(rows);
+  const outValue = outValueInMonth(
+    (outMovements ?? []).map((m) => ({ ...m, unit_cost_snapshot: Number(m.unit_cost_snapshot) })),
+    month
+  );
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <KpiCard label="Item Aktif" value={summary.activeItems} type="count" />
         <KpiCard label="Stok Menipis" value={summary.lowStock} type="count" />
         <KpiCard label="Stok Habis" value={summary.outOfStock} type="count" />
         <KpiCard label="Total Nilai Stok" value={summary.totalValue} type="currency" />
+        <KpiCard label="Nilai Keluar Bulan Ini" value={outValue} type="currency" />
+      </div>
+
+      <div className="flex justify-end gap-2">
+        <Button asChild variant="outline" size="sm">
+          <Link href="/monitoring-posm/gimmick/movements">
+            <ArrowRightLeft className="h-4 w-4" />
+            Daftar Mutasi
+          </Link>
+        </Button>
       </div>
 
       <GimmickItemsTable

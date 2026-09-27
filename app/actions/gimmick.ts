@@ -7,7 +7,9 @@ import {
   cartonsToPcs,
   formatPcsWithCartons,
   GIMMICK_CATEGORIES,
+  GIMMICK_DESTINATIONS,
   GIMMICK_MOVEMENT_TYPES,
+  gimmickDestination,
   GIMMICK_UNITS,
 } from "@/lib/gimmick";
 import { availableFrom, findBalanceViolation, signedQuantity } from "@/lib/posm";
@@ -190,6 +192,11 @@ const gimmickMovementSchema = z
     pcs: wholeNumber("Jumlah pcs"),
     direction: z.enum(["plus", "minus"]).optional(),
     notes: z.string().trim().optional(),
+    destination: z.enum(GIMMICK_DESTINATIONS, { error: "Tujuan keluar tidak valid" }).optional(),
+    region_id: z.string().uuid("Region tidak valid").optional(),
+    distributor_id: z.string().uuid("Distributor tidak valid").optional(),
+    campaign_id: z.string().uuid("SKP tidak valid").optional(),
+    recipient_name: z.string().trim().max(100, "Nama PIC maksimal 100 karakter").optional(),
   })
   .superRefine((v, ctx) => {
     if (v.type === "adjustment" && !v.direction)
@@ -227,10 +234,19 @@ async function loadActiveGimmickMovements(supabase: GimmickSupabase, itemId: str
   return data ?? [];
 }
 
+// Pesan untuk check constraint tujuan Keluar (migrasi 051), penjaga akhir
+// jika validasi server terlewati.
+const CONSTRAINT_MESSAGES: Record<string, string> = {
+  gimmick_movements_out_destination: "Pilih tujuan keluar",
+  gimmick_movements_destination_region: "Region tujuan harus diisi",
+  gimmick_movements_notes_required: "Keterangan harus diisi untuk tujuan ini",
+};
+
 function gimmickMovementErrorMessage(error: { message: string }) {
   if (error.message.includes("GIMMICK_SALDO_NEGATIF"))
     return "Saldo tidak cukup karena data stok baru saja berubah. Muat ulang halaman lalu coba lagi.";
-  return error.message;
+  const constraint = Object.keys(CONSTRAINT_MESSAGES).find((name) => error.message.includes(`"${name}"`));
+  return constraint ? CONSTRAINT_MESSAGES[constraint] : error.message;
 }
 
 const qtyText = (qty: number, item: GimmickItemQty) => formatPcsWithCartons(qty, item.pcs_per_carton, item.unit);
@@ -251,12 +267,21 @@ export async function saveGimmickMovementAction(
       pcs: optionalText(formData.get("pcs")),
       direction: optionalText(formData.get("direction")),
       notes: optionalText(formData.get("notes")),
+      destination: optionalText(formData.get("destination")),
+      region_id: optionalText(formData.get("region_id")),
+      distributor_id: optionalText(formData.get("distributor_id")),
+      campaign_id: optionalText(formData.get("campaign_id")),
+      recipient_name: optionalText(formData.get("recipient_name")),
     });
     if (!parsed.success) {
       return { error: parsed.error.issues[0]?.message ?? "Input tidak valid" };
     }
 
     const { id, item_id, movement_date, type, cartons, pcs, direction, notes } = parsed.data;
+
+    // Field tujuan wajib per tujuan Keluar; tipe lain mengosongkan semua kolom tujuan.
+    const destination = gimmickDestination(parsed.data);
+    if ("error" in destination) return { error: destination.error };
 
     const item = await loadGimmickItem(supabase, item_id);
     if (!item) return { error: "Item gimmick tidak ditemukan." };
@@ -304,7 +329,7 @@ export async function saveGimmickMovementAction(
     }
 
     // unit_cost_snapshot sengaja tidak dikirim: diisi trigger dari harga master.
-    const data = { movement_date, type, quantity: signed, notes: notes ?? null };
+    const data = { movement_date, type, quantity: signed, notes: notes ?? null, ...destination.fields };
 
     const { error } = id
       ? await supabase

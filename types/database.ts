@@ -1256,6 +1256,10 @@ export type Database = {
         Args: { p_ids: string[] };
         Returns: { id: string; skp_number: string | null; name: string }[];
       };
+      gimmick_campaign_refs: {
+        Args: { p_ids: string[] };
+        Returns: { id: string; skp_number: string | null; name: string }[];
+      };
       create_marketing_asset: {
         Args: {
           p_code: string;

@@ -7,15 +7,17 @@ export type CampaignRef = { campaign_skp: string | null; campaign_name: string |
 /**
  * Tempelkan nomor & nama SKP ke mutasi yang tertaut. Lewat fungsi database
  * posm_campaign_refs (migrasi 045) karena RLS campaigns tidak mengizinkan
- * semua pembaca POSM melihat SKP yang ditautkan.
+ * semua pembaca POSM melihat SKP yang ditautkan. Mutasi gimmick memakai
+ * gimmick_campaign_refs (migrasi 052), yang hanya untuk can_manage_posm().
  */
 export async function withCampaignRefs<T extends { campaign_id: string | null }>(
   supabase: Supabase,
-  rows: T[]
+  rows: T[],
+  rpc: "posm_campaign_refs" | "gimmick_campaign_refs" = "posm_campaign_refs"
 ): Promise<(T & CampaignRef)[]> {
   const ids = [...new Set(rows.map((r) => r.campaign_id).filter((id): id is string => id !== null))];
   const { data } = ids.length
-    ? await supabase.rpc("posm_campaign_refs", { p_ids: ids })
+    ? await supabase.rpc(rpc, { p_ids: ids })
     : { data: [] };
   const byId = new Map((data ?? []).map((c) => [c.id, c]));
 

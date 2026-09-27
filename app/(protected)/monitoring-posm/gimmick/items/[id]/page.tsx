@@ -6,6 +6,7 @@ import { formatIDR } from "@/lib/utils";
 import { balanceOf, stockStatus } from "@/lib/posm";
 import { formatPcsWithCartons, withRunningValue } from "@/lib/gimmick";
 import { StockStatusBadge } from "../../../stock-status-badge";
+import { withCampaignRefs } from "../../../campaign-refs";
 import { requirePosmViewer } from "../../../viewer";
 import { GimmickMovementsPanel, type GimmickMovementListRow } from "./gimmick-movements-panel";
 
@@ -16,7 +17,7 @@ export default async function GimmickItemDetailPage({ params }: { params: Promis
   // Data gimmick hanya untuk pemegang can_manage_posm() (RLS juga menolak).
   if (!canManage) redirect("/monitoring-posm");
 
-  const [{ data: item }, { data: movements }, { data: items }] = await Promise.all([
+  const [{ data: item }, { data: movements }, { data: items }, { data: regions }, { data: distributors }] = await Promise.all([
     supabase
       .from("gimmick_items")
       .select(
@@ -28,7 +29,7 @@ export default async function GimmickItemDetailPage({ params }: { params: Promis
     supabase
       .from("gimmick_movements")
       .select(
-        "id, movement_date, type, quantity, unit_cost_snapshot, notes, created_at, creator:created_by(full_name)"
+        "id, movement_date, type, quantity, unit_cost_snapshot, destination, region_id, distributor_id, campaign_id, recipient_name, notes, created_at, region:regions(name), distributor:distributors(name), creator:created_by(full_name)"
       )
       .eq("item_id", id)
       .is("deleted_at", null),
@@ -38,13 +39,19 @@ export default async function GimmickItemDetailPage({ params }: { params: Promis
       .select("id, code, name, unit, pcs_per_carton, is_active")
       .is("deleted_at", null)
       .order("code"),
+    supabase.from("regions").select("id, name, is_active").order("name"),
+    supabase.from("distributors").select("id, name, is_active").order("name"),
   ]);
 
   if (!item) notFound();
 
+  // Label SKP lewat gimmick_campaign_refs (khusus can_manage_posm()).
+  const withRefs = await withCampaignRefs(supabase, movements ?? [], "gimmick_campaign_refs");
   const rows: GimmickMovementListRow[] = withRunningValue(
-    (movements ?? []).map(({ creator, ...m }) => ({
+    withRefs.map(({ creator, region, distributor, ...m }) => ({
       ...m,
+      region_name: (region as { name: string } | null)?.name ?? null,
+      distributor_name: (distributor as { name: string } | null)?.name ?? null,
       unit_cost_snapshot: Number(m.unit_cost_snapshot),
       creator_name: (creator as { full_name: string } | null)?.full_name ?? null,
     }))
@@ -108,6 +115,8 @@ export default async function GimmickItemDetailPage({ params }: { params: Promis
         }}
         items={items ?? []}
         movements={rows}
+        regions={regions ?? []}
+        distributors={distributors ?? []}
       />
     </div>
   );

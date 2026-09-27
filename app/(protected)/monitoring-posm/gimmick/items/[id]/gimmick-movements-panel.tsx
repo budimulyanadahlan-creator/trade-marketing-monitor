@@ -32,14 +32,37 @@ import {
 import { AlertCircle, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn, formatDate, formatIDR } from "@/lib/utils";
-import { formatPcsWithCartons, GIMMICK_MOVEMENT_TYPES, pcsToCartons } from "@/lib/gimmick";
+import {
+  formatPcsWithCartons,
+  GIMMICK_DESTINATION_LABELS,
+  GIMMICK_DESTINATIONS,
+  GIMMICK_MOVEMENT_TYPES,
+  pcsToCartons,
+} from "@/lib/gimmick";
 import { POSM_MOVEMENT_LABELS, type AdjustmentDirection } from "@/lib/posm";
-import type { GimmickMovementRow, PosmMovementType } from "@/types/database";
+import type { GimmickDestination, GimmickMovementRow, PosmMovementType } from "@/types/database";
+import { MovementDestination } from "../../../movement-destination";
+import { SkpPicker } from "../../../skp-picker";
 
 export type GimmickMovementListRow = Pick<
   GimmickMovementRow,
-  "id" | "movement_date" | "type" | "quantity" | "unit_cost_snapshot" | "notes" | "created_at"
+  | "id"
+  | "movement_date"
+  | "type"
+  | "quantity"
+  | "unit_cost_snapshot"
+  | "destination"
+  | "region_id"
+  | "distributor_id"
+  | "campaign_id"
+  | "recipient_name"
+  | "notes"
+  | "created_at"
 > & {
+  region_name: string | null;
+  distributor_name: string | null;
+  campaign_skp: string | null;
+  campaign_name: string | null;
   creator_name: string | null;
   running_balance: number;
   /** qty × harga snapshot (bertanda). */
@@ -54,6 +77,9 @@ export type GimmickItemInfo = {
   pcs_per_carton: number | null;
   is_active: boolean;
 };
+
+export type RegionOption = { id: string; name: string; is_active: boolean };
+export type DistributorOption = { id: string; name: string; is_active: boolean };
 
 type GimmickMovementType = (typeof GIMMICK_MOVEMENT_TYPES)[number];
 
@@ -78,20 +104,153 @@ function formatQty(qty: number, item: GimmickItemInfo) {
 // item. Saat edit, item boleh diganti (harga snapshot diambil ulang di
 // database); pilihan item: item aktif ditambah item mutasi ini.
 
+// Label & placeholder keterangan: wajib untuk Penyesuaian dan Keluar selain
+// Region/Distributor (sama dengan gimmickDestination di lib/gimmick.ts).
+function notesField(type: PosmMovementType, destination: GimmickDestination | "") {
+  if (type === "adjustment")
+    return { label: "Alasan", placeholder: "Contoh: rusak, hilang, hasil stock opname", required: true };
+  if (type === "out" && destination === "event")
+    return { label: "Nama Event", placeholder: "Contoh: Pameran JIExpo 2026", required: true };
+  if (type === "out" && destination === "internal")
+    return { label: "Keperluan Internal", placeholder: "Untuk siapa / keperluan apa", required: true };
+  if (type === "out" && destination === "other")
+    return { label: "Keterangan", placeholder: "Jelaskan tujuan pengeluaran", required: true };
+  return { label: "Keterangan (opsional)", placeholder: "", required: false };
+}
+
+// Field tujuan Keluar ditampilkan sesuai tujuan: region wajib untuk
+// Region/Distributor dan opsional untuk Event; distributor hanya untuk
+// Region/Distributor; SKP dan PIC opsional untuk semua tujuan.
+function OutDestinationFields({
+  destination,
+  onDestinationChange,
+  movement,
+  regions,
+  distributors,
+  disabled,
+}: {
+  destination: GimmickDestination | "";
+  onDestinationChange: (value: GimmickDestination | "") => void;
+  movement: GimmickMovementListRow | null;
+  regions: RegionOption[];
+  distributors: DistributorOption[];
+  disabled: boolean;
+}) {
+  // Region/distributor nonaktif tetap ditampilkan jika sedang dipakai mutasi ini.
+  const regionOptions = regions.filter((r) => r.is_active || r.id === movement?.region_id);
+  const distributorOptions = distributors.filter((d) => d.is_active || d.id === movement?.distributor_id);
+  const showRegion = destination === "region_distributor" || destination === "event";
+
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <Label htmlFor="gmv-destination">Tujuan</Label>
+          <Select
+            id="gmv-destination"
+            name="destination"
+            value={destination}
+            onChange={(e) => onDestinationChange(e.target.value as GimmickDestination | "")}
+            placeholder="Pilih tujuan"
+            required
+            disabled={disabled}
+          >
+            {GIMMICK_DESTINATIONS.map((d) => (
+              <option key={d} value={d}>
+                {GIMMICK_DESTINATION_LABELS[d]}
+              </option>
+            ))}
+          </Select>
+        </div>
+        {showRegion && (
+          <div className="space-y-1.5">
+            <Label htmlFor="gmv-region">
+              {destination === "region_distributor" ? "Region Tujuan" : "Region (opsional)"}
+            </Label>
+            <Select
+              id="gmv-region"
+              name="region_id"
+              defaultValue={movement?.region_id ?? ""}
+              placeholder={destination === "region_distributor" ? "Pilih region" : undefined}
+              required={destination === "region_distributor"}
+              disabled={disabled}
+            >
+              {destination === "event" && <option value="">Tanpa region</option>}
+              {regionOptions.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+        )}
+      </div>
+
+      {destination === "region_distributor" && (
+        <div className="space-y-1.5">
+          <Label htmlFor="gmv-distributor">Distributor (opsional)</Label>
+          <Select
+            id="gmv-distributor"
+            name="distributor_id"
+            defaultValue={movement?.distributor_id ?? ""}
+            disabled={disabled}
+          >
+            <option value="">Tanpa distributor</option>
+            {distributorOptions.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+              </option>
+            ))}
+          </Select>
+        </div>
+      )}
+
+      <div className="space-y-1.5">
+        <Label htmlFor="gmv-recipient">PIC / Penerima (opsional)</Label>
+        <Input
+          id="gmv-recipient"
+          name="recipient_name"
+          defaultValue={movement?.recipient_name ?? ""}
+          maxLength={100}
+          disabled={disabled}
+        />
+      </div>
+
+      <div className="space-y-1.5">
+        <Label>SKP Terkait (opsional)</Label>
+        <SkpPicker
+          name="campaign_id"
+          defaultValue={
+            movement?.campaign_id
+              ? { id: movement.campaign_id, skp_number: movement.campaign_skp, name: movement.campaign_name ?? "" }
+              : null
+          }
+          disabled={disabled}
+        />
+      </div>
+    </>
+  );
+}
+
 function MovementDialog({
   item,
   items,
   movement,
+  regions,
+  distributors,
   trigger,
 }: {
   item: GimmickItemInfo;
   items: GimmickItemInfo[];
   movement: GimmickMovementListRow | null;
+  regions: RegionOption[];
+  distributors: DistributorOption[];
   trigger: React.ReactNode;
 }) {
   const isEdit = movement !== null;
   const [open, setOpen] = useState(false);
   const [type, setType] = useState<PosmMovementType>(movement?.type ?? "in");
+  const [destination, setDestination] = useState<GimmickDestination | "">(movement?.destination ?? "");
   const [itemId, setItemId] = useState(item.id);
   const [state, formAction, isPending] = useActionState(
     async (prev: SaveGimmickMovementState, formData: FormData) => {
@@ -115,6 +274,7 @@ function MovementDialog({
       ? pcsToCartons(movement.quantity, item.pcs_per_carton)
       : { cartons: 0, pcs: movement ? Math.abs(movement.quantity) : 0 };
   const defaultDirection: AdjustmentDirection = movement && movement.quantity < 0 ? "minus" : "plus";
+  const notes = notesField(type, destination);
 
   return (
     <Dialog
@@ -123,6 +283,7 @@ function MovementDialog({
         setOpen(next);
         if (next) {
           setType(movement?.type ?? "in");
+          setDestination(movement?.destination ?? "");
           setItemId(item.id);
         }
       }}
@@ -235,14 +396,25 @@ function MovementDialog({
             )}
           </div>
 
+          {type === "out" && (
+            <OutDestinationFields
+              destination={destination}
+              onDestinationChange={setDestination}
+              movement={movement}
+              regions={regions}
+              distributors={distributors}
+              disabled={isPending}
+            />
+          )}
+
           <div className="space-y-1.5">
-            <Label htmlFor="gmv-notes">{type === "adjustment" ? "Alasan" : "Keterangan (opsional)"}</Label>
+            <Label htmlFor="gmv-notes">{notes.label}</Label>
             <Textarea
               id="gmv-notes"
               name="notes"
               defaultValue={movement?.notes ?? ""}
-              placeholder={type === "adjustment" ? "Contoh: rusak, hilang, hasil stock opname" : ""}
-              required={type === "adjustment"}
+              placeholder={notes.placeholder}
+              required={notes.required}
               disabled={isPending}
               className="min-h-[64px]"
             />
@@ -326,10 +498,14 @@ export function GimmickMovementsPanel({
   item,
   items,
   movements,
+  regions,
+  distributors,
 }: {
   item: GimmickItemInfo;
   items: GimmickItemInfo[];
   movements: GimmickMovementListRow[];
+  regions: RegionOption[];
+  distributors: DistributorOption[];
 }) {
   return (
     <div className="space-y-4">
@@ -340,6 +516,8 @@ export function GimmickMovementsPanel({
             item={item}
             items={items}
             movement={null}
+            regions={regions}
+            distributors={distributors}
             trigger={
               <Button size="sm">
                 <Plus className="h-4 w-4" />
@@ -362,6 +540,7 @@ export function GimmickMovementsPanel({
               <TableHead className="text-right">Saldo</TableHead>
               <TableHead className="text-right">Harga Pokok</TableHead>
               <TableHead className="text-right">Nilai</TableHead>
+              <TableHead>Tujuan</TableHead>
               <TableHead>Keterangan</TableHead>
               <TableHead>Dicatat Oleh</TableHead>
               <TableHead className="text-right">Aksi</TableHead>
@@ -397,6 +576,16 @@ export function GimmickMovementsPanel({
                   >
                     {formatIDR(m.value)}
                   </TableCell>
+                  <TableCell>
+                    <MovementDestination
+                      destinationLabel={m.destination ? GIMMICK_DESTINATION_LABELS[m.destination] : null}
+                      regionName={m.region_name}
+                      distributorName={m.distributor_name}
+                      recipientName={m.recipient_name}
+                      campaignSkp={m.campaign_skp}
+                      campaignName={m.campaign_name}
+                    />
+                  </TableCell>
                   <TableCell className="max-w-xs text-slate-400">{m.notes ?? "—"}</TableCell>
                   <TableCell className="text-slate-500">{m.creator_name ?? "—"}</TableCell>
                   <TableCell className="text-right">
@@ -405,6 +594,8 @@ export function GimmickMovementsPanel({
                         item={item}
                         items={items}
                         movement={m}
+                        regions={regions}
+                        distributors={distributors}
                         trigger={
                           <Button variant="outline" size="sm">
                             <Pencil className="h-3 w-3" />
@@ -419,7 +610,7 @@ export function GimmickMovementsPanel({
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={9} className="text-center py-12 text-slate-500">
+                <TableCell colSpan={10} className="text-center py-12 text-slate-500">
                   {item.is_active
                     ? "Belum ada mutasi. Catat Saldo Awal untuk stok yang sudah ada."
                     : "Belum ada mutasi."}
