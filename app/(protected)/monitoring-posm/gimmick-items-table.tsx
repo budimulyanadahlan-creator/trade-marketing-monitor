@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState, useId, useMemo, useState, useTransition } from "react";
 import {
   deleteGimmickItemAction,
@@ -32,9 +33,11 @@ import {
 import { AlertCircle, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { filterBySearch } from "@/lib/search";
-import { distinctPrograms, GIMMICK_CATEGORIES, GIMMICK_UNITS } from "@/lib/gimmick";
-import { formatIDR } from "@/lib/utils";
+import { distinctPrograms, formatPcsWithCartons, GIMMICK_CATEGORIES, GIMMICK_UNITS } from "@/lib/gimmick";
+import type { PosmStockStatus } from "@/lib/posm";
+import { formatDate, formatIDR } from "@/lib/utils";
 import type { GimmickItemRow } from "@/types/database";
+import { STOCK_STATUS_LABELS, StockStatusBadge } from "./stock-status-badge";
 
 export type GimmickItemListRow = Pick<
   GimmickItemRow,
@@ -53,6 +56,11 @@ export type GimmickItemListRow = Pick<
 > & {
   brand_name: string | null;
   has_movements: boolean;
+  balance: number;
+  /** Saldo × harga pokok master terbaru. */
+  stock_value: number;
+  stock_status: PosmStockStatus;
+  last_movement_date: string | null;
 };
 
 type BrandOption = { id: string; name: string; is_active: boolean };
@@ -357,6 +365,7 @@ export function GimmickItemsTable({
   const [query, setQuery] = useState("");
   const [programFilter, setProgramFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
+  const [stockFilter, setStockFilter] = useState<PosmStockStatus | "">("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("active");
 
   const programs = useMemo(() => distinctPrograms(items), [items]);
@@ -366,12 +375,18 @@ export function GimmickItemsTable({
       (item) =>
         (!programFilter || item.program?.trim().toLowerCase() === programFilter.toLowerCase()) &&
         (!categoryFilter || item.category === categoryFilter) &&
+        (!stockFilter || item.stock_status === stockFilter) &&
         (statusFilter === "all" || item.is_active === (statusFilter === "active"))
     );
     return filterBySearch(byFilters, query, (i) => [i.code, i.name, i.program, i.brand_name]);
-  }, [items, query, programFilter, categoryFilter, statusFilter]);
+  }, [items, query, programFilter, categoryFilter, stockFilter, statusFilter]);
 
-  const hasFilter = query.trim() !== "" || programFilter !== "" || categoryFilter !== "" || statusFilter !== "active";
+  const hasFilter =
+    query.trim() !== "" ||
+    programFilter !== "" ||
+    categoryFilter !== "" ||
+    stockFilter !== "" ||
+    statusFilter !== "active";
 
   return (
     <div className="space-y-4">
@@ -411,6 +426,19 @@ export function GimmickItemsTable({
             ))}
           </Select>
           <Select
+            aria-label="Filter stok"
+            value={stockFilter}
+            onChange={(e) => setStockFilter(e.target.value as PosmStockStatus | "")}
+            className="h-9 w-36"
+          >
+            <option value="">Semua stok</option>
+            {(Object.keys(STOCK_STATUS_LABELS) as PosmStockStatus[]).map((s) => (
+              <option key={s} value={s}>
+                {STOCK_STATUS_LABELS[s]}
+              </option>
+            ))}
+          </Select>
+          <Select
             aria-label="Filter status"
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
@@ -443,9 +471,11 @@ export function GimmickItemsTable({
               <TableHead>Nama Item</TableHead>
               <TableHead>Program</TableHead>
               <TableHead>Kategori</TableHead>
-              <TableHead>Satuan</TableHead>
-              <TableHead className="text-right">Isi/Karton</TableHead>
+              <TableHead className="text-right">Saldo</TableHead>
               <TableHead className="text-right">Harga Pokok</TableHead>
+              <TableHead className="text-right">Nilai Stok</TableHead>
+              <TableHead>Stok</TableHead>
+              <TableHead>Terakhir Diperbarui</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Aksi</TableHead>
             </TableRow>
@@ -458,16 +488,31 @@ export function GimmickItemsTable({
                     <code className="rounded bg-white/5 px-2 py-0.5 text-xs text-slate-300">{item.code}</code>
                   </TableCell>
                   <TableCell className="font-medium">
-                    <div>{item.name}</div>
+                    <Link
+                      href={`/monitoring-posm/gimmick/items/${item.id}`}
+                      className="hover:text-emerald-300 hover:underline underline-offset-4"
+                    >
+                      {item.name}
+                    </Link>
                     {item.brand_name && <div className="text-xs text-slate-500">{item.brand_name}</div>}
                   </TableCell>
                   <TableCell className="text-slate-300">{item.program ?? <span className="text-slate-600">—</span>}</TableCell>
                   <TableCell className="text-slate-300">{item.category}</TableCell>
-                  <TableCell className="text-slate-400">{item.unit}</TableCell>
-                  <TableCell className="text-right tabular-nums text-slate-300">
-                    {item.pcs_per_carton ?? <span className="text-slate-600">—</span>}
+                  <TableCell className="text-right font-medium tabular-nums text-slate-100 whitespace-nowrap">
+                    {formatPcsWithCartons(item.balance, item.pcs_per_carton, item.unit)}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums text-slate-100">{formatIDR(item.unit_cost)}</TableCell>
+                  <TableCell className="text-right tabular-nums text-slate-300">{formatIDR(item.unit_cost)}</TableCell>
+                  <TableCell className="text-right tabular-nums text-slate-100">{formatIDR(item.stock_value)}</TableCell>
+                  <TableCell>
+                    <StockStatusBadge status={item.stock_status} />
+                  </TableCell>
+                  <TableCell className="text-slate-400 whitespace-nowrap">
+                    {item.last_movement_date ? (
+                      formatDate(item.last_movement_date)
+                    ) : (
+                      <span className="text-slate-600">Belum ada mutasi</span>
+                    )}
+                  </TableCell>
                   <TableCell>
                     <Badge variant={item.is_active ? "default" : "outline"}>
                       {item.is_active ? "Aktif" : "Nonaktif"}
@@ -496,7 +541,7 @@ export function GimmickItemsTable({
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={9} className="text-center py-12 text-slate-500">
+                <TableCell colSpan={11} className="text-center py-12 text-slate-500">
                   {hasFilter
                     ? "Tidak ada item yang cocok dengan filter."
                     : "Belum ada item gimmick. Tambah item pertama Anda."}

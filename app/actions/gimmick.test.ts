@@ -17,11 +17,14 @@ function setupMocks({
   department = "Marketing",
   insertError = null,
   updateError = null,
+  movementCount = 0,
 }: {
   role?: string;
   department?: string | null;
   insertError?: DbError;
   updateError?: DbError;
+  /** Jumlah mutasi item (termasuk yang terhapus). */
+  movementCount?: number;
 } = {}) {
   const insertSingle = vi.fn().mockResolvedValue({ data: insertError ? null : { id: NEW_ID }, error: insertError });
   const insert = vi.fn().mockReturnValue({ select: () => ({ single: insertSingle }) });
@@ -41,6 +44,8 @@ function setupMocks({
           }),
         };
       if (table === "gimmick_items") return { insert, update };
+      if (table === "gimmick_movements")
+        return { select: () => ({ eq: vi.fn().mockResolvedValue({ count: movementCount }) }) };
       return {};
     }),
   };
@@ -221,6 +226,23 @@ describe("deleteGimmickItemAction", () => {
     expect(update).toHaveBeenCalledWith({ deleted_at: expect.any(String) });
     expect(updateEq).toHaveBeenCalledWith("id", "item-1");
     expect(updateIs).toHaveBeenCalledWith("deleted_at", null);
+  });
+
+  it("refuses to delete an item that has movements, including deleted ones", async () => {
+    const { update } = setupMocks({ movementCount: 1 });
+
+    const result = await deleteGimmickItemAction("item-1");
+
+    expect(result.error).toBe("Item sudah punya mutasi stok dan tidak bisa dihapus. Nonaktifkan saja.");
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("shows the same message when the database guard rejects the delete", async () => {
+    setupMocks({ updateError: { message: "GIMMICK_ITEM_PUNYA_MUTASI: item sudah punya mutasi stok" } });
+
+    const result = await deleteGimmickItemAction("item-1");
+
+    expect(result.error).toBe("Item sudah punya mutasi stok dan tidak bisa dihapus. Nonaktifkan saja.");
   });
 
   it("rejects a non-writer", async () => {

@@ -3,7 +3,15 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requirePosmWriter } from "@/lib/posm-writer";
-import { GIMMICK_CATEGORIES, GIMMICK_UNITS } from "@/lib/gimmick";
+import {
+  cartonsToPcs,
+  formatPcsWithCartons,
+  GIMMICK_CATEGORIES,
+  GIMMICK_MOVEMENT_TYPES,
+  GIMMICK_UNITS,
+} from "@/lib/gimmick";
+import { availableFrom, findBalanceViolation, signedQuantity } from "@/lib/posm";
+import { formatDate } from "@/lib/utils";
 import type { GimmickCategory, GimmickUnit } from "@/types/database";
 
 const PAGE_PATH = "/monitoring-posm";
@@ -128,18 +136,224 @@ export async function toggleGimmickItemActiveAction(
   }
 }
 
-// Hapus = soft delete. Aturan "item yang punya mutasi hanya bisa
-// dinonaktifkan" menyusul bersama tabel gimmick_movements (fase 2).
+const ITEM_HAS_MOVEMENTS = "Item sudah punya mutasi stok dan tidak bisa dihapus. Nonaktifkan saja.";
+
+// Hapus = soft delete, hanya untuk item yang belum pernah punya mutasi
+// (termasuk mutasi yang sudah dihapus). Trigger gimmick_items_guard_delete
+// (migrasi 051) menegakkan aturan yang sama di database.
 export async function deleteGimmickItemAction(id: string): Promise<{ error?: string }> {
   try {
     const { supabase } = await requirePosmWriter();
+
+    const { count } = await supabase
+      .from("gimmick_movements")
+      .select("id", { count: "exact", head: true })
+      .eq("item_id", id);
+    if (count) return { error: ITEM_HAS_MOVEMENTS };
+
     const { error } = await supabase
       .from("gimmick_items")
       .update({ deleted_at: new Date().toISOString() })
       .eq("id", id)
       .is("deleted_at", null);
-    if (error) return { error: error.message };
+    if (error) {
+      if (error.message.includes("GIMMICK_ITEM_PUNYA_MUTASI")) return { error: ITEM_HAS_MOVEMENTS };
+      return { error: error.message };
+    }
     revalidatePath(PAGE_PATH);
+    return {};
+  } catch {
+    return { error: FORBIDDEN };
+  }
+}
+
+// ============================================================
+// MUTASI STOK GIMMICK
+// ============================================================
+
+const wholeNumber = (label: string) =>
+  z.coerce
+    .number({ error: `${label} harus berupa angka` })
+    .int(`${label} harus bilangan bulat`)
+    .min(0, `${label} tidak boleh negatif`)
+    .optional();
+
+const gimmickMovementSchema = z
+  .object({
+    id: z.string().uuid().optional(),
+    item_id: z.string({ error: "Item tidak valid" }).uuid("Item tidak valid"),
+    movement_date: z
+      .string({ error: "Tanggal harus diisi" })
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "Tanggal harus diisi"),
+    type: z.enum(GIMMICK_MOVEMENT_TYPES, { error: "Tipe mutasi tidak valid" }),
+    cartons: wholeNumber("Jumlah karton"),
+    pcs: wholeNumber("Jumlah pcs"),
+    direction: z.enum(["plus", "minus"]).optional(),
+    notes: z.string().trim().optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.type === "adjustment" && !v.direction)
+      ctx.addIssue({ code: "custom", message: "Pilih arah penyesuaian (tambah atau kurang)" });
+    if (v.type === "adjustment" && !v.notes)
+      ctx.addIssue({ code: "custom", message: "Alasan penyesuaian harus diisi" });
+  });
+
+export type SaveGimmickMovementState = { error?: string; success?: boolean };
+
+type GimmickSupabase = Awaited<ReturnType<typeof requirePosmWriter>>["supabase"];
+type GimmickItemQty = { unit: string; pcs_per_carton: number | null };
+
+function revalidateGimmickItems(itemIds: string[]) {
+  revalidatePath(PAGE_PATH);
+  for (const itemId of new Set(itemIds)) revalidatePath(`${PAGE_PATH}/gimmick/items/${itemId}`);
+}
+
+async function loadGimmickItem(supabase: GimmickSupabase, itemId: string) {
+  const { data } = await supabase
+    .from("gimmick_items")
+    .select("id, is_active, unit, pcs_per_carton")
+    .eq("id", itemId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  return data;
+}
+
+async function loadActiveGimmickMovements(supabase: GimmickSupabase, itemId: string) {
+  const { data } = await supabase
+    .from("gimmick_movements")
+    .select("id, item_id, movement_date, quantity")
+    .eq("item_id", itemId)
+    .is("deleted_at", null);
+  return data ?? [];
+}
+
+function gimmickMovementErrorMessage(error: { message: string }) {
+  if (error.message.includes("GIMMICK_SALDO_NEGATIF"))
+    return "Saldo tidak cukup karena data stok baru saja berubah. Muat ulang halaman lalu coba lagi.";
+  return error.message;
+}
+
+const qtyText = (qty: number, item: GimmickItemQty) => formatPcsWithCartons(qty, item.pcs_per_carton, item.unit);
+
+export async function saveGimmickMovementAction(
+  _prevState: SaveGimmickMovementState,
+  formData: FormData
+): Promise<SaveGimmickMovementState> {
+  try {
+    const { supabase } = await requirePosmWriter();
+
+    const parsed = gimmickMovementSchema.safeParse({
+      id: optionalText(formData.get("id")),
+      item_id: formData.get("item_id") ?? undefined,
+      movement_date: formData.get("movement_date") ?? undefined,
+      type: formData.get("type") ?? undefined,
+      cartons: optionalText(formData.get("cartons")),
+      pcs: optionalText(formData.get("pcs")),
+      direction: optionalText(formData.get("direction")),
+      notes: optionalText(formData.get("notes")),
+    });
+    if (!parsed.success) {
+      return { error: parsed.error.issues[0]?.message ?? "Input tidak valid" };
+    }
+
+    const { id, item_id, movement_date, type, cartons, pcs, direction, notes } = parsed.data;
+
+    const item = await loadGimmickItem(supabase, item_id);
+    if (!item) return { error: "Item gimmick tidak ditemukan." };
+
+    // Konversi karton → pcs memakai isi/karton item dari database.
+    const quantity = cartonsToPcs({ cartons: cartons ?? 0, pcs: pcs ?? 0 }, item.pcs_per_carton);
+    if (quantity <= 0) return { error: "Qty harus lebih dari 0" };
+    const signed = signedQuantity(type, quantity, direction);
+
+    // Saat edit, item boleh diganti: saldo item lama (tanpa mutasi ini) dan
+    // item baru (dengan mutasi ini) sama-sama divalidasi.
+    let previousItemId = item_id;
+    if (id) {
+      const { data: existing } = await supabase
+        .from("gimmick_movements")
+        .select("id, item_id")
+        .eq("id", id)
+        .is("deleted_at", null)
+        .maybeSingle();
+      if (!existing) return { error: "Mutasi tidak ditemukan." };
+      previousItemId = existing.item_id;
+    }
+    const itemChanged = previousItemId !== item_id;
+    if ((!id || itemChanged) && !item.is_active)
+      return { error: "Item nonaktif tidak bisa diberi mutasi baru. Aktifkan item terlebih dahulu." };
+
+    // Trigger database tetap jadi penjaga akhir.
+    const others = (await loadActiveGimmickMovements(supabase, item_id)).filter((m) => m.id !== id);
+    const violation = findBalanceViolation([...others, { movement_date, quantity: signed }]);
+    if (violation) {
+      return {
+        error:
+          signed < 0
+            ? `Saldo tidak cukup. Saldo tersedia per ${formatDate(movement_date)}: ${qtyText(availableFrom(others, movement_date), item)}.`
+            : `Perubahan ini membuat saldo pada ${formatDate(violation.date)} menjadi ${qtyText(violation.balance, item)}.`,
+      };
+    }
+    if (itemChanged) {
+      const remaining = (await loadActiveGimmickMovements(supabase, previousItemId)).filter((m) => m.id !== id);
+      const previousViolation = findBalanceViolation(remaining);
+      if (previousViolation)
+        return {
+          error: `Item tidak bisa diganti karena saldo item sebelumnya pada ${formatDate(previousViolation.date)} menjadi ${previousViolation.balance.toLocaleString("id-ID")}.`,
+        };
+    }
+
+    // unit_cost_snapshot sengaja tidak dikirim: diisi trigger dari harga master.
+    const data = { movement_date, type, quantity: signed, notes: notes ?? null };
+
+    const { error } = id
+      ? await supabase
+          .from("gimmick_movements")
+          .update(itemChanged ? { ...data, item_id } : data)
+          .eq("id", id)
+          .is("deleted_at", null)
+      : await supabase.from("gimmick_movements").insert({ item_id, ...data });
+
+    if (error) return { error: gimmickMovementErrorMessage(error) };
+
+    revalidateGimmickItems([item_id, previousItemId]);
+    return { success: true };
+  } catch {
+    return { error: FORBIDDEN };
+  }
+}
+
+// Hapus = soft delete, ditolak jika membuat saldo berjalan negatif.
+export async function deleteGimmickMovementAction(id: string): Promise<{ error?: string }> {
+  try {
+    const { supabase } = await requirePosmWriter();
+
+    const { data: movement } = await supabase
+      .from("gimmick_movements")
+      .select("id, item_id")
+      .eq("id", id)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (!movement) return { error: "Mutasi tidak ditemukan." };
+
+    const remaining = (await loadActiveGimmickMovements(supabase, movement.item_id)).filter((m) => m.id !== id);
+    const violation = findBalanceViolation(remaining);
+    if (violation) {
+      const item = await loadGimmickItem(supabase, movement.item_id);
+      const balance = item ? qtyText(violation.balance, item) : violation.balance.toLocaleString("id-ID");
+      return {
+        error: `Mutasi ini tidak bisa dihapus karena saldo pada ${formatDate(violation.date)} menjadi ${balance}.`,
+      };
+    }
+
+    const { error } = await supabase
+      .from("gimmick_movements")
+      .update({ deleted_at: new Date().toISOString() })
+      .eq("id", id)
+      .is("deleted_at", null);
+    if (error) return { error: gimmickMovementErrorMessage(error) };
+
+    revalidateGimmickItems([movement.item_id]);
     return {};
   } catch {
     return { error: FORBIDDEN };

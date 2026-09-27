@@ -11,7 +11,7 @@ import {
   stockStatus,
   summarizeAssets,
 } from "@/lib/posm";
-import { GIMMICK_CODE_PREFIX, resolveMonitoringPosmTab } from "@/lib/gimmick";
+import { GIMMICK_CODE_PREFIX, resolveMonitoringPosmTab, summarizeGimmickStock } from "@/lib/gimmick";
 import { KpiCard } from "@/components/dashboard/kpi-card";
 import { AssetConditionBadge, AssetsTable, type AssetListRow } from "./assets-table";
 import { ExportExcelButton } from "./export-excel-button";
@@ -223,7 +223,7 @@ async function AssetTab({ canManage }: { canManage: boolean }) {
 async function GimmickTab() {
   const supabase = await createClient();
 
-  const [{ data: items }, { data: brands }] = await Promise.all([
+  const [{ data: items }, { data: brands }, { data: balances }] = await Promise.all([
     supabase
       .from("gimmick_items")
       .select(
@@ -232,22 +232,45 @@ async function GimmickTab() {
       .is("deleted_at", null)
       .order("code"),
     supabase.from("brands").select("id, name, is_active").order("name"),
+    supabase
+      .from("gimmick_stock_balances")
+      .select("item_id, balance, last_movement_date, movement_count_all, stock_value"),
   ]);
 
-  const rows: GimmickItemListRow[] = (items ?? []).map(({ brand, ...item }) => ({
-    ...item,
-    unit_cost: Number(item.unit_cost),
-    suggested_price: item.suggested_price === null ? null : Number(item.suggested_price),
-    brand_name: (brand as { name: string } | null)?.name ?? null,
-    // Mutasi gimmick menyusul di fase 2; sampai saat itu semua item boleh dihapus.
-    has_movements: false,
-  }));
+  const balanceByItem = new Map((balances ?? []).map((b) => [b.item_id, b]));
+
+  const rows: GimmickItemListRow[] = (items ?? []).map(({ brand, ...item }) => {
+    const b = balanceByItem.get(item.id);
+    const balance = b?.balance ?? 0;
+    return {
+      ...item,
+      unit_cost: Number(item.unit_cost),
+      suggested_price: item.suggested_price === null ? null : Number(item.suggested_price),
+      brand_name: (brand as { name: string } | null)?.name ?? null,
+      has_movements: (b?.movement_count_all ?? 0) > 0,
+      balance,
+      stock_value: Number(b?.stock_value ?? 0),
+      stock_status: stockStatus(balance, item.min_stock),
+      last_movement_date: b?.last_movement_date ?? null,
+    };
+  });
+
+  const summary = summarizeGimmickStock(rows);
 
   return (
-    <GimmickItemsTable
-      items={rows}
-      brands={brands ?? []}
-      suggestedCode={nextCode(GIMMICK_CODE_PREFIX, rows.map((r) => r.code))}
-    />
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <KpiCard label="Item Aktif" value={summary.activeItems} type="count" />
+        <KpiCard label="Stok Menipis" value={summary.lowStock} type="count" />
+        <KpiCard label="Stok Habis" value={summary.outOfStock} type="count" />
+        <KpiCard label="Total Nilai Stok" value={summary.totalValue} type="currency" />
+      </div>
+
+      <GimmickItemsTable
+        items={rows}
+        brands={brands ?? []}
+        suggestedCode={nextCode(GIMMICK_CODE_PREFIX, rows.map((r) => r.code))}
+      />
+    </div>
   );
 }

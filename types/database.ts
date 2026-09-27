@@ -350,6 +350,37 @@ export type GimmickItemRow = {
 
 export type PosmMovementType = "opening" | "in" | "out" | "adjustment";
 
+export type GimmickDestination = "region_distributor" | "event" | "internal" | "other";
+
+export type GimmickMovementRow = {
+  id: string;
+  item_id: string;
+  movement_date: string;
+  type: PosmMovementType;
+  quantity: number;
+  unit_cost_snapshot: number;
+  destination: GimmickDestination | null;
+  region_id: string | null;
+  distributor_id: string | null;
+  campaign_id: string | null;
+  recipient_name: string | null;
+  photo_path: string | null;
+  notes: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+};
+
+export type GimmickStockBalanceRow = {
+  item_id: string;
+  balance: number;
+  last_movement_date: string | null;
+  movement_count_all: number;
+  stock_value: number;
+};
+
 export type PosmMovementRow = {
   id: string;
   item_id: string;
@@ -983,6 +1014,67 @@ export type Database = {
           }
         ];
       };
+      gimmick_movements: {
+        Row: GimmickMovementRow;
+        Insert: {
+          id?: string;
+          item_id: string;
+          movement_date: string;
+          type: PosmMovementType;
+          quantity: number;
+          // Diisi trigger dari harga master; nilai dari klien diabaikan.
+          unit_cost_snapshot?: number;
+          destination?: GimmickDestination | null;
+          region_id?: string | null;
+          distributor_id?: string | null;
+          campaign_id?: string | null;
+          recipient_name?: string | null;
+          photo_path?: string | null;
+          notes?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: Partial<Omit<GimmickMovementRow, "id" | "unit_cost_snapshot" | "created_at" | "created_by">>;
+        Relationships: [
+          {
+            foreignKeyName: "gimmick_movements_item_id_fkey";
+            columns: ["item_id"];
+            isOneToOne: false;
+            referencedRelation: "gimmick_items";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "gimmick_movements_region_id_fkey";
+            columns: ["region_id"];
+            isOneToOne: false;
+            referencedRelation: "regions";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "gimmick_movements_distributor_id_fkey";
+            columns: ["distributor_id"];
+            isOneToOne: false;
+            referencedRelation: "distributors";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "gimmick_movements_campaign_id_fkey";
+            columns: ["campaign_id"];
+            isOneToOne: false;
+            referencedRelation: "campaigns";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "gimmick_movements_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "users";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
       posm_movements: {
         Row: PosmMovementRow;
         Insert: {
@@ -1132,6 +1224,10 @@ export type Database = {
     Views: {
       posm_stock_balances: {
         Row: PosmStockBalanceRow;
+        Relationships: [];
+      };
+      gimmick_stock_balances: {
+        Row: GimmickStockBalanceRow;
         Relationships: [];
       };
       asset_current_status: {

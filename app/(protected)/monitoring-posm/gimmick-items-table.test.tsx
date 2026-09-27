@@ -9,11 +9,12 @@ const { GimmickItemsTable } = await import("./gimmick-items-table");
 afterEach(() => cleanup());
 
 const base = { brand_id: null, brand_name: null, suggested_price: null, min_stock: null, has_movements: false };
+const noStock = { balance: 0, stock_value: 0, stock_status: "habis" as const, last_movement_date: null };
 
 const items: GimmickItemListRow[] = [
-  { ...base, id: "g1", code: "GMK-0001", name: "Payung Wangzai", category: "Payung", unit: "pcs", pcs_per_carton: 24, unit_cost: 45000, program: "Imlek 2027", is_active: true },
-  { ...base, id: "g2", code: "GMK-0002", name: "Tas Kanvas Merah", category: "Tas", unit: "pcs", pcs_per_carton: 80, unit_cost: 12500, program: "Lebaran 2027", is_active: true },
-  { ...base, id: "g3", code: "GMK-0003", name: "Gelas Sedotan Lama", category: "Botol/Gelas", unit: "pcs", pcs_per_carton: null, unit_cost: 8000, program: null, is_active: false },
+  { ...base, id: "g1", code: "GMK-0001", name: "Payung Wangzai", category: "Payung", unit: "pcs", pcs_per_carton: 24, unit_cost: 45000, program: "Imlek 2027", is_active: true, has_movements: true, balance: 77, stock_value: 77 * 45000, stock_status: "aman", last_movement_date: "2026-09-01" },
+  { ...base, ...noStock, id: "g2", code: "GMK-0002", name: "Tas Kanvas Merah", category: "Tas", unit: "pcs", pcs_per_carton: 80, unit_cost: 12500, program: "Lebaran 2027", is_active: true },
+  { ...base, ...noStock, id: "g3", code: "GMK-0003", name: "Gelas Sedotan Lama", category: "Botol/Gelas", unit: "pcs", pcs_per_carton: null, unit_cost: 8000, program: null, is_active: false },
 ];
 
 function renderTable() {
@@ -21,12 +22,23 @@ function renderTable() {
 }
 
 describe("GimmickItemsTable", () => {
-  it("shows active items with their unit cost and carton size", () => {
+  it("shows active items with the balance in pcs + cartons, unit cost and stock value", () => {
     renderTable();
-    expect(screen.getByText("Payung Wangzai")).toBeTruthy();
-    expect(screen.getByText("24")).toBeTruthy();
+    expect(screen.getByText("Payung Wangzai").closest("a")?.getAttribute("href")).toBe("/monitoring-posm/gimmick/items/g1");
+    expect(screen.getByText("77 pcs (3 krt + 5 pcs)")).toBeTruthy();
     expect(screen.getByText(/45\.000/)).toBeTruthy();
+    expect(screen.getByText(/3\.465\.000/)).toBeTruthy();
     expect(screen.queryByText("Gelas Sedotan Lama")).toBeNull();
+  });
+
+  it("filters by stock status and hides delete for items with movements", () => {
+    renderTable();
+    fireEvent.change(screen.getByLabelText("Filter stok"), { target: { value: "habis" } });
+    expect(screen.getByText("Tas Kanvas Merah")).toBeTruthy();
+    expect(screen.queryByText("Payung Wangzai")).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("Filter stok"), { target: { value: "" } });
+    expect(screen.getAllByText("Hapus")).toHaveLength(1);
   });
 
   it("filters by program and by status", () => {
