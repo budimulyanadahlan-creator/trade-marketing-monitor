@@ -10,6 +10,8 @@ import {
   availableFrom,
   canManagePosm,
   findBalanceViolation,
+  placementDateViolation,
+  type PlacementDateViolation,
   POSM_CATEGORIES,
   POSM_MOVEMENT_TYPES,
   POSM_UNITS,
@@ -17,6 +19,7 @@ import {
 } from "@/lib/posm";
 import type {
   AssetCondition,
+  AssetDestination,
   AssetType,
   PosmCategory,
   PosmMovementType,
@@ -409,11 +412,11 @@ const assetMasterSchema = z.object({
 });
 
 // Lokasi awal, hanya saat mendaftarkan asset baru.
-const assetPlacementSchema = z.object({
+const placementFields = z.object({
   event_date: z
-    .string({ error: "Tanggal lokasi awal harus diisi" })
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Tanggal lokasi awal harus diisi"),
-  destination: z.enum(["warehouse", "placed"], { error: "Lokasi awal tidak valid" }),
+    .string({ error: "Tanggal harus diisi" })
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Tanggal harus diisi"),
+  destination: z.enum(["warehouse", "placed"], { error: "Lokasi tidak valid" }),
   region_id: z.string().uuid("Region tidak valid").optional(),
   distributor_id: z.string().uuid("Distributor tidak valid").optional(),
   store_name: z.string().trim().optional(),
@@ -423,14 +426,51 @@ const assetPlacementSchema = z.object({
     error: "Kondisi tidak valid",
   }),
   notes: z.string().trim().optional(),
-}).superRefine((v, ctx) => {
-  // Sama dengan constraint asset_placements_placed_location (migrasi 046).
+});
+
+// Sama dengan constraint asset_placements_placed_location (migrasi 046).
+function requireStoreLocation(
+  v: { destination: AssetDestination; region_id?: string; store_name?: string },
+  ctx: z.RefinementCtx
+) {
   if (v.destination !== "placed") return;
   if (!v.region_id)
     ctx.addIssue({ code: "custom", message: "Region harus diisi untuk asset yang ditempatkan" });
   if (!v.store_name)
     ctx.addIssue({ code: "custom", message: "Nama toko harus diisi untuk asset yang ditempatkan" });
-});
+}
+
+const assetPlacementSchema = placementFields.superRefine(requireStoreLocation);
+
+function placementFormValues(formData: FormData) {
+  return {
+    event_date: formData.get("event_date") ?? undefined,
+    destination: formData.get("destination") ?? undefined,
+    region_id: optionalText(formData.get("region_id")),
+    distributor_id: optionalText(formData.get("distributor_id")),
+    store_name: optionalText(formData.get("store_name")),
+    store_address: optionalText(formData.get("store_address")),
+    pic_name: optionalText(formData.get("pic_name")),
+    condition: formData.get("condition") ?? undefined,
+    notes: optionalText(formData.get("notes")),
+  };
+}
+
+/** Kolom penempatan; Gudang Pusat tidak menyimpan data lokasi toko. */
+function placementColumns(p: z.infer<typeof placementFields>) {
+  const placed = p.destination === "placed";
+  return {
+    event_date: p.event_date,
+    destination: p.destination,
+    region_id: placed ? p.region_id! : null,
+    distributor_id: placed ? (p.distributor_id ?? null) : null,
+    store_name: placed ? p.store_name! : null,
+    store_address: placed ? (p.store_address ?? null) : null,
+    pic_name: p.pic_name ?? null,
+    condition: p.condition,
+    notes: p.notes ?? null,
+  };
+}
 
 export type SaveMarketingAssetState = { error?: string; success?: boolean };
 
@@ -482,21 +522,10 @@ export async function saveMarketingAssetAction(
       return { success: true };
     }
 
-    const placement = assetPlacementSchema.safeParse({
-      event_date: formData.get("event_date") ?? undefined,
-      destination: formData.get("destination") ?? undefined,
-      region_id: optionalText(formData.get("region_id")),
-      distributor_id: optionalText(formData.get("distributor_id")),
-      store_name: optionalText(formData.get("store_name")),
-      store_address: optionalText(formData.get("store_address")),
-      pic_name: optionalText(formData.get("pic_name")),
-      condition: formData.get("condition") ?? undefined,
-      notes: optionalText(formData.get("notes")),
-    });
+    const placement = assetPlacementSchema.safeParse(placementFormValues(formData));
     if (!placement.success) return { error: placement.error.issues[0]?.message ?? "Input tidak valid" };
 
-    const p = placement.data;
-    const placed = p.destination === "placed";
+    const p = placementColumns(placement.data);
 
     const { error } = await supabase.rpc("create_marketing_asset", {
       p_code: assetData.code,
@@ -508,13 +537,13 @@ export async function saveMarketingAssetAction(
       p_acquisition_value: assetData.acquisition_value,
       p_event_date: p.event_date,
       p_destination: p.destination,
-      p_region_id: placed ? p.region_id! : null,
-      p_distributor_id: placed ? (p.distributor_id ?? null) : null,
-      p_store_name: placed ? p.store_name! : null,
-      p_store_address: placed ? (p.store_address ?? null) : null,
-      p_pic_name: p.pic_name ?? null,
+      p_region_id: p.region_id,
+      p_distributor_id: p.distributor_id,
+      p_store_name: p.store_name,
+      p_store_address: p.store_address,
+      p_pic_name: p.pic_name,
       p_condition: p.condition,
-      p_notes: p.notes ?? null,
+      p_notes: p.notes,
     });
     if (error) return { error: assetErrorMessage(error, a.code) };
 
@@ -551,6 +580,125 @@ export async function deleteMarketingAssetAction(id: string): Promise<{ error?: 
       return { error: error.message };
     }
     revalidatePath(PAGE_PATH);
+    return {};
+  } catch {
+    return { error: FORBIDDEN };
+  }
+}
+
+// ============================================================
+// PENEMPATAN ASSET (pindahkan, edit, hapus)
+// ============================================================
+
+const placementSchema = placementFields
+  .extend({
+    id: z.string().uuid().optional(),
+    asset_id: z.string({ error: "Asset tidak valid" }).uuid("Asset tidak valid"),
+  })
+  .superRefine(requireStoreLocation);
+
+export type SaveAssetPlacementState = { error?: string; success?: boolean };
+
+function placementDateMessage(v: PlacementDateViolation) {
+  return v.kind === "before_registration"
+    ? `Tanggal perpindahan tidak boleh sebelum tanggal pendaftaran asset (${formatDate(v.date)}).`
+    : `Tanggal pendaftaran tidak boleh melewati perpindahan pertama (${formatDate(v.date)}).`;
+}
+
+function placementErrorMessage(error: { message: string }) {
+  if (error.message.includes("ASSET_TANGGAL_"))
+    return "Tanggal tidak sesuai urutan riwayat karena data baru saja berubah. Muat ulang halaman lalu coba lagi.";
+  if (error.message.includes("ASSET_PENDAFTARAN")) return REGISTRATION_UNDELETABLE;
+  if (error.message.includes("ASSET_TIDAK_DITEMUKAN")) return "Asset tidak ditemukan.";
+  return error.message;
+}
+
+const REGISTRATION_UNDELETABLE =
+  "Catatan pendaftaran tidak bisa dihapus. Edit catatan ini jika ada data yang salah.";
+
+function revalidateAsset(assetId: string) {
+  revalidatePath(PAGE_PATH);
+  revalidatePath(`${PAGE_PATH}/assets/${assetId}`);
+}
+
+/** Pindahkan asset (catatan baru) atau edit catatan penempatan (dengan id). */
+export async function saveAssetPlacementAction(
+  _prevState: SaveAssetPlacementState,
+  formData: FormData
+): Promise<SaveAssetPlacementState> {
+  try {
+    const { supabase } = await requirePosmWriter();
+
+    const parsed = placementSchema.safeParse({
+      ...placementFormValues(formData),
+      id: optionalText(formData.get("id")),
+      asset_id: formData.get("asset_id") ?? undefined,
+    });
+    if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Input tidak valid" };
+
+    const { id, asset_id } = parsed.data;
+    const data = placementColumns(parsed.data);
+
+    const { data: asset } = await supabase
+      .from("marketing_assets")
+      .select("id")
+      .eq("id", asset_id)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (!asset) return { error: "Asset tidak ditemukan." };
+
+    const { data: existing } = await supabase
+      .from("asset_placements")
+      .select("id, event_date, is_registration")
+      .eq("asset_id", asset_id)
+      .is("deleted_at", null);
+    if (id && !(existing ?? []).some((p) => p.id === id)) return { error: "Catatan penempatan tidak ditemukan." };
+
+    // Trigger asset_placements_guard (migrasi 047) tetap jadi penjaga akhir.
+    const violation = placementDateViolation(existing ?? [], { id, event_date: data.event_date });
+    if (violation) return { error: placementDateMessage(violation) };
+
+    const { error } = id
+      ? await supabase
+          .from("asset_placements")
+          .update(data)
+          .eq("id", id)
+          .eq("asset_id", asset_id)
+          .is("deleted_at", null)
+      : await supabase.from("asset_placements").insert({ asset_id, ...data });
+    if (error) return { error: placementErrorMessage(error) };
+
+    revalidateAsset(asset_id);
+    return { success: true };
+  } catch {
+    return { error: FORBIDDEN };
+  }
+}
+
+// Hapus = soft delete. Catatan pendaftaran tidak bisa dihapus selama asset
+// ada, sehingga menghapus perpindahan terakhir mengembalikan status asset ke
+// catatan sebelumnya.
+export async function deleteAssetPlacementAction(id: string): Promise<{ error?: string }> {
+  try {
+    const { supabase } = await requirePosmWriter();
+
+    const { data: placement } = await supabase
+      .from("asset_placements")
+      .select("id, asset_id, is_registration")
+      .eq("id", id)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (!placement) return { error: "Catatan penempatan tidak ditemukan." };
+    if (placement.is_registration) return { error: REGISTRATION_UNDELETABLE };
+
+    const { error } = await supabase
+      .from("asset_placements")
+      .update({ deleted_at: new Date().toISOString() })
+      .eq("id", id)
+      .is("deleted_at", null);
+    if (error) return { error: placementErrorMessage(error) };
+
+    revalidateAsset(placement.asset_id);
     return {};
   } catch {
     return { error: FORBIDDEN };

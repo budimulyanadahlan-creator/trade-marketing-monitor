@@ -407,3 +407,50 @@ export function summarizeAssets(assets: AssetSummaryInput[]): AssetSummary {
   }
   return { totalUnits: assets.length, totalValue, byCondition, inWarehouse, placed: assets.length - inWarehouse };
 }
+
+// ============================================================
+// RIWAYAT PENEMPATAN ASSET
+// ============================================================
+// Urutan harus sama dengan view asset_current_status (migrasi 047): tanggal,
+// lalu pendaftaran lebih dulu, lalu urutan input.
+
+type PlacementOrderKey = { event_date: string; is_registration: boolean; created_at: string };
+
+/** Riwayat urut kronologis; setiap catatan menyimpan catatan sebelumnya (asal). */
+export function withPreviousPlacement<T extends PlacementOrderKey>(
+  placements: T[]
+): (T & { previous: T | null })[] {
+  const sorted = [...placements].sort(
+    (a, b) =>
+      a.event_date.localeCompare(b.event_date) ||
+      Number(b.is_registration) - Number(a.is_registration) ||
+      a.created_at.localeCompare(b.created_at)
+  );
+  return sorted.map((p, i) => ({ ...p, previous: i > 0 ? sorted[i - 1] : null }));
+}
+
+export type PlacementDateViolation =
+  | { kind: "before_registration"; date: string }
+  | { kind: "registration_after_move"; date: string };
+
+/**
+ * Pendaftaran selalu catatan paling awal: perpindahan tidak boleh bertanggal
+ * sebelum pendaftaran, dan tanggal pendaftaran tidak boleh melewati
+ * perpindahan mana pun. Sama dengan trigger asset_placements_guard.
+ */
+export function placementDateViolation(
+  existing: { id: string; event_date: string; is_registration: boolean }[],
+  record: { id?: string; event_date: string }
+): PlacementDateViolation | null {
+  const registration = existing.find((p) => p.is_registration);
+  if (record.id && record.id === registration?.id) {
+    const firstMove = existing
+      .filter((p) => !p.is_registration)
+      .map((p) => p.event_date)
+      .sort()[0];
+    return firstMove && record.event_date > firstMove ? { kind: "registration_after_move", date: firstMove } : null;
+  }
+  if (registration && record.event_date < registration.event_date)
+    return { kind: "before_registration", date: registration.event_date };
+  return null;
+}

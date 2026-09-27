@@ -119,22 +119,29 @@ async function PosmTab({ canManage }: { canManage: boolean }) {
 async function AssetTab({ canManage }: { canManage: boolean }) {
   const supabase = await createClient();
 
-  const [{ data: assets }, { data: statuses }, { data: brands }, { data: regions }, { data: distributors }] =
-    await Promise.all([
-      supabase
-        .from("marketing_assets")
-        .select(
-          "id, code, name, asset_type, brand_id, serial_number, acquisition_date, acquisition_value, brand:brands(name)"
-        )
-        .is("deleted_at", null)
-        .order("code"),
-      supabase
-        .from("asset_current_status")
-        .select("asset_id, destination, region_id, distributor_id, store_name, condition, placement_count_all"),
-      supabase.from("brands").select("id, name, is_active").order("name"),
-      supabase.from("regions").select("id, name, is_active").order("name"),
-      supabase.from("distributors").select("id, name, is_active").order("name"),
-    ]);
+  const [
+    { data: assets },
+    { data: statuses },
+    { data: brands },
+    { data: regions },
+    { data: distributors },
+    { data: storeNames },
+  ] = await Promise.all([
+    supabase
+      .from("marketing_assets")
+      .select(
+        "id, code, name, asset_type, brand_id, serial_number, acquisition_date, acquisition_value, brand:brands(name)"
+      )
+      .is("deleted_at", null)
+      .order("code"),
+    supabase
+      .from("asset_current_status")
+      .select("asset_id, destination, region_id, distributor_id, store_name, condition, placement_count_all"),
+    supabase.from("brands").select("id, name, is_active").order("name"),
+    supabase.from("regions").select("id, name, is_active").order("name"),
+    supabase.from("distributors").select("id, name, is_active").order("name"),
+    supabase.from("asset_store_names").select("store_name").order("store_name"),
+  ]);
 
   const statusByAsset = new Map((statuses ?? []).map((s) => [s.asset_id, s]));
   const regionName = new Map((regions ?? []).map((r) => [r.id, r.name]));
@@ -187,6 +194,7 @@ async function AssetTab({ canManage }: { canManage: boolean }) {
         brands={brands ?? []}
         regions={regions ?? []}
         distributors={distributors ?? []}
+        storeNames={(storeNames ?? []).map((s) => s.store_name)}
         canManage={canManage}
         suggestedCode={nextCode(ASSET_CODE_PREFIX, rows.map((r) => r.code))}
       />

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState, useMemo, useState, useTransition } from "react";
 import {
   deleteMarketingAssetAction,
@@ -30,12 +31,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { AlertCircle, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { AlertCircle, ArrowRightLeft, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { filterBySearch } from "@/lib/search";
 import { ASSET_CONDITIONS, ASSET_DESTINATION_LABELS, ASSET_TYPES } from "@/lib/posm";
 import { formatIDR } from "@/lib/utils";
 import type { AssetCondition, AssetDestination, MarketingAssetRow } from "@/types/database";
+import { PlacementDialog } from "./placement-dialog";
 
 export type AssetListRow = Pick<
   MarketingAssetRow,
@@ -398,7 +400,11 @@ function DeleteAssetButton({ id, label }: { id: string; label: string }) {
 
 // ---- Location Cell ----
 
-function AssetLocation({ asset }: { asset: AssetListRow }) {
+export function AssetLocation({
+  asset,
+}: {
+  asset: Pick<AssetListRow, "destination" | "store_name" | "region_name" | "distributor_name">;
+}) {
   if (asset.destination === "warehouse") return <span className="text-slate-300">Gudang Pusat</span>;
   return (
     <div className="space-y-0.5">
@@ -412,11 +418,21 @@ function AssetLocation({ asset }: { asset: AssetListRow }) {
 
 // ---- Main Table ----
 
+const WRITTEN_OFF: AssetCondition = "Dihapusbukukan";
+const ALL_CONDITIONS = "all";
+
+/** Filter kondisi: default (kosong) menyembunyikan asset Dihapusbukukan. */
+function matchesCondition(condition: AssetCondition, filter: string) {
+  if (filter === "") return condition !== WRITTEN_OFF;
+  return filter === ALL_CONDITIONS || condition === filter;
+}
+
 export function AssetsTable({
   assets,
   brands,
   regions,
   distributors,
+  storeNames,
   canManage,
   suggestedCode,
 }: {
@@ -424,6 +440,7 @@ export function AssetsTable({
   brands: Option[];
   regions: Option[];
   distributors: Option[];
+  storeNames: string[];
   canManage: boolean;
   suggestedCode: string;
 }) {
@@ -438,7 +455,7 @@ export function AssetsTable({
       (a) =>
         (!typeFilter || a.asset_type === typeFilter) &&
         (!brandFilter || a.brand_id === brandFilter) &&
-        (!conditionFilter || a.condition === conditionFilter) &&
+        matchesCondition(a.condition, conditionFilter) &&
         (!regionFilter || a.region_id === regionFilter)
     );
     return filterBySearch(byFilters, query, (a) => [
@@ -462,12 +479,19 @@ export function AssetsTable({
 
   const hasFilter =
     query.trim() !== "" || typeFilter !== "" || brandFilter !== "" || conditionFilter !== "" || regionFilter !== "";
+  const hiddenWrittenOff =
+    conditionFilter === "" ? assets.filter((a) => a.condition === WRITTEN_OFF).length : 0;
   const colSpan = canManage ? 8 : 7;
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <p className="text-sm text-slate-400">{filtered.length} asset</p>
+        <p className="text-sm text-slate-400">
+          {filtered.length} asset
+          {hiddenWrittenOff > 0 && (
+            <span className="text-slate-600"> • {hiddenWrittenOff} {WRITTEN_OFF.toLowerCase()} disembunyikan</span>
+          )}
+        </p>
         <div className="flex items-center gap-2 flex-wrap justify-end">
           <SearchInput
             value={query}
@@ -505,9 +529,10 @@ export function AssetsTable({
             aria-label="Filter kondisi"
             value={conditionFilter}
             onChange={(e) => setConditionFilter(e.target.value)}
-            className="h-9 w-40"
+            className="h-9 w-48"
           >
-            <option value="">Semua kondisi</option>
+            <option value="">Tanpa {WRITTEN_OFF}</option>
+            <option value={ALL_CONDITIONS}>Semua kondisi</option>
             {ASSET_CONDITIONS.map((c) => (
               <option key={c} value={c}>
                 {c}
@@ -567,7 +592,9 @@ export function AssetsTable({
                     <code className="rounded bg-white/5 px-2 py-0.5 text-xs text-slate-300">{asset.code}</code>
                   </TableCell>
                   <TableCell className="font-medium">
-                    <p>{asset.name}</p>
+                    <Link href={`/monitoring-posm/assets/${asset.id}`} className="hover:text-emerald-400 hover:underline">
+                      {asset.name}
+                    </Link>
                     {asset.serial_number && <p className="text-xs text-slate-500">{asset.serial_number}</p>}
                   </TableCell>
                   <TableCell className="text-slate-300">{asset.asset_type}</TableCell>
@@ -594,6 +621,21 @@ export function AssetsTable({
                             <Button variant="outline" size="sm">
                               <Pencil className="h-3 w-3" />
                               Edit
+                            </Button>
+                          }
+                        />
+                        <PlacementDialog
+                          assetId={asset.id}
+                          assetLabel={`${asset.code} — ${asset.name}`}
+                          placement={null}
+                          defaultCondition={asset.condition}
+                          regions={regions}
+                          distributors={distributors}
+                          storeNames={storeNames}
+                          trigger={
+                            <Button variant="outline" size="sm">
+                              <ArrowRightLeft className="h-3 w-3" />
+                              Pindahkan
                             </Button>
                           }
                         />

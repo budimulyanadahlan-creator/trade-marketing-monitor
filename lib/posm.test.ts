@@ -9,6 +9,8 @@ import {
   monthRange,
   movementFiltersQuery,
   nextCode,
+  placementDateViolation,
+  withPreviousPlacement,
   summarizeAssets,
   parseMovementFilters,
   parseRekapFilters,
@@ -331,5 +333,62 @@ describe("summarizeAssets", () => {
     expect(summary.totalUnits).toBe(0);
     expect(summary.totalValue).toBe(0);
     expect(summary.inWarehouse + summary.placed).toBe(0);
+  });
+});
+
+describe("withPreviousPlacement", () => {
+  const pl = (id: string, event_date: string, created_at: string, is_registration = false) => ({
+    id,
+    event_date,
+    created_at,
+    is_registration,
+  });
+
+  it("orders history chronologically and links each record to the one before it", () => {
+    const history = withPreviousPlacement([
+      pl("move-2", "2026-03-01", "2026-03-01T10:00:00Z"),
+      pl("reg", "2026-01-01", "2026-01-01T08:00:00Z", true),
+      pl("move-1", "2026-02-01", "2026-02-01T09:00:00Z"),
+    ]);
+
+    expect(history.map((h) => h.id)).toEqual(["reg", "move-1", "move-2"]);
+    expect(history.map((h) => h.previous?.id ?? null)).toEqual([null, "reg", "move-1"]);
+  });
+
+  it("puts a move on the registration date after the registration", () => {
+    const history = withPreviousPlacement([
+      pl("move", "2026-01-01", "2026-01-01T07:00:00Z"),
+      pl("reg", "2026-01-01", "2026-01-01T08:00:00Z", true),
+    ]);
+    expect(history.map((h) => h.id)).toEqual(["reg", "move"]);
+  });
+});
+
+describe("placementDateViolation", () => {
+  const existing = [
+    { id: "reg", event_date: "2026-02-01", is_registration: true },
+    { id: "move", event_date: "2026-03-01", is_registration: false },
+  ];
+
+  it("rejects a move dated before the registration", () => {
+    expect(placementDateViolation(existing, { event_date: "2026-01-31" })).toEqual({
+      kind: "before_registration",
+      date: "2026-02-01",
+    });
+    expect(placementDateViolation(existing, { event_date: "2026-02-01" })).toBeNull();
+  });
+
+  it("applies the same rule when editing a move", () => {
+    expect(placementDateViolation(existing, { id: "move", event_date: "2026-01-15" })?.kind).toBe(
+      "before_registration"
+    );
+  });
+
+  it("rejects moving the registration date past the first move", () => {
+    expect(placementDateViolation(existing, { id: "reg", event_date: "2026-03-02" })).toEqual({
+      kind: "registration_after_move",
+      date: "2026-03-01",
+    });
+    expect(placementDateViolation(existing, { id: "reg", event_date: "2026-03-01" })).toBeNull();
   });
 });

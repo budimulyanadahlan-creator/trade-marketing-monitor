@@ -383,6 +383,8 @@ export type AssetPlacementRow = {
   condition: AssetCondition;
   notes: string | null;
   photo_path: string | null;
+  /** Catatan pertama yang dibuat saat asset didaftarkan (migrasi 047). */
+  is_registration: boolean;
   created_by: string | null;
   updated_by: string | null;
   created_at: string;
@@ -1017,12 +1019,15 @@ export type Database = {
           condition: AssetCondition;
           notes?: string | null;
           photo_path?: string | null;
+          is_registration?: boolean;
           created_by?: string | null;
           created_at?: string;
           updated_at?: string;
           deleted_at?: string | null;
         };
-        Update: Partial<Omit<AssetPlacementRow, "id" | "asset_id" | "created_at" | "created_by">>;
+        Update: Partial<
+          Omit<AssetPlacementRow, "id" | "asset_id" | "is_registration" | "created_at" | "created_by">
+        >;
         Relationships: [
           {
             foreignKeyName: "asset_placements_asset_id_fkey";
@@ -1044,6 +1049,13 @@ export type Database = {
             isOneToOne: false;
             referencedRelation: "distributors";
             referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "asset_placements_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "users";
+            referencedColumns: ["id"];
           }
         ];
       };
@@ -1061,6 +1073,10 @@ export type Database = {
       };
       asset_current_status: {
         Row: AssetCurrentStatusRow;
+        Relationships: [];
+      };
+      asset_store_names: {
+        Row: { store_name: string };
         Relationships: [];
       };
     };
