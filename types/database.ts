@@ -317,6 +317,37 @@ export type PosmItemRow = {
   deleted_at: string | null;
 };
 
+export type GimmickCategory =
+  | "Payung"
+  | "Tas"
+  | "Botol/Gelas"
+  | "Mainan"
+  | "Pakaian"
+  | "Alat Tulis"
+  | "Lainnya";
+export type GimmickUnit = "pcs" | "set";
+
+export type GimmickItemRow = {
+  id: string;
+  code: string;
+  name: string;
+  brand_id: string | null;
+  category: GimmickCategory;
+  unit: GimmickUnit;
+  pcs_per_carton: number | null;
+  unit_cost: number;
+  suggested_price: number | null;
+  min_stock: number | null;
+  program: string | null;
+  photo_path: string | null;
+  is_active: boolean;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+};
+
 export type PosmMovementType = "opening" | "in" | "out" | "adjustment";
 
 export type PosmMovementRow = {
@@ -913,6 +944,38 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "posm_items_brand_id_fkey";
+            columns: ["brand_id"];
+            isOneToOne: false;
+            referencedRelation: "brands";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      gimmick_items: {
+        Row: GimmickItemRow;
+        Insert: {
+          id?: string;
+          code: string;
+          name: string;
+          brand_id?: string | null;
+          category: GimmickCategory;
+          unit: GimmickUnit;
+          pcs_per_carton?: number | null;
+          unit_cost: number;
+          suggested_price?: number | null;
+          min_stock?: number | null;
+          program?: string | null;
+          photo_path?: string | null;
+          is_active?: boolean;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: Partial<Omit<GimmickItemRow, "id" | "created_at" | "created_by">>;
+        Relationships: [
+          {
+            foreignKeyName: "gimmick_items_brand_id_fkey";
             columns: ["brand_id"];
             isOneToOne: false;
             referencedRelation: "brands";

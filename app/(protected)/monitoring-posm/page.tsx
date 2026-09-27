@@ -11,20 +11,17 @@ import {
   stockStatus,
   summarizeAssets,
 } from "@/lib/posm";
+import { GIMMICK_CODE_PREFIX, resolveMonitoringPosmTab } from "@/lib/gimmick";
 import { KpiCard } from "@/components/dashboard/kpi-card";
 import { AssetConditionBadge, AssetsTable, type AssetListRow } from "./assets-table";
 import { ExportExcelButton } from "./export-excel-button";
-import { MonitoringPosmTabs, type MonitoringPosmTab } from "./monitoring-posm-tabs";
+import { GimmickItemsTable, type GimmickItemListRow } from "./gimmick-items-table";
+import { MonitoringPosmTabs } from "./monitoring-posm-tabs";
 import { PosmItemsTable, type PosmItemListRow } from "./posm-items-table";
 import { requirePosmViewer } from "./viewer";
 import { photoUrlOf, signPosmPhotos } from "./photo-urls";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
-
-function resolveTab(v: string | string[] | undefined): MonitoringPosmTab {
-  const tab = Array.isArray(v) ? v[0] : v;
-  return tab === "asset" ? "asset" : "posm";
-}
 
 export default async function MonitoringPosmPage({
   searchParams,
@@ -33,7 +30,8 @@ export default async function MonitoringPosmPage({
 }) {
   const { canManage, isAdmin } = await requirePosmViewer();
 
-  const tab = resolveTab((await searchParams).tab);
+  // Tab Gimmick hanya untuk pemegang can_manage_posm(); user lain ke tab POSM.
+  const tab = resolveMonitoringPosmTab((await searchParams).tab, canManage);
 
   return (
     <div className="space-y-6">
@@ -46,7 +44,7 @@ export default async function MonitoringPosmPage({
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <MonitoringPosmTabs active={tab} />
+        <MonitoringPosmTabs active={tab} canManage={canManage} />
         <div className="flex gap-2">
           <ExportExcelButton href={posmExportHref({})} />
           {isAdmin && (
@@ -60,11 +58,9 @@ export default async function MonitoringPosmPage({
         </div>
       </div>
 
-      {tab === "posm" ? (
-        <PosmTab canManage={canManage} />
-      ) : (
-        <AssetTab canManage={canManage} />
-      )}
+      {tab === "posm" && <PosmTab canManage={canManage} />}
+      {tab === "asset" && <AssetTab canManage={canManage} />}
+      {tab === "gimmick" && <GimmickTab />}
     </div>
   );
 }
@@ -219,5 +215,39 @@ async function AssetTab({ canManage }: { canManage: boolean }) {
         suggestedCode={nextCode(ASSET_CODE_PREFIX, rows.map((r) => r.code))}
       />
     </div>
+  );
+}
+
+// Hanya dirender untuk pemegang can_manage_posm() (lihat resolveMonitoringPosmTab);
+// RLS gimmick_items menolak pembaca lain.
+async function GimmickTab() {
+  const supabase = await createClient();
+
+  const [{ data: items }, { data: brands }] = await Promise.all([
+    supabase
+      .from("gimmick_items")
+      .select(
+        "id, code, name, brand_id, category, unit, pcs_per_carton, unit_cost, suggested_price, min_stock, program, is_active, brand:brands(name)"
+      )
+      .is("deleted_at", null)
+      .order("code"),
+    supabase.from("brands").select("id, name, is_active").order("name"),
+  ]);
+
+  const rows: GimmickItemListRow[] = (items ?? []).map(({ brand, ...item }) => ({
+    ...item,
+    unit_cost: Number(item.unit_cost),
+    suggested_price: item.suggested_price === null ? null : Number(item.suggested_price),
+    brand_name: (brand as { name: string } | null)?.name ?? null,
+    // Mutasi gimmick menyusul di fase 2; sampai saat itu semua item boleh dihapus.
+    has_movements: false,
+  }));
+
+  return (
+    <GimmickItemsTable
+      items={rows}
+      brands={brands ?? []}
+      suggestedCode={nextCode(GIMMICK_CODE_PREFIX, rows.map((r) => r.code))}
+    />
   );
 }

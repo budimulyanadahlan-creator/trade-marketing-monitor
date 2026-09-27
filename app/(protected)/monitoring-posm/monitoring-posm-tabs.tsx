@@ -1,17 +1,13 @@
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { monitoringPosmTabs, type MonitoringPosmTab } from "@/lib/gimmick";
 
-export type MonitoringPosmTab = "posm" | "asset";
+export type { MonitoringPosmTab };
 
-const TABS: { value: MonitoringPosmTab; label: string }[] = [
-  { value: "posm", label: "POSM" },
-  { value: "asset", label: "Asset" },
-];
-
-export function MonitoringPosmTabs({ active }: { active: MonitoringPosmTab }) {
+export function MonitoringPosmTabs({ active, canManage }: { active: MonitoringPosmTab; canManage: boolean }) {
   return (
     <div className="inline-flex rounded-md border border-white/10 bg-white/5 p-0.5">
-      {TABS.map((tab) => (
+      {monitoringPosmTabs(canManage).map((tab) => (
         <Link
           key={tab.value}
           href={`/monitoring-posm?tab=${tab.value}`}

@@ -1,14 +1,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/lib/supabase/server";
+import { requirePosmWriter } from "@/lib/posm-writer";
 import { z } from "zod";
 import { formatDate } from "@/lib/utils";
 import {
   ASSET_CONDITIONS,
   ASSET_TYPES,
   availableFrom,
-  canManagePosm,
   findBalanceViolation,
   placementDateViolation,
   type PlacementDateViolation,
@@ -24,41 +23,10 @@ import type {
   PosmCategory,
   PosmMovementType,
   PosmUnit,
-  UserRole,
 } from "@/types/database";
 
 const PAGE_PATH = "/monitoring-posm";
 const FORBIDDEN = "Anda tidak memiliki akses.";
-
-// RLS (can_manage_posm) tetap jadi penjaga akhir; cek ini untuk pesan ramah
-// dan menghindari round-trip yang pasti ditolak.
-async function requirePosmWriter() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) throw new Error("Unauthorized");
-
-  const { data: profile } = await supabase
-    .from("users")
-    .select("role, is_active, department:departments(name)")
-    .eq("id", user.id)
-    .single();
-
-  if (
-    !profile ||
-    !profile.is_active ||
-    !canManagePosm({
-      role: profile.role as UserRole,
-      departmentName: (profile.department as { name: string } | null)?.name,
-    })
-  ) {
-    throw new Error("Forbidden");
-  }
-
-  return { supabase };
-}
 
 // ============================================================
 // ITEM POSM
