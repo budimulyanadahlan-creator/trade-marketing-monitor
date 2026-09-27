@@ -23,6 +23,8 @@ import {
   parseGimmickRekapFilters,
   programIlikePattern,
   canonicalProgram,
+  gimmickExportHref,
+  parseGimmickExportParams,
   type GimmickRekapMovement,
 } from "./gimmick";
 
@@ -353,5 +355,35 @@ describe("canonicalProgram", () => {
   it("keeps new programs and empty input as-is", () => {
     expect(canonicalProgram("Natal 2027", existing)).toBe("Natal 2027");
     expect(canonicalProgram(undefined, existing)).toBeNull();
+  });
+});
+
+describe("gimmickExportHref / parseGimmickExportParams", () => {
+  const ITEM = "11111111-1111-1111-1111-111111111111";
+  const REGION = "22222222-2222-2222-2222-222222222222";
+
+  it("carries active gimmick movement and rekap filters without touching POSM params", () => {
+    const href = gimmickExportHref({
+      movements: { from: "2026-09-01", type: "out", destination: "event", region: REGION, program: "Imlek 2027", page: 3 },
+      rekap: { from: "2026-07", to: "2026-09", item: ITEM, program: "Imlek 2027", mode: "value" },
+    });
+    expect(href.startsWith("/api/export/monitoring-posm?")).toBe(true);
+
+    const params = Object.fromEntries(new URL(href, "http://x").searchParams);
+    // Tidak ada kunci filter POSM (type/region/rekap_*) agar sheet POSM memakai default.
+    expect(params.type).toBeUndefined();
+    expect(Object.keys(params).some((k) => k.startsWith("rekap_"))).toBe(false);
+
+    expect(parseGimmickExportParams(params, "2026-09-27")).toEqual({
+      movements: { from: "2026-09-01", type: "out", destination: "event", region: REGION, program: "Imlek 2027", page: 1 },
+      rekap: { from: "2026-07", to: "2026-09", item: ITEM, program: "Imlek 2027", mode: "qty" },
+    });
+  });
+
+  it("defaults to all movements and the last 6 months without params", () => {
+    expect(gimmickExportHref({})).toBe("/api/export/monitoring-posm");
+    const parsed = parseGimmickExportParams({}, "2026-09-27");
+    expect(parsed.movements).toEqual({ page: 1 });
+    expect(parsed.rekap).toEqual({ from: "2026-04", to: "2026-09", mode: "qty" });
   });
 });

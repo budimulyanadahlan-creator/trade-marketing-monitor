@@ -22,6 +22,7 @@ import {
   GIMMICK_DESTINATION_LABELS,
   GIMMICK_DESTINATIONS,
   GIMMICK_MOVEMENT_TYPES,
+  gimmickExportHref,
   gimmickMovementFiltersQuery,
   parseGimmickMovementFilters,
   programIlikePattern,
@@ -30,6 +31,7 @@ import {
 import type { PosmMovementType } from "@/types/database";
 import { withCampaignRefs } from "../../campaign-refs";
 import { MovementDestination } from "../../movement-destination";
+import { ExportExcelButton } from "../../export-excel-button";
 import { requirePosmViewer } from "../../viewer";
 import { photoUrlOf, signGimmickPhotos } from "../../photo-urls";
 import { PhotoThumb } from "../../posm-photo";
@@ -201,7 +203,10 @@ export default async function GimmickMovementsPage({ searchParams }: { searchPar
         </div>
       </form>
 
-      <p className="text-sm text-slate-400">{total.toLocaleString("id-ID")} mutasi</p>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-slate-400">{total.toLocaleString("id-ID")} mutasi</p>
+        <ExportExcelButton href={gimmickExportHref({ movements: filters })} />
+      </div>
 
       <div className="rounded-xl border border-white/8 bg-white/2 overflow-hidden">
         <Table>

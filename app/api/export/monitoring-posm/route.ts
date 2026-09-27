@@ -1,15 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { parsePosmExportParams } from "@/lib/posm";
+import { canManagePosm, parsePosmExportParams } from "@/lib/posm";
+import { parseGimmickExportParams } from "@/lib/gimmick";
 import { loadPosmExportData } from "@/lib/posm-export-data";
+import { loadGimmickExportData } from "@/lib/gimmick-export-data";
 import { buildPosmWorkbook } from "@/lib/posm-excel";
+import { addGimmickSheets } from "@/lib/gimmick-excel";
+import type { UserRole } from "@/types/database";
 
 function todayInJakarta() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta" }).format(new Date());
 }
 
 // Sama dengan guard halaman /monitoring-posm: semua role yang login kecuali
-// distributor boleh export (hak baca, tanpa region-lock).
+// distributor boleh export (hak baca, tanpa region-lock). Sheet gimmick hanya
+// untuk pemegang can_manage_posm(); pemanggil lain tidak memicu query gimmick.
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
 
@@ -23,7 +28,7 @@ export async function GET(request: NextRequest) {
 
   const { data: profile } = await supabase
     .from("users")
-    .select("role")
+    .select("role, department:departments(name)")
     .eq("id", user.id)
     .single();
 
@@ -31,14 +36,23 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Tidak punya akses" }, { status: 403 });
   }
 
-  const today = todayInJakarta();
-  const filters = parsePosmExportParams(
-    Object.fromEntries(new URL(request.url).searchParams),
-    today
-  );
+  const includeGimmick = canManagePosm({
+    role: profile.role as UserRole,
+    departmentName: (profile.department as { name: string } | null)?.name,
+  });
 
-  const data = await loadPosmExportData(supabase, filters);
-  const buf = await buildPosmWorkbook(data).xlsx.writeBuffer();
+  const today = todayInJakarta();
+  const params = Object.fromEntries(new URL(request.url).searchParams);
+  const filters = parsePosmExportParams(params, today);
+
+  const [data, gimmick] = await Promise.all([
+    loadPosmExportData(supabase, filters),
+    includeGimmick ? loadGimmickExportData(supabase, parseGimmickExportParams(params, today)) : null,
+  ]);
+
+  const wb = buildPosmWorkbook(data);
+  if (gimmick) addGimmickSheets(wb, gimmick);
+  const buf = await wb.xlsx.writeBuffer();
 
   return new NextResponse(buf as unknown as BodyInit, {
     headers: {

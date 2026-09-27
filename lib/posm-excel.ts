@@ -18,28 +18,29 @@ import type {
 
 // Pola format sama dengan lib/monitoring-budget-excel.ts.
 const NUMBER_FORMAT = "#,##0";
+const CURRENCY_FORMAT = '"Rp" #,##0;-"Rp" #,##0';
 const DATE_FORMAT = "dd mmm yyyy";
 
-const HEADER_FILL: ExcelJS.Fill = {
+export const HEADER_FILL: ExcelJS.Fill = {
   type: "pattern",
   pattern: "solid",
   fgColor: { argb: "FFE8E8E8" },
 };
 
-const TOTAL_FILL: ExcelJS.Fill = {
+export const TOTAL_FILL: ExcelJS.Fill = {
   type: "pattern",
   pattern: "solid",
   fgColor: { argb: "FFD9F2E6" }, // hijau muda — baris Total
 };
 
-const THIN_BORDER: Partial<ExcelJS.Borders> = {
+export const THIN_BORDER: Partial<ExcelJS.Borders> = {
   top: { style: "thin", color: { argb: "FFD0D0D0" } },
   bottom: { style: "thin", color: { argb: "FFD0D0D0" } },
   left: { style: "thin", color: { argb: "FFD0D0D0" } },
   right: { style: "thin", color: { argb: "FFD0D0D0" } },
 };
 
-const STOCK_STATUS_LABELS: Record<PosmStockStatus, string> = {
+export const STOCK_STATUS_LABELS: Record<PosmStockStatus, string> = {
   aman: "Aman",
   menipis: "Menipis",
   habis: "Habis",
@@ -100,19 +101,20 @@ export type PosmExportData = {
   assets: AssetExportRow[];
 };
 
-type ColumnKind = "text" | "number" | "date";
-type Column = { header: string; width: number; kind?: ColumnKind };
+export type ColumnKind = "text" | "number" | "date" | "currency";
+export type Column = { header: string; width: number; kind?: ColumnKind };
 
 /** Tanggal `YYYY-MM-DD` sebagai Date UTC agar Excel menampilkannya sebagai tanggal. */
-function excelDate(value: string | null): Date | null {
+export function excelDate(value: string | null): Date | null {
   if (!value) return null;
   const [y, m, d] = value.slice(0, 10).split("-").map(Number);
   return new Date(Date.UTC(y, m - 1, d));
 }
 
-function formatCell(cell: ExcelJS.Cell, kind: ColumnKind = "text") {
+export function formatCell(cell: ExcelJS.Cell, kind: ColumnKind = "text") {
   cell.border = THIN_BORDER;
   if (kind === "number") cell.numFmt = NUMBER_FORMAT;
+  if (kind === "currency") cell.numFmt = CURRENCY_FORMAT;
   if (kind === "date") cell.numFmt = DATE_FORMAT;
 }
 
@@ -120,7 +122,7 @@ function formatCell(cell: ExcelJS.Cell, kind: ColumnKind = "text") {
  * Sheet tabel sederhana: header tebal, lebar kolom tetap, border tipis.
  * Dengan `caption`, keterangan ditulis di baris 1 dan header di baris 3.
  */
-function addTableSheet(
+export function addTableSheet(
   wb: ExcelJS.Workbook,
   name: string,
   columns: Column[],
@@ -141,7 +143,7 @@ function addTableSheet(
     const cell = header.getCell(i + 1);
     cell.fill = HEADER_FILL;
     cell.border = THIN_BORDER;
-    cell.alignment = { horizontal: c.kind === "number" ? "right" : "left", vertical: "middle" };
+    cell.alignment = { horizontal: c.kind === "number" || c.kind === "currency" ? "right" : "left", vertical: "middle" };
   });
 
   for (const values of rows) {

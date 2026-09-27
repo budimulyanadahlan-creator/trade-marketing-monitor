@@ -15,7 +15,7 @@ import { createClient } from "@/lib/supabase/server";
 
 function makeChain(data: unknown) {
   const chain: Record<string, unknown> = {};
-  for (const method of ["select", "eq", "in", "gte", "lte", "lt", "is", "order", "range"]) {
+  for (const method of ["select", "eq", "in", "gte", "lte", "lt", "is", "ilike", "order", "range"]) {
     chain[method] = vi.fn().mockReturnValue(chain);
   }
   chain.single = vi.fn().mockResolvedValue({ data });
@@ -81,12 +81,67 @@ const TABLES = {
       condition: "Baik",
     },
   ],
+  gimmick_items: [
+    {
+      id: "gmk-1",
+      code: "GMK-0001",
+      name: "Payung Wangzai",
+      program: "Imlek 2027",
+      category: "Payung",
+      unit: "pcs",
+      pcs_per_carton: 24,
+      unit_cost: "25000",
+      min_stock: 10,
+      is_active: true,
+      brand: { name: "Wangzai" },
+    },
+  ],
+  gimmick_stock_balances: [
+    { item_id: "gmk-1", balance: 77, last_movement_date: "2026-09-12", stock_value: "1925000" },
+  ],
+  gimmick_movements: [
+    {
+      id: "gmv-1",
+      item_id: "gmk-1",
+      region_id: REGION_ID,
+      movement_date: "2026-09-12",
+      type: "out",
+      quantity: -30,
+      unit_cost_snapshot: "20000",
+      destination: "region_distributor",
+      recipient_name: "Andi",
+      notes: null,
+      campaign_id: "camp-1",
+      item: { code: "GMK-0001", name: "Payung Wangzai", unit: "pcs", pcs_per_carton: 24, program: "Imlek 2027" },
+      region: { name: "Jawa Barat" },
+      distributor: null,
+      creator: { full_name: "Budi" },
+    },
+  ],
 };
 
-function setupMocks({ user = true, role }: { user?: boolean; role: string | null }) {
-  const profileChain = makeChain(role ? { role } : null);
+const GIMMICK_SHEETS = [
+  "Saldo Gimmick",
+  "Mutasi Gimmick",
+  "Rekap Gimmick per Region",
+  "Rekap Gimmick per Tujuan",
+  "Rekap Gimmick per Program",
+];
 
-  const mockClient = {
+let mockClient: { from: ReturnType<typeof vi.fn>; [key: string]: unknown };
+
+function setupMocks({
+  user = true,
+  role,
+  department = null,
+}: {
+  user?: boolean;
+  role: string | null;
+  department?: string | null;
+}) {
+  const profileChain = makeChain(role ? { role, department: department ? { name: department } : null } : null);
+
+  mockClient = {
     auth: {
       getUser: vi.fn().mockResolvedValue({ data: { user: user ? { id: "user-1" } : null } }),
     },
@@ -164,5 +219,76 @@ describe("GET /api/export/monitoring-posm — isi file", () => {
     expect(asset.getCell(7).value).toBe(5_000_000);
     expect(asset.getCell(9).value).toBe("Ditempatkan");
     expect(asset.getCell(10).value).toBe("Jawa Barat");
+  });
+});
+
+describe("GET /api/export/monitoring-posm — sheet gimmick", () => {
+  const GIMMICK_URL =
+    `http://localhost/api/export/monitoring-posm?g_type=out&g_region=${REGION_ID}` +
+    `&grekap_from=2026-08&grekap_to=2026-09&grekap_program=Imlek%202027`;
+
+  function gimmickTablesQueried() {
+    return mockClient.from.mock.calls.map(([table]) => table as string).filter((t) => t.startsWith("gimmick_"));
+  }
+
+  it.each([
+    ["user", "Marketing"],
+    ["manager", "Trade Marketing"],
+    ["admin", null],
+    ["superadmin", null],
+  ])("menambahkan kelima sheet gimmick untuk %s (%s)", async (role, department) => {
+    setupMocks({ role, department });
+    const res = await GET(new NextRequest(GIMMICK_URL));
+    const wb = await readWorkbook(res);
+    expect(wb.worksheets.map((ws) => ws.name)).toEqual([
+      "Saldo POSM",
+      "Mutasi",
+      "Rekap Keluar per Region",
+      "Daftar Asset",
+      ...GIMMICK_SHEETS,
+    ]);
+  });
+
+  it("mengisi sheet gimmick dengan angka yang sama dengan layar", async () => {
+    setupMocks({ role: "user", department: "Marketing" });
+    const wb = await readWorkbook(await GET(new NextRequest(GIMMICK_URL)));
+
+    const saldo = wb.getWorksheet("Saldo Gimmick")!.getRow(2);
+    expect(saldo.getCell(1).value).toBe("GMK-0001");
+    expect(saldo.getCell(8).value).toBe(77);
+    expect(saldo.getCell(9).value).toBe("77 pcs (3 krt + 5 pcs)");
+    expect(saldo.getCell(10).value).toBe(25_000);
+    expect(saldo.getCell(11).value).toBe(1_925_000);
+
+    const mutasi = wb.getWorksheet("Mutasi Gimmick")!;
+    expect(mutasi.getCell("A1").value).toBe("Filter: Tipe: Keluar • Region: Jawa Barat");
+    const mv = mutasi.getRow(4);
+    expect(mv.getCell(6).value).toBe(-30);
+    expect(mv.getCell(10).value).toBe(-600_000);
+    expect(mv.getCell(11).value).toBe("Region/Distributor");
+    expect(mv.getCell(14).value).toBe("SKP-0007");
+
+    const rekap = wb.getWorksheet("Rekap Gimmick per Program")!;
+    expect(rekap.getCell("A1").value).toBe("Periode: Agu 2026 – Sep 2026 • Program: Imlek 2027");
+  });
+
+  it.each([
+    ["user", "Sales"],
+    ["manager", "Sales"],
+    ["finance", "Finance"],
+    ["user", null],
+  ])("tanpa sheet gimmick dan tanpa query gimmick untuk %s (%s)", async (role, department) => {
+    setupMocks({ role, department });
+    const res = await GET(new NextRequest(GIMMICK_URL));
+    expect(res.status).toBe(200);
+    const wb = await readWorkbook(res);
+    expect(wb.worksheets.map((ws) => ws.name)).toEqual([
+      "Saldo POSM",
+      "Mutasi",
+      "Rekap Keluar per Region",
+      "Daftar Asset",
+    ]);
+    expect(gimmickTablesQueried()).toEqual([]);
+    expect(mockClient.rpc).not.toHaveBeenCalledWith("gimmick_campaign_refs", expect.anything());
   });
 });

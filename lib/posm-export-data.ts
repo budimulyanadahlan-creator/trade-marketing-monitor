@@ -79,11 +79,11 @@ async function loadMovements(
   }));
 }
 
-/** Ringkasan filter mutasi yang aktif, mis. "Tipe: Keluar • Region: Jawa Barat". */
-function movementFilterLabel(
+/** Bagian ringkasan filter mutasi yang aktif, mis. ["Tipe: Keluar", "Region: Jawa Barat"]. */
+export function movementFilterParts(
   filters: PosmMovementFilters,
   names: { item: Map<string, string>; region: Map<string, string>; distributor: Map<string, string> }
-): string {
+): string[] {
   const parts: string[] = [];
   if (filters.from || filters.to) {
     parts.push(
@@ -96,6 +96,10 @@ function movementFilterLabel(
   if (filters.distributor) {
     parts.push(`Distributor: ${names.distributor.get(filters.distributor) ?? filters.distributor}`);
   }
+  return parts;
+}
+
+export function joinFilterLabel(parts: string[]): string {
   return parts.length ? parts.join(" • ") : "Semua mutasi";
 }
 
@@ -188,11 +192,13 @@ export async function loadPosmExportData(
   return {
     balances: balanceRows,
     movements,
-    movementFilterLabel: movementFilterLabel(filters.movements, {
-      item: itemName,
-      region: regionName,
-      distributor: distributorName,
-    }),
+    movementFilterLabel: joinFilterLabel(
+      movementFilterParts(filters.movements, {
+        item: itemName,
+        region: regionName,
+        distributor: distributorName,
+      })
+    ),
     rekap,
     assets: assetRows,
   };

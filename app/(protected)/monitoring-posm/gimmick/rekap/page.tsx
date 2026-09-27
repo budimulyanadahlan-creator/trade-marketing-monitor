@@ -22,6 +22,7 @@ import {
   aggregateGimmickRegionRekap,
   distinctPrograms,
   GIMMICK_DESTINATION_LABELS,
+  gimmickExportHref,
   gimmickMovementFiltersQuery,
   gimmickRekapFiltersQuery,
   parseGimmickRekapFilters,
@@ -30,6 +31,7 @@ import {
   type GimmickRekapMode,
 } from "@/lib/gimmick";
 import { loadGimmickOutMovements } from "@/lib/gimmick-rekap-data";
+import { ExportExcelButton } from "../../export-excel-button";
 import { requirePosmViewer } from "../../viewer";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
@@ -281,6 +283,7 @@ export default async function GimmickRekapPage({ searchParams }: { searchParams:
             </Link>
           ))}
         </div>
+        <ExportExcelButton href={gimmickExportHref({ rekap: filters })} />
       </div>
 
       <RekapMatrix

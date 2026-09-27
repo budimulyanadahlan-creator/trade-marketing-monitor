@@ -445,3 +445,51 @@ export function gimmickRekapFiltersQuery(filters: Partial<GimmickRekapFilters>):
   if (filters.mode === "value") params.set("mode", "value");
   return params.toString();
 }
+
+// ============================================================
+// EXPORT EXCEL
+// ============================================================
+// Filter gimmick ikut ke route export Monitoring POSM dengan prefix sendiri
+// agar tidak bercampur dengan filter POSM (tanpa prefix dan `rekap_`).
+
+const GIMMICK_MOVEMENT_EXPORT_PREFIX = "g_";
+const GIMMICK_REKAP_EXPORT_PREFIX = "grekap_";
+
+function withPrefix(qs: string, prefix: string): [string, string][] {
+  return [...new URLSearchParams(qs)].map(([key, v]) => [`${prefix}${key}`, v]);
+}
+
+function stripPrefix(params: Record<string, string | string[] | undefined>, prefix: string) {
+  return Object.fromEntries(
+    Object.entries(params)
+      .filter(([key]) => key.startsWith(prefix))
+      .map(([key, v]) => [key.slice(prefix.length), v])
+  );
+}
+
+/** URL export dengan filter gimmick aktif (halaman dan mode rekap diabaikan). */
+export function gimmickExportHref({
+  movements,
+  rekap,
+}: {
+  movements?: Partial<GimmickMovementFilters>;
+  rekap?: Partial<GimmickRekapFilters>;
+}): string {
+  const params = new URLSearchParams([
+    ...withPrefix(gimmickMovementFiltersQuery({ ...movements, page: 1 }), GIMMICK_MOVEMENT_EXPORT_PREFIX),
+    ...withPrefix(gimmickRekapFiltersQuery({ ...rekap, mode: "qty" }), GIMMICK_REKAP_EXPORT_PREFIX),
+  ]);
+  const qs = params.toString();
+  return `/api/export/monitoring-posm${qs ? `?${qs}` : ""}`;
+}
+
+/** Filter gimmick dari query string export; sheet rekap selalu memuat qty dan nilai. */
+export function parseGimmickExportParams(
+  params: Record<string, string | string[] | undefined>,
+  today: string
+): { movements: GimmickMovementFilters; rekap: GimmickRekapFilters } {
+  return {
+    movements: { ...parseGimmickMovementFilters(stripPrefix(params, GIMMICK_MOVEMENT_EXPORT_PREFIX)), page: 1 },
+    rekap: { ...parseGimmickRekapFilters(stripPrefix(params, GIMMICK_REKAP_EXPORT_PREFIX), today), mode: "qty" },
+  };
+}

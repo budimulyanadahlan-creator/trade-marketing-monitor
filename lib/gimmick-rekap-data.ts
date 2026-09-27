@@ -23,7 +23,7 @@ type OutMovementRow = {
 export type GimmickRekapData = { months: string[]; movements: GimmickRekapMovement[] };
 
 // Sumber data tunggal rekap gimmick keluar — dipakai halaman rekap dan
-// (nanti) export Excel, supaya angka di kedua tempat identik. Mengembalikan
+// export Excel, supaya angka di kedua tempat identik. Mengembalikan
 // mutasi mentah agar ketiga rekap dan kedua mode dihitung dari data yang sama.
 export async function loadGimmickOutMovements(
   supabase: SupabaseServerClient,
