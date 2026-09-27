@@ -11,9 +11,10 @@ import { createClient } from "@/lib/supabase/server";
 const ITEM = "11111111-1111-4111-8111-111111111111";
 const OTHER_ITEM = "22222222-2222-4222-8222-222222222222";
 const MOVEMENT = "33333333-3333-4333-8333-333333333333";
+const NEW_MOVEMENT = "44444444-4444-4444-8444-444444444444";
 
 type Item = { id: string; is_active: boolean; unit: string; pcs_per_carton: number | null };
-type Movement = { id: string; item_id: string; movement_date: string; quantity: number };
+type Movement = { id: string; item_id: string; movement_date: string; quantity: number; photo_path?: string };
 
 /** Query builder berantai yang bisa di-await; filter eq/is dicatat untuk diperiksa. */
 function query<T>(rows: T[]) {
@@ -39,12 +40,17 @@ function setupMocks({
   movements = [] as Movement[],
   writeError = null as { message: string } | null,
 } = {}) {
-  const insert = vi.fn().mockResolvedValue({ error: writeError });
+  const insertSingle = vi.fn().mockResolvedValue({ data: writeError ? null : { id: NEW_MOVEMENT }, error: writeError });
+  const insert = vi.fn().mockReturnValue({ select: () => ({ single: insertSingle }) });
   const updateIs = vi.fn().mockResolvedValue({ error: writeError });
   const updateEq = vi.fn().mockReturnValue({ is: updateIs });
   const update = vi.fn().mockReturnValue({ eq: updateEq });
 
+  const remove = vi.fn().mockResolvedValue({ error: null });
+  const storageFrom = vi.fn().mockReturnValue({ remove });
+
   const client = {
+    storage: { from: storageFrom },
     auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: "user-1" } } }) },
     from: vi.fn().mockImplementation((table: string) => {
       if (table === "users")
@@ -61,7 +67,7 @@ function setupMocks({
     }),
   };
   (createClient as ReturnType<typeof vi.fn>).mockResolvedValue(client);
-  return { insert, update, updateEq, updateIs };
+  return { insert, update, updateEq, updateIs, remove, storageFrom };
 }
 
 function formDataOf(entries: Record<string, string>) {
@@ -83,7 +89,8 @@ describe("saveGimmickMovementAction", () => {
 
     const result = await saveGimmickMovementAction({}, formDataOf({ ...incoming, unit_cost_snapshot: "1" }));
 
-    expect(result).toEqual({ success: true });
+    // id dipakai form untuk mengunggah foto bukti sesudahnya.
+    expect(result).toEqual({ success: true, id: NEW_MOVEMENT });
     expect(insert).toHaveBeenCalledWith({
       item_id: ITEM,
       movement_date: "2026-09-01",
@@ -162,7 +169,8 @@ describe("saveGimmickMovementAction — Keluar", () => {
       })
     );
 
-    expect(result).toEqual({ success: true });
+    // id dipakai form untuk mengunggah foto bukti sesudahnya.
+    expect(result).toEqual({ success: true, id: NEW_MOVEMENT });
     expect(insert).toHaveBeenCalledWith({
       item_id: ITEM,
       movement_date: "2026-09-01",
@@ -310,6 +318,38 @@ describe("saveGimmickMovementAction — edit", () => {
 
     expect(result.error).toMatch(/Item nonaktif/);
     expect(update).not.toHaveBeenCalled();
+  });
+
+  it("clears and removes the proof photo when a Keluar is changed to another type", async () => {
+    const stock = [
+      { id: MOVEMENT, item_id: ITEM, movement_date: "2026-09-01", quantity: -5, photo_path: "gimmick_movement/m/1.jpg" },
+      { id: "m0", item_id: ITEM, movement_date: "2026-08-01", quantity: 50 },
+    ];
+    const { update, remove, storageFrom } = setupMocks({ movements: stock });
+
+    const result = await saveGimmickMovementAction({}, formDataOf({ ...incoming, id: MOVEMENT, cartons: "0", pcs: "5" }));
+
+    expect(result.success).toBe(true);
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ type: "in", photo_path: null }));
+    expect(storageFrom).toHaveBeenCalledWith("gimmick-photos");
+    expect(remove).toHaveBeenCalledWith(["gimmick_movement/m/1.jpg"]);
+  });
+
+  it("keeps the proof photo when a Keluar stays a Keluar", async () => {
+    const stock = [
+      { id: MOVEMENT, item_id: ITEM, movement_date: "2026-09-01", quantity: -5, photo_path: "gimmick_movement/m/1.jpg" },
+      { id: "m0", item_id: ITEM, movement_date: "2026-08-01", quantity: 50 },
+    ];
+    const { update, remove } = setupMocks({ movements: stock });
+
+    const result = await saveGimmickMovementAction(
+      {},
+      formDataOf({ ...incoming, id: MOVEMENT, type: "out", cartons: "0", pcs: "6", destination: "internal", notes: "kantor" })
+    );
+
+    expect(result.success).toBe(true);
+    expect(update).toHaveBeenCalledWith(expect.not.objectContaining({ photo_path: null }));
+    expect(remove).not.toHaveBeenCalled();
   });
 
   it("translates the database balance error into a reload hint", async () => {

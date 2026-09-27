@@ -8,7 +8,7 @@ const { GimmickItemsTable } = await import("./gimmick-items-table");
 
 afterEach(() => cleanup());
 
-const base = { brand_id: null, brand_name: null, suggested_price: null, min_stock: null, has_movements: false };
+const base = { brand_id: null, brand_name: null, suggested_price: null, min_stock: null, has_movements: false, photo_url: null };
 const noStock = { balance: 0, stock_value: 0, stock_status: "habis" as const, last_movement_date: null };
 
 const items: GimmickItemListRow[] = [

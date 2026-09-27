@@ -13,6 +13,7 @@ import {
   gimmickDestination,
   GIMMICK_UNITS,
 } from "@/lib/gimmick";
+import { GIMMICK_PHOTO_BUCKET } from "@/lib/posm-photo";
 import { availableFrom, findBalanceViolation, signedQuantity } from "@/lib/posm";
 import { formatDate } from "@/lib/utils";
 import type { GimmickCategory, GimmickUnit } from "@/types/database";
@@ -216,7 +217,8 @@ const gimmickMovementSchema = z
       ctx.addIssue({ code: "custom", message: "Alasan penyesuaian harus diisi" });
   });
 
-export type SaveGimmickMovementState = { error?: string; success?: boolean };
+// id = mutasi yang disimpan, dipakai form untuk upload foto bukti sesudahnya.
+export type SaveGimmickMovementState = { error?: string; success?: boolean; id?: string };
 
 type GimmickSupabase = Awaited<ReturnType<typeof requirePosmWriter>>["supabase"];
 type GimmickItemQty = { unit: string; pcs_per_carton: number | null };
@@ -305,15 +307,17 @@ export async function saveGimmickMovementAction(
     // Saat edit, item boleh diganti: saldo item lama (tanpa mutasi ini) dan
     // item baru (dengan mutasi ini) sama-sama divalidasi.
     let previousItemId = item_id;
+    let existingPhoto: string | null = null;
     if (id) {
       const { data: existing } = await supabase
         .from("gimmick_movements")
-        .select("id, item_id")
+        .select("id, item_id, photo_path")
         .eq("id", id)
         .is("deleted_at", null)
         .maybeSingle();
       if (!existing) return { error: "Mutasi tidak ditemukan." };
       previousItemId = existing.item_id;
+      existingPhoto = existing.photo_path;
     }
     const itemChanged = previousItemId !== item_id;
     if ((!id || itemChanged) && !item.is_active)
@@ -339,21 +343,35 @@ export async function saveGimmickMovementAction(
         };
     }
 
-    // unit_cost_snapshot sengaja tidak dikirim: diisi trigger dari harga master.
-    const data = { movement_date, type, quantity: signed, notes: notes ?? null, ...destination.fields };
+    // Foto bukti serah terima hanya untuk Keluar (constraint migrasi 053):
+    // jika tipe diganti, foto ikut dilepas lalu objeknya dihapus.
+    const staleProof = type !== "out" ? existingPhoto : null;
 
-    const { error } = id
+    // unit_cost_snapshot sengaja tidak dikirim: diisi trigger dari harga master.
+    const data = {
+      movement_date,
+      type,
+      quantity: signed,
+      notes: notes ?? null,
+      ...destination.fields,
+      ...(staleProof ? { photo_path: null } : {}),
+    };
+
+    const { data: inserted, error } = id
       ? await supabase
           .from("gimmick_movements")
           .update(itemChanged ? { ...data, item_id } : data)
           .eq("id", id)
           .is("deleted_at", null)
-      : await supabase.from("gimmick_movements").insert({ item_id, ...data });
+      : await supabase.from("gimmick_movements").insert({ item_id, ...data }).select("id").single();
 
     if (error) return { error: gimmickMovementErrorMessage(error) };
 
+    // Best-effort, mutasi sudah tersimpan.
+    if (staleProof) await supabase.storage.from(GIMMICK_PHOTO_BUCKET).remove([staleProof]);
+
     revalidateGimmickItems([item_id, previousItemId]);
-    return { success: true };
+    return { success: true, id: id ?? inserted?.id };
   } catch {
     return { error: FORBIDDEN };
   }

@@ -25,7 +25,7 @@ import { GimmickItemsTable, type GimmickItemListRow } from "./gimmick-items-tabl
 import { MonitoringPosmTabs } from "./monitoring-posm-tabs";
 import { PosmItemsTable, type PosmItemListRow } from "./posm-items-table";
 import { requirePosmViewer } from "./viewer";
-import { photoUrlOf, signPosmPhotos } from "./photo-urls";
+import { photoUrlOf, signGimmickPhotos, signPosmPhotos } from "./photo-urls";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
@@ -237,7 +237,7 @@ async function GimmickTab() {
     supabase
       .from("gimmick_items")
       .select(
-        "id, code, name, brand_id, category, unit, pcs_per_carton, unit_cost, suggested_price, min_stock, program, is_active, brand:brands(name)"
+        "id, code, name, brand_id, category, unit, pcs_per_carton, unit_cost, suggested_price, min_stock, program, is_active, photo_path, brand:brands(name)"
       )
       .is("deleted_at", null)
       .order("code"),
@@ -255,8 +255,9 @@ async function GimmickTab() {
   ]);
 
   const balanceByItem = new Map((balances ?? []).map((b) => [b.item_id, b]));
+  const photoUrls = await signGimmickPhotos(supabase, (items ?? []).map((i) => i.photo_path));
 
-  const rows: GimmickItemListRow[] = (items ?? []).map(({ brand, ...item }) => {
+  const rows: GimmickItemListRow[] = (items ?? []).map(({ brand, photo_path, ...item }) => {
     const b = balanceByItem.get(item.id);
     const balance = b?.balance ?? 0;
     return {
@@ -269,6 +270,7 @@ async function GimmickTab() {
       stock_value: Number(b?.stock_value ?? 0),
       stock_status: stockStatus(balance, item.min_stock),
       last_movement_date: b?.last_movement_date ?? null,
+      photo_url: photoUrlOf(photoUrls, photo_path),
     };
   });
 

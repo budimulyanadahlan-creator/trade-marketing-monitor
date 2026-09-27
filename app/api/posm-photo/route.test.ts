@@ -18,11 +18,12 @@ import { compressImageIfNeeded } from "@/lib/image-compress";
 // -------------------------------------------------------
 
 type DbError = { message: string } | null;
+type PhotoRecord = { id: string; photo_path: string | null; type?: string };
 const RECORD_ID = "11111111-1111-4111-8111-111111111111";
 
 // Query builder berantai: select() diakhiri maybeSingle() (baca record),
 // update() di-await (hasil tulis).
-function recordTable(record: { id: string; photo_path: string | null } | null, updateError: DbError) {
+function recordTable(record: PhotoRecord | null, updateError: DbError) {
   const t: Record<string, ReturnType<typeof vi.fn>> & { then?: unknown } = {};
   for (const m of ["select", "eq", "is"]) t[m] = vi.fn(() => t);
   t.update = vi.fn(() => t);
@@ -36,7 +37,7 @@ function setupMocks({
   role = "user",
   department = "Trade Marketing",
   isActive = true,
-  record = { id: RECORD_ID, photo_path: "item/old/1.jpg" } as { id: string; photo_path: string | null } | null,
+  record = { id: RECORD_ID, photo_path: "item/old/1.jpg" } as PhotoRecord | null,
   uploadError = null as DbError,
   updateError = null as DbError,
   compressedSize = 1000,
@@ -179,6 +180,43 @@ describe("POST /api/posm-photo", () => {
     expect(res.status).toBe(200);
     expect(supabase.from).toHaveBeenCalledWith("asset_placements");
     expect(remove).not.toHaveBeenCalled();
+  });
+
+  it("stores gimmick item photos in the separate gimmick-photos bucket", async () => {
+    const { supabase, upload, remove, storageFrom } = setupMocks({
+      record: { id: RECORD_ID, photo_path: "gimmick_item/old/1.jpg" },
+    });
+
+    const res = await POST(postRequest({ kind: "gimmick_item", id: RECORD_ID, file: makeFile() }));
+
+    expect(res.status).toBe(200);
+    expect(supabase.from).toHaveBeenCalledWith("gimmick_items");
+    expect(storageFrom).toHaveBeenCalledWith("gimmick-photos");
+    expect(storageFrom).not.toHaveBeenCalledWith("posm-photos");
+    expect(upload.mock.calls[0][0]).toMatch(new RegExp(`^gimmick_item/${RECORD_ID}/\\d+\\.jpg$`));
+    expect(remove).toHaveBeenCalledWith(["gimmick_item/old/1.jpg"]);
+  });
+
+  it("stores handover proof photos on Keluar gimmick movements", async () => {
+    const { supabase, storageFrom } = setupMocks({ record: { id: RECORD_ID, photo_path: null, type: "out" } });
+
+    const res = await POST(postRequest({ kind: "gimmick_movement", id: RECORD_ID, file: makeFile() }));
+
+    expect(res.status).toBe(200);
+    expect(supabase.from).toHaveBeenCalledWith("gimmick_movements");
+    expect(storageFrom).toHaveBeenCalledWith("gimmick-photos");
+  });
+
+  it("rejects proof photos on gimmick movements other than Keluar", async () => {
+    const { upload, table } = setupMocks({ record: { id: RECORD_ID, photo_path: null, type: "in" } });
+
+    const res = await POST(postRequest({ kind: "gimmick_movement", id: RECORD_ID, file: makeFile() }));
+    const json = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(json.error).toMatch(/Keluar/);
+    expect(upload).not.toHaveBeenCalled();
+    expect(table.update).not.toHaveBeenCalled();
   });
 
   it("removes the new upload and keeps the old photo when saving the path fails", async () => {

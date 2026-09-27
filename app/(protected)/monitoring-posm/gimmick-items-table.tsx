@@ -38,6 +38,7 @@ import type { PosmStockStatus } from "@/lib/posm";
 import { formatDate, formatIDR } from "@/lib/utils";
 import type { GimmickItemRow } from "@/types/database";
 import { STOCK_STATUS_LABELS, StockStatusBadge } from "./stock-status-badge";
+import { PhotoField, PhotoThumb, usePhotoChange } from "./posm-photo";
 
 export type GimmickItemListRow = Pick<
   GimmickItemRow,
@@ -61,6 +62,7 @@ export type GimmickItemListRow = Pick<
   stock_value: number;
   stock_status: PosmStockStatus;
   last_movement_date: string | null;
+  photo_url: string | null;
 };
 
 type BrandOption = { id: string; name: string; is_active: boolean };
@@ -85,10 +87,12 @@ function GimmickItemDialog({
   const isEdit = item !== null;
   const [open, setOpen] = useState(false);
   const programListId = useId();
+  const photo = usePhotoChange("gimmick_item");
   const [state, formAction, isPending] = useActionState(
     async (prev: SaveGimmickItemState, formData: FormData) => {
       const result = await saveGimmickItemAction(prev, formData);
       if (result.success) {
+        await photo.save(result.id);
         toast.success(isEdit ? "Item gimmick diperbarui" : "Item gimmick ditambahkan");
         setOpen(false);
       }
@@ -101,7 +105,13 @@ function GimmickItemDialog({
   const brandOptions = brands.filter((b) => b.is_active || b.id === item?.brand_id);
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (next) photo.reset();
+      }}
+    >
       <DialogTrigger asChild>{trigger}</DialogTrigger>
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
@@ -258,6 +268,13 @@ function GimmickItemDialog({
               disabled={isPending}
             />
           </div>
+
+          <PhotoField
+            currentUrl={item?.photo_url ?? null}
+            value={photo.change}
+            onChange={photo.setChange}
+            disabled={isPending}
+          />
 
           <DialogFooter className="pt-2">
             <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={isPending}>
@@ -488,13 +505,18 @@ export function GimmickItemsTable({
                     <code className="rounded bg-white/5 px-2 py-0.5 text-xs text-slate-300">{item.code}</code>
                   </TableCell>
                   <TableCell className="font-medium">
-                    <Link
-                      href={`/monitoring-posm/gimmick/items/${item.id}`}
-                      className="hover:text-emerald-300 hover:underline underline-offset-4"
-                    >
-                      {item.name}
-                    </Link>
-                    {item.brand_name && <div className="text-xs text-slate-500">{item.brand_name}</div>}
+                    <div className="flex items-center gap-2">
+                      <PhotoThumb url={item.photo_url} alt={`${item.code} — ${item.name}`} />
+                      <div>
+                        <Link
+                          href={`/monitoring-posm/gimmick/items/${item.id}`}
+                          className="hover:text-emerald-300 hover:underline underline-offset-4"
+                        >
+                          {item.name}
+                        </Link>
+                        {item.brand_name && <div className="text-xs text-slate-500">{item.brand_name}</div>}
+                      </div>
+                    </div>
                   </TableCell>
                   <TableCell className="text-slate-300">{item.program ?? <span className="text-slate-600">—</span>}</TableCell>
                   <TableCell className="text-slate-300">{item.category}</TableCell>

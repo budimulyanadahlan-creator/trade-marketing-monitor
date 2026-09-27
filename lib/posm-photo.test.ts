@@ -19,10 +19,15 @@ describe("validatePosmPhoto", () => {
 });
 
 describe("parsePosmPhotoKind", () => {
-  it("maps each photo kind to its table", () => {
-    expect(parsePosmPhotoKind("item")).toBe("posm_items");
-    expect(parsePosmPhotoKind("asset")).toBe("marketing_assets");
-    expect(parsePosmPhotoKind("placement")).toBe("asset_placements");
+  it("maps each POSM/asset photo kind to its table in the posm-photos bucket", () => {
+    expect(parsePosmPhotoKind("item")).toEqual({ table: "posm_items", bucket: "posm-photos" });
+    expect(parsePosmPhotoKind("asset")).toEqual({ table: "marketing_assets", bucket: "posm-photos" });
+    expect(parsePosmPhotoKind("placement")).toEqual({ table: "asset_placements", bucket: "posm-photos" });
+  });
+
+  it("keeps gimmick photos in the separate gimmick-photos bucket", () => {
+    expect(parsePosmPhotoKind("gimmick_item")).toEqual({ table: "gimmick_items", bucket: "gimmick-photos" });
+    expect(parsePosmPhotoKind("gimmick_movement")).toEqual({ table: "gimmick_movements", bucket: "gimmick-photos" });
   });
 
   it("returns null for unknown kinds", () => {

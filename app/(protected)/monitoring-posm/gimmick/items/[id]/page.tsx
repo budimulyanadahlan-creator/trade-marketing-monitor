@@ -8,6 +8,8 @@ import { formatPcsWithCartons, withRunningValue } from "@/lib/gimmick";
 import { StockStatusBadge } from "../../../stock-status-badge";
 import { withCampaignRefs } from "../../../campaign-refs";
 import { requirePosmViewer } from "../../../viewer";
+import { photoUrlOf, signGimmickPhotos } from "../../../photo-urls";
+import { PhotoThumb } from "../../../posm-photo";
 import { GimmickMovementsPanel, type GimmickMovementListRow } from "./gimmick-movements-panel";
 
 export default async function GimmickItemDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -21,7 +23,7 @@ export default async function GimmickItemDetailPage({ params }: { params: Promis
     supabase
       .from("gimmick_items")
       .select(
-        "id, code, name, category, unit, pcs_per_carton, unit_cost, min_stock, program, is_active, brand:brands(name)"
+        "id, code, name, category, unit, pcs_per_carton, unit_cost, min_stock, program, is_active, photo_path, brand:brands(name)"
       )
       .eq("id", id)
       .is("deleted_at", null)
@@ -29,7 +31,7 @@ export default async function GimmickItemDetailPage({ params }: { params: Promis
     supabase
       .from("gimmick_movements")
       .select(
-        "id, movement_date, type, quantity, unit_cost_snapshot, destination, region_id, distributor_id, campaign_id, recipient_name, notes, created_at, region:regions(name), distributor:distributors(name), creator:created_by(full_name)"
+        "id, movement_date, type, quantity, unit_cost_snapshot, destination, region_id, distributor_id, campaign_id, recipient_name, photo_path, notes, created_at, region:regions(name), distributor:distributors(name), creator:created_by(full_name)"
       )
       .eq("item_id", id)
       .is("deleted_at", null),
@@ -47,9 +49,11 @@ export default async function GimmickItemDetailPage({ params }: { params: Promis
 
   // Label SKP lewat gimmick_campaign_refs (khusus can_manage_posm()).
   const withRefs = await withCampaignRefs(supabase, movements ?? [], "gimmick_campaign_refs");
+  const photoUrls = await signGimmickPhotos(supabase, [item.photo_path, ...withRefs.map((m) => m.photo_path)]);
   const rows: GimmickMovementListRow[] = withRunningValue(
-    withRefs.map(({ creator, region, distributor, ...m }) => ({
+    withRefs.map(({ creator, region, distributor, photo_path, ...m }) => ({
       ...m,
+      photo_url: photoUrlOf(photoUrls, photo_path),
       region_name: (region as { name: string } | null)?.name ?? null,
       distributor_name: (distributor as { name: string } | null)?.name ?? null,
       unit_cost_snapshot: Number(m.unit_cost_snapshot),
@@ -72,23 +76,26 @@ export default async function GimmickItemDetailPage({ params }: { params: Promis
       </Link>
 
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <code className="rounded bg-white/5 px-2 py-0.5 text-xs text-slate-300">{item.code}</code>
-            {!item.is_active && <Badge variant="outline">Nonaktif</Badge>}
+        <div className="flex items-start gap-4">
+          <PhotoThumb url={photoUrlOf(photoUrls, item.photo_path)} alt={`${item.code} — ${item.name}`} className="h-24 w-24" />
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <code className="rounded bg-white/5 px-2 py-0.5 text-xs text-slate-300">{item.code}</code>
+              {!item.is_active && <Badge variant="outline">Nonaktif</Badge>}
+            </div>
+            <h1 className="text-2xl font-bold text-slate-100">{item.name}</h1>
+            <p className="text-sm text-slate-400">
+              {[
+                brandName,
+                item.program,
+                item.category,
+                item.pcs_per_carton ? `${item.pcs_per_carton} ${item.unit}/karton` : `satuan ${item.unit}`,
+                `harga pokok ${formatIDR(unitCost)}/${item.unit}`,
+              ]
+                .filter(Boolean)
+                .join(" • ")}
+            </p>
           </div>
-          <h1 className="text-2xl font-bold text-slate-100">{item.name}</h1>
-          <p className="text-sm text-slate-400">
-            {[
-              brandName,
-              item.program,
-              item.category,
-              item.pcs_per_carton ? `${item.pcs_per_carton} ${item.unit}/karton` : `satuan ${item.unit}`,
-              `harga pokok ${formatIDR(unitCost)}/${item.unit}`,
-            ]
-              .filter(Boolean)
-              .join(" • ")}
-          </p>
         </div>
 
         <div className="rounded-xl border border-white/10 bg-white/5 px-5 py-4 text-right">

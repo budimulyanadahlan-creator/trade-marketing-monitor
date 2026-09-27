@@ -5,7 +5,6 @@ import { compressImageIfNeeded } from "@/lib/image-compress";
 import { canManagePosm } from "@/lib/posm";
 import {
   parsePosmPhotoKind,
-  POSM_PHOTO_BUCKET,
   POSM_PHOTO_MAX_LABEL,
   POSM_PHOTO_MAX_SIZE,
   posmPhotoPath,
@@ -14,9 +13,10 @@ import {
 } from "@/lib/posm-photo";
 import type { UserRole } from "@/types/database";
 
-// Upload/ganti (POST) dan hapus (DELETE) foto item POSM, asset, atau catatan
-// penempatan. Storage dan tabel ditulis dengan client milik user, jadi policy
-// can_manage_posm() (migrasi 048 & RLS tabel) tetap jadi penjaga akhir.
+// Upload/ganti (POST) dan hapus (DELETE) foto item POSM, asset, catatan
+// penempatan, item gimmick, atau mutasi Keluar gimmick. Storage dan tabel
+// ditulis dengan client milik user, jadi policy can_manage_posm() (migrasi
+// 048/053 & RLS tabel) tetap jadi penjaga akhir.
 
 type Supabase = Awaited<ReturnType<typeof createClient>>;
 
@@ -47,14 +47,17 @@ async function requireWriter(): Promise<{ supabase: Supabase } | { response: Nex
   return { supabase };
 }
 
+type PhotoRecord = { id: string; photo_path: string | null; type?: string };
+
+// Mutasi gimmick ikut membaca tipe: foto bukti hanya untuk Keluar.
 async function loadRecord(supabase: Supabase, table: string, id: string) {
   const { data } = await supabase
     .from(table as "posm_items")
-    .select("id, photo_path")
+    .select(table === "gimmick_movements" ? "id, photo_path, type" : "id, photo_path")
     .eq("id", id)
     .is("deleted_at", null)
     .maybeSingle();
-  return data as { id: string; photo_path: string | null } | null;
+  return data as PhotoRecord | null;
 }
 
 function badRequest(error: string, status = 400) {
@@ -71,8 +74,9 @@ export async function POST(request: NextRequest) {
   const id = formData.get("id");
   const file = formData.get("file") as File | null;
 
-  const table = parsePosmPhotoKind(kind);
-  if (!table || typeof id !== "string" || !id) return badRequest("Data foto tidak valid.");
+  const target = parsePosmPhotoKind(kind);
+  if (!target || typeof id !== "string" || !id) return badRequest("Data foto tidak valid.");
+  const { table, bucket } = target;
   if (!file) return badRequest("Foto tidak ditemukan.");
 
   const invalid = validatePosmPhoto(file);
@@ -80,6 +84,8 @@ export async function POST(request: NextRequest) {
 
   const record = await loadRecord(supabase, table, id);
   if (!record) return badRequest("Data tidak ditemukan.", 404);
+  if (table === "gimmick_movements" && record.type !== "out")
+    return badRequest("Foto bukti serah terima hanya untuk transaksi Keluar.");
 
   let processed;
   try {
@@ -89,7 +95,7 @@ export async function POST(request: NextRequest) {
   }
   if (processed.buffer.length > POSM_PHOTO_MAX_SIZE) return badRequest(`Ukuran foto maksimal ${POSM_PHOTO_MAX_LABEL}.`);
 
-  const storage = supabase.storage.from(POSM_PHOTO_BUCKET);
+  const storage = supabase.storage.from(bucket);
   const path = posmPhotoPath(kind as PosmPhotoKind, id, Date.now());
 
   const { error: uploadError } = await storage.upload(path, processed.buffer, {
@@ -121,8 +127,9 @@ export async function DELETE(request: NextRequest) {
   const { supabase } = auth;
 
   const { kind, id } = (await request.json()) as { kind?: unknown; id?: unknown };
-  const table = parsePosmPhotoKind(kind);
-  if (!table || typeof id !== "string" || !id) return badRequest("Data foto tidak valid.");
+  const target = parsePosmPhotoKind(kind);
+  if (!target || typeof id !== "string" || !id) return badRequest("Data foto tidak valid.");
+  const { table, bucket } = target;
 
   const record = await loadRecord(supabase, table, id);
   if (!record) return badRequest("Data tidak ditemukan.", 404);
@@ -135,7 +142,7 @@ export async function DELETE(request: NextRequest) {
     .is("deleted_at", null);
   if (error) return badRequest(error.message, 500);
 
-  await supabase.storage.from(POSM_PHOTO_BUCKET).remove([record.photo_path]);
+  await supabase.storage.from(bucket).remove([record.photo_path]);
 
   revalidatePath("/monitoring-posm", "layout");
   return NextResponse.json({ success: true });

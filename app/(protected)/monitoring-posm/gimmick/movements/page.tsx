@@ -31,6 +31,8 @@ import type { PosmMovementType } from "@/types/database";
 import { withCampaignRefs } from "../../campaign-refs";
 import { MovementDestination } from "../../movement-destination";
 import { requirePosmViewer } from "../../viewer";
+import { photoUrlOf, signGimmickPhotos } from "../../photo-urls";
+import { PhotoThumb } from "../../posm-photo";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
@@ -60,7 +62,7 @@ export default async function GimmickMovementsPage({ searchParams }: { searchPar
   let query = supabase
     .from("gimmick_movements")
     .select(
-      "id, item_id, movement_date, type, quantity, unit_cost_snapshot, destination, recipient_name, notes, created_at, campaign_id, item:gimmick_items!inner(code, name, unit, pcs_per_carton, program), region:regions(name), distributor:distributors(name), creator:created_by(full_name)",
+      "id, item_id, movement_date, type, quantity, unit_cost_snapshot, destination, recipient_name, photo_path, notes, created_at, campaign_id, item:gimmick_items!inner(code, name, unit, pcs_per_carton, program), region:regions(name), distributor:distributors(name), creator:created_by(full_name)",
       { count: "exact" }
     )
     .is("deleted_at", null);
@@ -87,6 +89,7 @@ export default async function GimmickMovementsPage({ searchParams }: { searchPar
 
   // Label SKP lewat gimmick_campaign_refs (khusus can_manage_posm()).
   const rows = await withCampaignRefs(supabase, movements ?? [], "gimmick_campaign_refs");
+  const photoUrls = await signGimmickPhotos(supabase, rows.map((m) => m.photo_path));
   const programs = distinctPrograms(items ?? []);
   const total = count ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / POSM_MOVEMENTS_PAGE_SIZE));
@@ -257,14 +260,20 @@ export default async function GimmickMovementsPage({ searchParams }: { searchPar
                       {formatIDR(value)}
                     </TableCell>
                     <TableCell>
-                      <MovementDestination
-                        destinationLabel={m.destination ? GIMMICK_DESTINATION_LABELS[m.destination] : null}
-                        regionName={(m.region as { name: string } | null)?.name ?? null}
-                        distributorName={(m.distributor as { name: string } | null)?.name ?? null}
-                        recipientName={m.recipient_name}
-                        campaignSkp={m.campaign_skp}
-                        campaignName={m.campaign_name}
-                      />
+                      <div className="flex items-start gap-2">
+                        <PhotoThumb
+                          url={photoUrlOf(photoUrls, m.photo_path)}
+                          alt={`Bukti serah terima ${formatDate(m.movement_date)}`}
+                        />
+                        <MovementDestination
+                          destinationLabel={m.destination ? GIMMICK_DESTINATION_LABELS[m.destination] : null}
+                          regionName={(m.region as { name: string } | null)?.name ?? null}
+                          distributorName={(m.distributor as { name: string } | null)?.name ?? null}
+                          recipientName={m.recipient_name}
+                          campaignSkp={m.campaign_skp}
+                          campaignName={m.campaign_name}
+                        />
+                      </div>
                     </TableCell>
                     <TableCell className="max-w-xs text-slate-400">{m.notes ?? "—"}</TableCell>
                     <TableCell className="text-slate-500">

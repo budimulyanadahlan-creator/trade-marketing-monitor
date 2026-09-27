@@ -43,6 +43,7 @@ import { POSM_MOVEMENT_LABELS, type AdjustmentDirection } from "@/lib/posm";
 import type { GimmickDestination, GimmickMovementRow, PosmMovementType } from "@/types/database";
 import { MovementDestination } from "../../../movement-destination";
 import { SkpPicker } from "../../../skp-picker";
+import { PhotoField, PhotoThumb, usePhotoChange } from "../../../posm-photo";
 
 export type GimmickMovementListRow = Pick<
   GimmickMovementRow,
@@ -67,6 +68,8 @@ export type GimmickMovementListRow = Pick<
   running_balance: number;
   /** qty × harga snapshot (bertanda). */
   value: number;
+  /** Signed URL foto bukti serah terima (hanya Keluar). */
+  photo_url: string | null;
 };
 
 export type GimmickItemInfo = {
@@ -252,10 +255,13 @@ function MovementDialog({
   const [type, setType] = useState<PosmMovementType>(movement?.type ?? "in");
   const [destination, setDestination] = useState<GimmickDestination | "">(movement?.destination ?? "");
   const [itemId, setItemId] = useState(item.id);
+  const photo = usePhotoChange("gimmick_movement");
   const [state, formAction, isPending] = useActionState(
     async (prev: SaveGimmickMovementState, formData: FormData) => {
       const result = await saveGimmickMovementAction(prev, formData);
       if (result.success) {
+        // Foto bukti hanya untuk Keluar; tipe lain dibersihkan oleh server.
+        if (formData.get("type") === "out") await photo.save(result.id);
         toast.success(isEdit ? "Mutasi diperbarui" : "Mutasi dicatat");
         setOpen(false);
       }
@@ -285,11 +291,12 @@ function MovementDialog({
           setType(movement?.type ?? "in");
           setDestination(movement?.destination ?? "");
           setItemId(item.id);
+          photo.reset();
         }
       }}
     >
       <DialogTrigger asChild>{trigger}</DialogTrigger>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{isEdit ? "Edit Mutasi" : "Catat Mutasi"}</DialogTitle>
         </DialogHeader>
@@ -397,14 +404,23 @@ function MovementDialog({
           </div>
 
           {type === "out" && (
-            <OutDestinationFields
-              destination={destination}
-              onDestinationChange={setDestination}
-              movement={movement}
-              regions={regions}
-              distributors={distributors}
-              disabled={isPending}
-            />
+            <>
+              <OutDestinationFields
+                destination={destination}
+                onDestinationChange={setDestination}
+                movement={movement}
+                regions={regions}
+                distributors={distributors}
+                disabled={isPending}
+              />
+              <PhotoField
+                label="Foto Bukti Serah Terima (opsional)"
+                currentUrl={movement?.photo_url ?? null}
+                value={photo.change}
+                onChange={photo.setChange}
+                disabled={isPending}
+              />
+            </>
           )}
 
           <div className="space-y-1.5">
@@ -577,14 +593,17 @@ export function GimmickMovementsPanel({
                     {formatIDR(m.value)}
                   </TableCell>
                   <TableCell>
-                    <MovementDestination
-                      destinationLabel={m.destination ? GIMMICK_DESTINATION_LABELS[m.destination] : null}
-                      regionName={m.region_name}
-                      distributorName={m.distributor_name}
-                      recipientName={m.recipient_name}
-                      campaignSkp={m.campaign_skp}
-                      campaignName={m.campaign_name}
-                    />
+                    <div className="flex items-start gap-2">
+                      <PhotoThumb url={m.photo_url} alt={`Bukti serah terima ${formatDate(m.movement_date)}`} />
+                      <MovementDestination
+                        destinationLabel={m.destination ? GIMMICK_DESTINATION_LABELS[m.destination] : null}
+                        regionName={m.region_name}
+                        distributorName={m.distributor_name}
+                        recipientName={m.recipient_name}
+                        campaignSkp={m.campaign_skp}
+                        campaignName={m.campaign_name}
+                      />
+                    </div>
                   </TableCell>
                   <TableCell className="max-w-xs text-slate-400">{m.notes ?? "—"}</TableCell>
                   <TableCell className="text-slate-500">{m.creator_name ?? "—"}</TableCell>
