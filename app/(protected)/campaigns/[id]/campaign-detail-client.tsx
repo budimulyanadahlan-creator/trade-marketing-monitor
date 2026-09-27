@@ -823,7 +823,7 @@ function ClaimAmountEditor({
   );
 }
 
-function ClaimChecklistSection({
+export function ClaimChecklistSection({
   campaignId,
   campaignStatus,
   userRole,
@@ -849,28 +849,33 @@ function ClaimChecklistSection({
     campaignStatus === "claim_submitted";
 
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
-  const [localState, setLocalState] = useState<Record<string, boolean>>(
-    Object.fromEntries(documents.map((d) => [d.documentTypeId, d.isFulfilled]))
-  );
+  // Optimistic toggles only; the server value (doc.isFulfilled) is the
+  // source of truth for everything else.
+  const [overrides, setOverrides] = useState<Record<string, boolean>>({});
 
   // `documents` only gets a new reference when the page's server data is
-  // actually refetched (router.refresh() after upload/delete) — resync so
-  // auto-fulfillment from a new file (or an unchecked item after the last
-  // file is removed) shows up. Without this, localState stays pinned to
-  // whatever it was on first mount, since useState's initializer only runs
-  // once and `??` never falls through for an already-present (false) key.
-  useEffect(() => {
-    setLocalState(Object.fromEntries(documents.map((d) => [d.documentTypeId, d.isFulfilled])));
-  }, [documents]);
+  // actually refetched (router.refresh() after upload/delete/toggle). Drop
+  // the overrides then so auto-fulfillment from a new file (or an unchecked
+  // item after the last file is removed) shows up. Done during render (React's
+  // "adjust state when a prop changes" pattern) rather than in an effect, so
+  // there is no extra render showing the stale value first.
+  const [syncedDocuments, setSyncedDocuments] = useState(documents);
+  if (syncedDocuments !== documents) {
+    setSyncedDocuments(documents);
+    setOverrides({});
+  }
+
+  const isFulfilled = (doc: ClaimDocument) => overrides[doc.documentTypeId] ?? doc.isFulfilled;
 
   async function handleToggle(documentTypeId: string) {
     if (!isEditable || pendingIds.has(documentTypeId)) return;
 
-    const current = localState[documentTypeId] ?? false;
+    const doc = documents.find((d) => d.documentTypeId === documentTypeId);
+    const current = doc ? isFulfilled(doc) : false;
     const next = !current;
 
     setPendingIds((prev) => new Set(prev).add(documentTypeId));
-    setLocalState((prev) => ({ ...prev, [documentTypeId]: next }));
+    setOverrides((prev) => ({ ...prev, [documentTypeId]: next }));
 
     const result = await upsertClaimChecklistAction(campaignId, documentTypeId, next);
 
@@ -881,12 +886,12 @@ function ClaimChecklistSection({
     });
 
     if (result.error) {
-      setLocalState((prev) => ({ ...prev, [documentTypeId]: current }));
+      setOverrides((prev) => ({ ...prev, [documentTypeId]: current }));
       toast.error(result.error);
     }
   }
 
-  const fulfilledCount = Object.values(localState).filter(Boolean).length;
+  const fulfilledCount = documents.filter(isFulfilled).length;
   const totalCount = documents.length;
 
   const verifiableItems = [
@@ -928,7 +933,7 @@ function ClaimChecklistSection({
 
       <div className="space-y-2">
         {documents.map((doc) => {
-          const fulfilled = localState[doc.documentTypeId] ?? doc.isFulfilled;
+          const fulfilled = isFulfilled(doc);
           const pending = pendingIds.has(doc.documentTypeId);
           const hasFiles = doc.files.length > 0;
           // Once a file is attached, fulfillment is file-driven (see
