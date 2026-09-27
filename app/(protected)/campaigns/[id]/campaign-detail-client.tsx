@@ -37,6 +37,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate, formatIDR } from "@/lib/utils";
+import { UPLOAD_MAX_LABEL, UPLOAD_MAX_SIZE } from "@/lib/upload-limits";
 import { getStatusConfig } from "@/lib/campaign-status";
 import { BudgetProgress } from "@/components/budget-progress";
 import {
@@ -487,6 +488,10 @@ function ClaimFileUploadButton({
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
+    if (file.size > UPLOAD_MAX_SIZE) {
+      toast.error(`${file.name}: ukuran melebihi ${UPLOAD_MAX_LABEL}`);
+      return;
+    }
 
     setIsUploading(true);
     try {

@@ -275,6 +275,19 @@ describe("POST /api/upload/claim-document", () => {
     expect(res.status).toBe(400);
   });
 
+  it("rejects files over 4.4 MB before compressing (below Vercel's 4.5 MB request limit)", async () => {
+    const { storageUpload } = setupMocks();
+    const file = { ...makeFakeFile(), size: 4_400_001 };
+
+    const res = await POST(makeRequest({ file }));
+    const json = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(json.error).toMatch(/4,4 MB/);
+    expect(compressImageIfNeeded).not.toHaveBeenCalled();
+    expect(storageUpload).not.toHaveBeenCalled();
+  });
+
   it("cleans up the uploaded storage object when the DB insert fails", async () => {
     const { storageRemove } = setupMocks({ insertError: { message: "db fail" } });
 

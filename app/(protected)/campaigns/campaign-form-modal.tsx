@@ -26,6 +26,7 @@ import { toast } from "sonner";
 import { saveDraftCampaignAction, submitCampaignAction } from "@/app/actions/campaigns";
 import { checkAABudgetExceededAction } from "@/app/actions/aa-budget";
 import { formatIDR } from "@/lib/utils";
+import { UPLOAD_MAX_LABEL, UPLOAD_MAX_SIZE } from "@/lib/upload-limits";
 import type { CampaignFileRow } from "@/types/database";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -592,7 +593,7 @@ function Step3({
       <div className="space-y-2">
         <Label>
           Dokumen SKP yang sudah ditandatangan*{" "}
-          <span className="font-normal text-slate-400">(wajib, PDF / JPG / PNG, maks. 5 MB)</span>
+          <span className="font-normal text-slate-400">(wajib, PDF / JPG / PNG, maks. {UPLOAD_MAX_LABEL})</span>
         </Label>
 
         <label className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-white/15 bg-white/3 p-6 cursor-pointer hover:border-emerald-500/40 hover:bg-emerald-500/5 transition-colors">
@@ -804,8 +805,8 @@ export function CampaignFormModal({
   function addFiles(files: File[]) {
     const valid: PendingFile[] = [];
     for (const f of files) {
-      if (f.size > 5 * 1024 * 1024) {
-        toast.error(`${f.name}: ukuran melebihi 5 MB`);
+      if (f.size > UPLOAD_MAX_SIZE) {
+        toast.error(`${f.name}: ukuran melebihi ${UPLOAD_MAX_LABEL}`);
         continue;
       }
       const allowed = ["application/pdf", "image/jpeg", "image/jpg", "image/png"];

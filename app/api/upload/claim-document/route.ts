@@ -4,10 +4,10 @@ import { compressImageIfNeeded } from "@/lib/image-compress";
 import { markChecklistFulfilled } from "@/lib/claim-checklist-sync";
 import { resetClaimItemToPending } from "@/lib/claim-item-verifications";
 import { isDistributorAllowedOnCampaign } from "@/lib/distributor-campaign-guard";
+import { UPLOAD_MAX_LABEL, UPLOAD_MAX_SIZE } from "@/lib/upload-limits";
 import type { CampaignStatus } from "@/types/database";
 
 const ALLOWED_TYPES = ["application/pdf", "image/jpeg", "image/jpg", "image/png"];
-const MAX_SIZE = 5 * 1024 * 1024; // 5 MB, applies to size after compression
 const EDITABLE_STATUSES: CampaignStatus[] = ["approved", "ongoing"];
 
 // Upload a claim document for one checklist item. Distributor-only —
@@ -59,6 +59,12 @@ export async function POST(request: NextRequest) {
       { error: "Format file tidak didukung. Gunakan PDF, JPG, atau PNG." },
       { status: 400 }
     );
+  }
+
+  // Sama dengan batas Vercel: file yang lebih besar tidak akan pernah sampai
+  // ke sini di production, jadi tolak sebelum kompresi dengan pesan jelas.
+  if (file.size > UPLOAD_MAX_SIZE) {
+    return NextResponse.json({ error: `Ukuran file maksimal ${UPLOAD_MAX_LABEL}.` }, { status: 400 });
   }
 
   // RLS (campaigns_select_distributor) gates this to campaigns the
@@ -136,8 +142,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Gagal memproses gambar" }, { status: 500 });
   }
 
-  if (processed.buffer.length > MAX_SIZE) {
-    return NextResponse.json({ error: "Ukuran file maksimal 5 MB." }, { status: 400 });
+  if (processed.buffer.length > UPLOAD_MAX_SIZE) {
+    return NextResponse.json({ error: `Ukuran file maksimal ${UPLOAD_MAX_LABEL}.` }, { status: 400 });
   }
 
   const adminClient = createAdminClient();

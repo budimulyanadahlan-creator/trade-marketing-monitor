@@ -9,7 +9,7 @@ vi.mock("@/lib/claim-checklist-sync", () => ({
   syncChecklistAfterFileDelete: vi.fn(),
 }));
 
-import { DELETE } from "./route";
+import { DELETE, POST } from "./route";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { syncChecklistAfterFileDelete } from "@/lib/claim-checklist-sync";
 
@@ -55,6 +55,30 @@ function makeRequest(fileId: string | null) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe("POST /api/upload", () => {
+  it("rejects files over 4.4 MB (below Vercel's 4.5 MB request limit)", async () => {
+    const usersChain = makeSelectChain({ data: { is_active: true } });
+    const supabase = {
+      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: "user-1" } } }) },
+      from: vi.fn().mockReturnValue(usersChain),
+    };
+    (createClient as ReturnType<typeof vi.fn>).mockResolvedValue(supabase);
+    const file = { name: "skp.pdf", type: "application/pdf", size: 4_400_001 };
+    const request = {
+      formData: async () => ({
+        get: (key: string) => ({ file, campaign_id: "camp-1" })[key] ?? null,
+      }),
+    } as unknown as NextRequest;
+
+    const res = await POST(request);
+    const json = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(json.error).toMatch(/4,4 MB/);
+    expect(createAdminClient).not.toHaveBeenCalled();
+  });
 });
 
 describe("DELETE /api/upload", () => {

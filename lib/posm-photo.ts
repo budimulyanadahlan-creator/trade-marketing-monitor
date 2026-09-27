@@ -3,11 +3,10 @@
 // upload file SKP.
 
 export const POSM_PHOTO_BUCKET = "posm-photos";
-// Di bawah batas body request Vercel (4,5 MB) agar request upload tidak
-// ditolak Vercel sebelum sampai ke route. Satuan desimal (bukan MiB) supaya
-// tetap aman apa pun definisi "MB" yang dipakai Vercel.
-export const POSM_PHOTO_MAX_SIZE = 4_400_000;
-export const POSM_PHOTO_MAX_LABEL = "4,4 MB";
+import { UPLOAD_MAX_LABEL, UPLOAD_MAX_SIZE } from "./upload-limits";
+
+export const POSM_PHOTO_MAX_SIZE = UPLOAD_MAX_SIZE;
+export const POSM_PHOTO_MAX_LABEL = UPLOAD_MAX_LABEL;
 export const POSM_PHOTO_TYPES = ["image/jpeg", "image/jpg", "image/png"];
 /** Untuk atribut accept pada input file. */
 export const POSM_PHOTO_ACCEPT = "image/jpeg,image/png";

@@ -1,10 +1,10 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { syncChecklistAfterFileDelete } from "@/lib/claim-checklist-sync";
+import { UPLOAD_MAX_LABEL, UPLOAD_MAX_SIZE } from "@/lib/upload-limits";
 import type { CampaignStatus } from "@/types/database";
 
 const ALLOWED_TYPES = ["application/pdf", "image/jpeg", "image/jpg", "image/png"];
-const MAX_SIZE = 5 * 1024 * 1024; // 5 MB
 // Mirrors EDITABLE_STATUSES in app/api/upload/claim-document/route.ts —
 // claim documents can't be removed once the claim they belong to is
 // submitted (locked until cancelled in Phase 3, or paid).
@@ -49,11 +49,8 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  if (file.size > MAX_SIZE) {
-    return NextResponse.json(
-      { error: "Ukuran file maksimal 5 MB." },
-      { status: 400 }
-    );
+  if (file.size > UPLOAD_MAX_SIZE) {
+    return NextResponse.json({ error: `Ukuran file maksimal ${UPLOAD_MAX_LABEL}.` }, { status: 400 });
   }
 
   // Verify the campaign belongs to this user
