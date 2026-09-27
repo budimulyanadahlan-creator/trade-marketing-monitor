@@ -6,6 +6,7 @@ import { canManagePosm } from "@/lib/posm";
 import {
   parsePosmPhotoKind,
   POSM_PHOTO_BUCKET,
+  POSM_PHOTO_MAX_LABEL,
   POSM_PHOTO_MAX_SIZE,
   posmPhotoPath,
   validatePosmPhoto,
@@ -86,7 +87,7 @@ export async function POST(request: NextRequest) {
   } catch {
     return badRequest("Gagal memproses gambar.", 500);
   }
-  if (processed.buffer.length > POSM_PHOTO_MAX_SIZE) return badRequest("Ukuran foto maksimal 5 MB.");
+  if (processed.buffer.length > POSM_PHOTO_MAX_SIZE) return badRequest(`Ukuran foto maksimal ${POSM_PHOTO_MAX_LABEL}.`);
 
   const storage = supabase.storage.from(POSM_PHOTO_BUCKET);
   const path = posmPhotoPath(kind as PosmPhotoKind, id, Date.now());

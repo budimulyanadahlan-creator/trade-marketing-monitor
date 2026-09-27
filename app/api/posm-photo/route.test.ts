@@ -140,16 +140,16 @@ describe("POST /api/posm-photo", () => {
     expect(upload).not.toHaveBeenCalled();
   });
 
-  it("rejects files over 5 MB", async () => {
+  it("rejects files over 4.4 MB", async () => {
     const { upload } = setupMocks();
 
     const res = await POST(
-      postRequest({ kind: "asset", id: RECORD_ID, file: makeFile({ size: 6 * 1024 * 1024 }) })
+      postRequest({ kind: "asset", id: RECORD_ID, file: makeFile({ size: 4_400_001 }) })
     );
     const json = await res.json();
 
     expect(res.status).toBe(400);
-    expect(json.error).toMatch(/5 MB/);
+    expect(json.error).toMatch(/4,4 MB/);
     expect(upload).not.toHaveBeenCalled();
   });
 

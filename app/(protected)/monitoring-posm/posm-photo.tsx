@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { POSM_PHOTO_ACCEPT, validatePosmPhoto, type PosmPhotoKind } from "@/lib/posm-photo";
+import { POSM_PHOTO_ACCEPT, POSM_PHOTO_MAX_LABEL, validatePosmPhoto, type PosmPhotoKind } from "@/lib/posm-photo";
 
 // ---- Thumbnail yang bisa diperbesar ----
 
@@ -155,7 +155,7 @@ export function PhotoField({
         </div>
       </div>
       <p className="text-xs text-slate-500">
-        {value.remove ? "Foto akan dihapus saat disimpan." : "JPG atau PNG, maksimal 5 MB."}
+        {value.remove ? "Foto akan dihapus saat disimpan." : `JPG atau PNG, maksimal ${POSM_PHOTO_MAX_LABEL}.`}
       </p>
       {error && <p className="text-xs text-rose-400">{error}</p>}
     </div>

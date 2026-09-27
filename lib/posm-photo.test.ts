@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { parsePosmPhotoKind, posmPhotoPath, validatePosmPhoto } from "./posm-photo";
 
 describe("validatePosmPhoto", () => {
-  it("accepts JPG and PNG images up to 5 MB", () => {
-    expect(validatePosmPhoto({ type: "image/jpeg", size: 5 * 1024 * 1024 })).toBeNull();
+  it("accepts JPG and PNG images up to 4.4 MB (below Vercel's 4.5 MB request limit)", () => {
+    expect(validatePosmPhoto({ type: "image/jpeg", size: 4_400_000 })).toBeNull();
     expect(validatePosmPhoto({ type: "image/png", size: 1000 })).toBeNull();
     expect(validatePosmPhoto({ type: "image/jpg", size: 1000 })).toBeNull();
   });
@@ -13,8 +13,8 @@ describe("validatePosmPhoto", () => {
     expect(validatePosmPhoto({ type: "image/gif", size: 1000 })).toMatch(/JPG atau PNG/);
   });
 
-  it("rejects files over 5 MB", () => {
-    expect(validatePosmPhoto({ type: "image/jpeg", size: 5 * 1024 * 1024 + 1 })).toMatch(/5 MB/);
+  it("rejects files over 4.4 MB", () => {
+    expect(validatePosmPhoto({ type: "image/jpeg", size: 4_400_001 })).toMatch(/4,4 MB/);
   });
 });
 

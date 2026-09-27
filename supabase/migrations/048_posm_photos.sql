@@ -7,13 +7,14 @@
 -- ============================================================
 -- 1. BUCKET
 -- ============================================================
--- Batas ukuran & tipe gambar sama dengan upload file SKP (campaign-documents).
+-- Tipe gambar sama dengan upload file SKP. Batas 4,4 MB (4.400.000 byte) agar
+-- di bawah batas body request Vercel 4,5 MB; sama dengan POSM_PHOTO_MAX_SIZE.
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values (
   'posm-photos',
   'posm-photos',
   false,
-  5242880,
+  4400000,
   array['image/jpeg', 'image/png', 'image/jpg']
 )
 on conflict (id) do nothing;
