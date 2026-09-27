@@ -54,7 +54,7 @@ export default async function PosmAuditPage({ searchParams }: { searchParams: Se
   if (filters.table) query = query.eq("table_name", filters.table);
   if (filters.action) query = query.eq("action", filters.action);
   if (filters.actor) query = query.eq("changed_by", filters.actor);
-  // Riwayat record mencakup turunannya: mutasi milik item dan penempatan milik asset.
+  // Riwayat record mencakup turunannya: mutasi milik item (POSM/gimmick) dan penempatan milik asset.
   if (filters.record) {
     query = query.or(
       `record_id.eq.${filters.record},new_data->>item_id.eq.${filters.record},new_data->>asset_id.eq.${filters.record}`
@@ -94,9 +94,13 @@ export default async function PosmAuditPage({ searchParams }: { searchParams: Se
   }
   const campaignIds = [...idsOf("campaign_id")];
 
-  const [{ data: items }, { data: assets }, { data: campaigns }] = await Promise.all([
+  // item_id bisa milik POSM atau gimmick; keduanya dicari (id uuid tidak bentrok).
+  const [{ data: items }, { data: gimmickItems }, { data: assets }, { data: campaigns }] = await Promise.all([
     itemIds.size
       ? supabase.from("posm_items").select("id, code, name").in("id", [...itemIds])
+      : Promise.resolve({ data: [] }),
+    itemIds.size
+      ? supabase.from("gimmick_items").select("id, code, name").in("id", [...itemIds])
       : Promise.resolve({ data: [] }),
     assetIds.size
       ? supabase.from("marketing_assets").select("id, code, name").in("id", [...assetIds])
@@ -111,6 +115,7 @@ export default async function PosmAuditPage({ searchParams }: { searchParams: Se
     ...(regions ?? []).map((r) => [r.id, r.name] as const),
     ...(distributors ?? []).map((d) => [d.id, d.name] as const),
     ...(items ?? []).map((i) => [i.id, `${i.code} — ${i.name}`] as const),
+    ...(gimmickItems ?? []).map((i) => [i.id, `${i.code} — ${i.name}`] as const),
     ...(assets ?? []).map((a) => [a.id, `${a.code} — ${a.name}`] as const),
     ...(campaigns ?? []).map((c) => [c.id, c.skp_number ? `${c.skp_number} — ${c.name}` : c.name] as const),
   ]);
@@ -139,9 +144,9 @@ export default async function PosmAuditPage({ searchParams }: { searchParams: Se
       </Link>
 
       <div>
-        <h1 className="text-2xl font-bold text-slate-100 mb-1">Audit Log POSM & Asset</h1>
+        <h1 className="text-2xl font-bold text-slate-100 mb-1">Audit Log POSM, Asset & Gimmick</h1>
         <p className="text-slate-400 text-sm">
-          Semua perubahan item POSM, mutasi, asset, dan penempatan, termasuk data yang sudah dihapus
+          Semua perubahan item POSM, mutasi, asset, penempatan, serta item dan mutasi gimmick, termasuk data yang sudah dihapus
         </p>
       </div>
 

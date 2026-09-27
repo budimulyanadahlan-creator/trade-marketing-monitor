@@ -6,6 +6,7 @@ import type {
   AssetCondition,
   AssetDestination,
   AssetType,
+  GimmickDestination,
   PosmAuditAction,
   PosmCategory,
   PosmMovementType,
@@ -430,6 +431,14 @@ export const ASSET_DESTINATION_LABELS: Record<AssetDestination, string> = {
   placed: "Ditempatkan",
 };
 
+// Tujuan Keluar gimmick (dipakai ulang lib/gimmick dan audit log).
+export const GIMMICK_DESTINATION_LABELS: Record<GimmickDestination, string> = {
+  region_distributor: "Region/Distributor",
+  event: "Event/Pameran",
+  internal: "Internal",
+  other: "Lainnya",
+};
+
 export const ASSET_CODE_PREFIX = "AST";
 
 export type AssetSummaryInput = {
@@ -546,7 +555,14 @@ export function auditChanges(
     .map((field) => ({ field, old: before[field] ?? null, new: after[field] ?? null }));
 }
 
-export const POSM_AUDIT_TABLES = ["posm_items", "posm_movements", "marketing_assets", "asset_placements"] as const;
+export const POSM_AUDIT_TABLES = [
+  "posm_items",
+  "posm_movements",
+  "marketing_assets",
+  "asset_placements",
+  "gimmick_items",
+  "gimmick_movements",
+] as const;
 export type PosmAuditTable = (typeof POSM_AUDIT_TABLES)[number];
 
 export const POSM_AUDIT_TABLE_LABELS: Record<PosmAuditTable, string> = {
@@ -554,6 +570,8 @@ export const POSM_AUDIT_TABLE_LABELS: Record<PosmAuditTable, string> = {
   posm_movements: "Mutasi POSM",
   marketing_assets: "Asset",
   asset_placements: "Penempatan Asset",
+  gimmick_items: "Item Gimmick",
+  gimmick_movements: "Mutasi Gimmick",
 };
 
 export const POSM_AUDIT_ACTIONS: readonly PosmAuditAction[] = ["insert", "update", "soft_delete"];
@@ -645,7 +663,16 @@ export const POSM_AUDIT_FIELD_LABELS: Record<string, string> = {
   pic_name: "PIC",
   condition: "Kondisi",
   is_registration: "Pendaftaran",
+  pcs_per_carton: "Isi per Karton",
+  unit_cost: "Harga Pokok",
+  suggested_price: "Harga Jual Saran",
+  unit_cost_snapshot: "Harga Snapshot",
+  program: "Program",
+  recipient_name: "PIC / Penerima",
 };
+
+// Kolom rupiah yang ditampilkan dengan format IDR.
+const AUDIT_CURRENCY_FIELDS = new Set(["acquisition_value", "unit_cost", "suggested_price", "unit_cost_snapshot"]);
 
 /** Kolom berisi id yang ditampilkan lewat nama (lookup). */
 export const POSM_AUDIT_REFERENCE_FIELDS = [
@@ -680,10 +707,12 @@ export function formatAuditValue(field: string, value: unknown, names: Map<strin
     return names.get(String(value)) ?? String(value);
   }
   if (field === "type" && typeof value === "string" && value in POSM_MOVEMENT_LABELS) return POSM_MOVEMENT_LABELS[value as PosmMovementType];
-  if (field === "destination" && typeof value === "string" && value in ASSET_DESTINATION_LABELS) {
-    return ASSET_DESTINATION_LABELS[value as AssetDestination];
+  // Nilai tujuan asset dan gimmick tidak beririsan, jadi cukup dicek berurutan.
+  if (field === "destination" && typeof value === "string") {
+    if (value in ASSET_DESTINATION_LABELS) return ASSET_DESTINATION_LABELS[value as AssetDestination];
+    if (value in GIMMICK_DESTINATION_LABELS) return GIMMICK_DESTINATION_LABELS[value as GimmickDestination];
   }
-  if (field === "acquisition_value") return formatIDR(Number(value));
+  if (AUDIT_CURRENCY_FIELDS.has(field)) return formatIDR(Number(value));
   if (typeof value === "number") return value.toLocaleString("id-ID");
   if (typeof value === "string" && DATE_ONLY.test(value)) return formatDate(value);
   if (typeof value === "string" && TIMESTAMP.test(value)) return formatAuditTimestamp(value);
@@ -696,8 +725,10 @@ export function auditRecordLabel(table: string, data: Record<string, unknown>, n
   switch (table) {
     case "posm_items":
     case "marketing_assets":
+    case "gimmick_items":
       return `${data.code ?? "—"} — ${data.name ?? "—"}`;
-    case "posm_movements": {
+    case "posm_movements":
+    case "gimmick_movements": {
       const type = POSM_MOVEMENT_LABELS[data.type as PosmMovementType] ?? String(data.type);
       return `${type} ${formatAuditValue("quantity", data.quantity, names)} • ${ref(data.item_id)}`;
     }

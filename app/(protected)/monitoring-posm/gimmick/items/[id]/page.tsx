@@ -8,13 +8,14 @@ import { formatPcsWithCartons, withRunningValue } from "@/lib/gimmick";
 import { StockStatusBadge } from "../../../stock-status-badge";
 import { withCampaignRefs } from "../../../campaign-refs";
 import { requirePosmViewer } from "../../../viewer";
+import { AuditHistoryLink } from "../../../audit-history-link";
 import { photoUrlOf, signGimmickPhotos } from "../../../photo-urls";
 import { PhotoThumb } from "../../../posm-photo";
 import { GimmickMovementsPanel, type GimmickMovementListRow } from "./gimmick-movements-panel";
 
 export default async function GimmickItemDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const { supabase, canManage } = await requirePosmViewer();
+  const { supabase, canManage, isAdmin } = await requirePosmViewer();
 
   // Data gimmick hanya untuk pemegang can_manage_posm() (RLS juga menolak).
   if (!canManage) redirect("/monitoring-posm");
@@ -95,6 +96,7 @@ export default async function GimmickItemDetailPage({ params }: { params: Promis
                 .filter(Boolean)
                 .join(" • ")}
             </p>
+            {isAdmin && <AuditHistoryLink recordId={item.id} />}
           </div>
         </div>
 

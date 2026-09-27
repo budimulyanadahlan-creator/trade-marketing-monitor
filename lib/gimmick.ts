@@ -34,12 +34,8 @@ export const GIMMICK_MOVEMENT_TYPES = ["opening", "in", "out", "adjustment"] as 
 // Tujuan Keluar — harus sama dengan check constraint gimmick_movements (migrasi 051).
 export const GIMMICK_DESTINATIONS = ["region_distributor", "event", "internal", "other"] as const satisfies readonly GimmickDestination[];
 
-export const GIMMICK_DESTINATION_LABELS: Record<GimmickDestination, string> = {
-  region_distributor: "Region/Distributor",
-  event: "Event/Pameran",
-  internal: "Internal",
-  other: "Lainnya",
-};
+// Label didefinisikan di lib/posm agar bisa dipakai audit log tanpa import melingkar.
+export { GIMMICK_DESTINATION_LABELS } from "@/lib/posm";
 
 // ============================================================
 // TUJUAN KELUAR

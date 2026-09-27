@@ -6,6 +6,8 @@ import {
   auditRecordLabel,
   formatAuditValue,
   parseAuditFilters,
+  POSM_AUDIT_FIELD_LABELS,
+  POSM_AUDIT_TABLE_LABELS,
   availableFrom,
   balanceOf,
   canManagePosm,
@@ -500,6 +502,53 @@ describe("auditRecordLabel", () => {
     expect(auditRecordLabel("asset_placements", { asset_id: "a1", destination: "warehouse" }, names)).toBe(
       "Gudang Pusat • AST-0001 — Chiller"
     );
+  });
+});
+
+describe("audit gimmick", () => {
+  const uuid = "11111111-1111-4111-8111-111111111111";
+  const names = new Map([
+    ["g1", "GMK-0001 — Payung Wangzai"],
+    ["r1", "Jawa Barat"],
+  ]);
+
+  it("menerima filter tabel gimmick dengan label yang terbaca", () => {
+    expect(parseAuditFilters({ table: "gimmick_items", record: uuid })).toEqual({
+      table: "gimmick_items",
+      record: uuid,
+      page: 1,
+    });
+    expect(parseAuditFilters({ table: "gimmick_movements" }).table).toBe("gimmick_movements");
+    expect(POSM_AUDIT_TABLE_LABELS.gimmick_items).toBe("Item Gimmick");
+    expect(POSM_AUDIT_TABLE_LABELS.gimmick_movements).toBe("Mutasi Gimmick");
+  });
+
+  it("memberi label field khusus gimmick", () => {
+    expect(POSM_AUDIT_FIELD_LABELS.unit_cost).toBe("Harga Pokok");
+    expect(POSM_AUDIT_FIELD_LABELS.suggested_price).toBe("Harga Jual Saran");
+    expect(POSM_AUDIT_FIELD_LABELS.unit_cost_snapshot).toBe("Harga Snapshot");
+    expect(POSM_AUDIT_FIELD_LABELS.pcs_per_carton).toBe("Isi per Karton");
+    expect(POSM_AUDIT_FIELD_LABELS.program).toBe("Program");
+    expect(POSM_AUDIT_FIELD_LABELS.recipient_name).toBe("PIC / Penerima");
+  });
+
+  it("memformat harga sebagai Rupiah dan tujuan Keluar gimmick", () => {
+    expect(formatAuditValue("unit_cost", 25000, names)).toMatch(/^Rp\s?25\.000$/);
+    expect(formatAuditValue("unit_cost_snapshot", "12500.00", names)).toMatch(/^Rp\s?12\.500$/);
+    expect(formatAuditValue("suggested_price", 30000, names)).toMatch(/^Rp\s?30\.000$/);
+    expect(formatAuditValue("destination", "region_distributor", names)).toBe("Region/Distributor");
+    expect(formatAuditValue("destination", "event", names)).toBe("Event/Pameran");
+    expect(formatAuditValue("destination", "warehouse", names)).toBe("Gudang Pusat");
+    expect(formatAuditValue("pcs_per_carton", 24, names)).toBe("24");
+  });
+
+  it("melabeli record gimmick dari snapshot audit", () => {
+    expect(auditRecordLabel("gimmick_items", { code: "GMK-0002", name: "Tas Kanvas" }, names)).toBe(
+      "GMK-0002 — Tas Kanvas"
+    );
+    expect(
+      auditRecordLabel("gimmick_movements", { item_id: "g1", type: "out", quantity: -24, destination: "event" }, names)
+    ).toBe("Keluar -24 • GMK-0001 — Payung Wangzai");
   });
 });
 
