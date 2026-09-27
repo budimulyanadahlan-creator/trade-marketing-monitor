@@ -290,6 +290,12 @@ async function GimmickTab() {
 
       <div className="flex justify-end gap-2">
         <Button asChild variant="outline" size="sm">
+          <Link href="/monitoring-posm/gimmick/rekap">
+            <Table2 className="h-4 w-4" />
+            Rekap Keluar
+          </Link>
+        </Button>
+        <Button asChild variant="outline" size="sm">
           <Link href="/monitoring-posm/gimmick/movements">
             <ArrowRightLeft className="h-4 w-4" />
             Daftar Mutasi

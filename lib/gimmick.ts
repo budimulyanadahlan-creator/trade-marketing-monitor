@@ -6,10 +6,12 @@ import type { GimmickCategory, GimmickDestination, GimmickUnit, PosmMovementType
 import {
   movementFiltersQuery,
   parseMovementFilters,
+  parseRekapFilters,
   stockStatus,
   withRunningBalance,
   type BalanceMovement,
   type PosmMovementFilters,
+  type RekapFilters,
 } from "@/lib/posm";
 
 // Daftar tetap — harus sama dengan check constraint gimmick_items (migrasi 050).
@@ -250,5 +252,179 @@ export function gimmickMovementFiltersQuery(filters: Partial<GimmickMovementFilt
   if (filters.destination) params.set("destination", filters.destination);
   if (filters.program) params.set("program", filters.program);
   if (filters.page && filters.page > 1) params.set("page", String(filters.page));
+  return params.toString();
+}
+
+// ============================================================
+// REKAP KELUAR (per region, per tujuan, per program)
+// ============================================================
+// Hanya mutasi Keluar yang dihitung (Saldo Awal, Masuk, dan Penyesuaian
+// tidak). Mode "qty" menjumlah |qty| dalam pcs; mode "value" menjumlah
+// |qty| × unit_cost_snapshot, sehingga perubahan harga master tidak
+// mengubah rekap.
+
+export type GimmickRekapMode = "qty" | "value";
+
+export type GimmickRekapMovement = {
+  item_id: string;
+  item_code: string;
+  item_name: string;
+  unit: string;
+  program: string | null;
+  region_id: string | null;
+  region_name: string | null;
+  destination: GimmickDestination | null;
+  movement_date: string;
+  type: PosmMovementType;
+  quantity: number;
+  unit_cost_snapshot: number;
+};
+
+export type GimmickRekapMatrix<Row> = {
+  rows: (Row & { months: number[]; total: number })[];
+  monthTotals: number[];
+  grandTotal: number;
+};
+
+/**
+ * Matriks baris × bulan dari mutasi Keluar di dalam `months`. `keyOf`
+ * mengembalikan null untuk mutasi yang tidak masuk rekap ini; `rowOf`
+ * membentuk kolom identitas baris saat kunci pertama kali muncul.
+ */
+function aggregateOutMatrix<Row>(
+  movements: GimmickRekapMovement[],
+  months: string[],
+  mode: GimmickRekapMode,
+  keyOf: (m: GimmickRekapMovement) => string | null,
+  rowOf: (m: GimmickRekapMovement) => Row
+): GimmickRekapMatrix<Row> {
+  const monthIndex = new Map(months.map((m, i) => [m, i]));
+  const rows = new Map<string, Row & { months: number[]; total: number }>();
+
+  for (const m of movements) {
+    if (m.type !== "out") continue;
+    const i = monthIndex.get(m.movement_date.slice(0, 7));
+    const key = keyOf(m);
+    if (i === undefined || key === null) continue;
+
+    let row = rows.get(key);
+    if (!row) {
+      row = { ...rowOf(m), months: months.map(() => 0), total: 0 };
+      rows.set(key, row);
+    }
+    const amount = Math.abs(m.quantity) * (mode === "value" ? m.unit_cost_snapshot : 1);
+    row.months[i] += amount;
+    row.total += amount;
+  }
+
+  const list = [...rows.values()];
+  const monthTotals = months.map((_, i) => list.reduce((sum, r) => sum + r.months[i], 0));
+  return { rows: list, monthTotals, grandTotal: monthTotals.reduce((a, b) => a + b, 0) };
+}
+
+export type GimmickRegionRekapRow = {
+  item_id: string;
+  item_code: string;
+  item_name: string;
+  unit: string;
+  region_id: string;
+  region_name: string;
+};
+
+/** Item × region × bulan. Keluar tanpa region tidak dihitung. */
+export function aggregateGimmickRegionRekap(
+  movements: GimmickRekapMovement[],
+  months: string[],
+  mode: GimmickRekapMode
+): GimmickRekapMatrix<GimmickRegionRekapRow> {
+  const rekap = aggregateOutMatrix(
+    movements,
+    months,
+    mode,
+    (m) => (m.region_id ? `${m.item_id}|${m.region_id}` : null),
+    (m) => ({
+      item_id: m.item_id,
+      item_code: m.item_code,
+      item_name: m.item_name,
+      unit: m.unit,
+      region_id: m.region_id!,
+      region_name: m.region_name ?? "",
+    })
+  );
+  rekap.rows.sort((a, b) => a.item_code.localeCompare(b.item_code) || a.region_name.localeCompare(b.region_name));
+  return rekap;
+}
+
+/** Tujuan × bulan, termasuk Keluar tanpa region; urut sesuai daftar tujuan. */
+export function aggregateGimmickDestinationRekap(
+  movements: GimmickRekapMovement[],
+  months: string[],
+  mode: GimmickRekapMode
+): GimmickRekapMatrix<{ destination: GimmickDestination }> {
+  const rekap = aggregateOutMatrix(
+    movements,
+    months,
+    mode,
+    (m) => m.destination,
+    (m) => ({ destination: m.destination! })
+  );
+  rekap.rows.sort(
+    (a, b) => GIMMICK_DESTINATIONS.indexOf(a.destination) - GIMMICK_DESTINATIONS.indexOf(b.destination)
+  );
+  return rekap;
+}
+
+export const GIMMICK_NO_PROGRAM_LABEL = "Tanpa Program";
+
+/**
+ * Program × bulan. Nama program digabung tanpa membedakan huruf besar/kecil;
+ * item tanpa program digabung sebagai "Tanpa Program" di baris terakhir.
+ */
+export function aggregateGimmickProgramRekap(
+  movements: GimmickRekapMovement[],
+  months: string[],
+  mode: GimmickRekapMode
+): GimmickRekapMatrix<{ program: string | null; label: string }> {
+  const rekap = aggregateOutMatrix(
+    movements,
+    months,
+    mode,
+    (m) => m.program?.trim().toLowerCase() || "",
+    (m) => {
+      const program = m.program?.trim() || null;
+      return { program, label: program ?? GIMMICK_NO_PROGRAM_LABEL };
+    }
+  );
+  rekap.rows.sort((a, b) =>
+    a.program === null ? 1 : b.program === null ? -1 : a.program.localeCompare(b.program, "id")
+  );
+  return rekap;
+}
+
+// Filter rekap (query string): rentang bulan dan item seperti rekap POSM
+// (tanpa brand), ditambah program dan mode Qty/Nilai Rp.
+
+export type GimmickRekapFilters = Omit<RekapFilters, "brand"> & { program?: string; mode: GimmickRekapMode };
+
+export function parseGimmickRekapFilters(
+  params: Record<string, string | string[] | undefined>,
+  today: string
+): GimmickRekapFilters {
+  const { from, to, item } = parseRekapFilters(params, today);
+  const filters: GimmickRekapFilters = { from, to, mode: params.mode === "value" ? "value" : "qty" };
+  if (item) filters.item = item;
+  const program = typeof params.program === "string" ? params.program.trim() : "";
+  if (program) filters.program = program;
+  return filters;
+}
+
+/** Query string filter rekap; mode qty (default) dihilangkan. */
+export function gimmickRekapFiltersQuery(filters: Partial<GimmickRekapFilters>): string {
+  const params = new URLSearchParams();
+  for (const key of ["from", "to", "item", "program"] as const) {
+    const v = filters[key];
+    if (v) params.set(key, v);
+  }
+  if (filters.mode === "value") params.set("mode", "value");
   return params.toString();
 }

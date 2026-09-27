@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import type { GimmickDestination, PosmMovementType } from "@/types/database";
 import { nextCode } from "./posm";
 import {
   cartonsToPcs,
@@ -15,6 +16,12 @@ import {
   GIMMICK_UNITS,
   monitoringPosmTabs,
   resolveMonitoringPosmTab,
+  aggregateGimmickRegionRekap,
+  aggregateGimmickDestinationRekap,
+  aggregateGimmickProgramRekap,
+  gimmickRekapFiltersQuery,
+  parseGimmickRekapFilters,
+  type GimmickRekapMovement,
 } from "./gimmick";
 
 describe("resolveMonitoringPosmTab", () => {
@@ -207,5 +214,121 @@ describe("outValueInMonth", () => {
       "2026-09"
     );
     expect(value).toBe(10 * 45000 + 2 * 12500);
+  });
+});
+
+describe("gimmick out rekap", () => {
+  const MONTHS = ["2026-08", "2026-09"];
+  const base = {
+    item_code: "GMK-0001",
+    item_name: "Payung Wangzai",
+    unit: "pcs",
+    program: "Imlek 2027" as string | null,
+    region_id: "r-jkt" as string | null,
+    region_name: "Jakarta" as string | null,
+    destination: "region_distributor" as GimmickDestination | null,
+    type: "out" as PosmMovementType,
+  };
+  const movements: GimmickRekapMovement[] = [
+    { ...base, item_id: "i1", movement_date: "2026-08-10", quantity: -10, unit_cost_snapshot: 45000 },
+    { ...base, item_id: "i1", movement_date: "2026-09-02", quantity: -5, unit_cost_snapshot: 50000 },
+    // Event dengan region: masuk rekap region, tujuan Event.
+    { ...base, item_id: "i1", movement_date: "2026-09-03", quantity: -2, unit_cost_snapshot: 50000, destination: "event" },
+    // Internal tanpa region: tidak masuk rekap region.
+    {
+      ...base,
+      item_id: "i2",
+      item_code: "GMK-0002",
+      item_name: "Tas Kanvas",
+      program: null,
+      region_id: null,
+      region_name: null,
+      destination: "internal",
+      movement_date: "2026-09-15",
+      quantity: -3,
+      unit_cost_snapshot: 12500,
+    },
+    // Tidak dihitung: penyesuaian, masuk, dan di luar rentang bulan.
+    { ...base, item_id: "i1", movement_date: "2026-09-04", quantity: -1, unit_cost_snapshot: 50000, type: "adjustment", destination: null },
+    { ...base, item_id: "i1", movement_date: "2026-09-04", quantity: 100, unit_cost_snapshot: 50000, type: "in", destination: null },
+    { ...base, item_id: "i1", movement_date: "2026-07-31", quantity: -7, unit_cost_snapshot: 45000 },
+  ];
+
+  it("region rekap counts only Keluar with a region, in qty mode", () => {
+    const rekap = aggregateGimmickRegionRekap(movements, MONTHS, "qty");
+    expect(rekap.rows).toHaveLength(1);
+    expect(rekap.rows[0]).toMatchObject({ item_id: "i1", region_id: "r-jkt", months: [10, 7], total: 17 });
+    expect(rekap.monthTotals).toEqual([10, 7]);
+    expect(rekap.grandTotal).toBe(17);
+  });
+
+  it("region rekap in value mode uses qty × snapshot", () => {
+    const rekap = aggregateGimmickRegionRekap(movements, MONTHS, "value");
+    expect(rekap.rows[0].months).toEqual([450000, 350000]);
+    expect(rekap.grandTotal).toBe(800000);
+  });
+
+  it("destination rekap includes Keluar without region, ordered like the destination list", () => {
+    const qty = aggregateGimmickDestinationRekap(movements, MONTHS, "qty");
+    expect(qty.rows.map((r) => [r.destination, r.months, r.total])).toEqual([
+      ["region_distributor", [10, 5], 15],
+      ["event", [0, 2], 2],
+      ["internal", [0, 3], 3],
+    ]);
+    expect(qty.grandTotal).toBe(20);
+
+    const value = aggregateGimmickDestinationRekap(movements, MONTHS, "value");
+    expect(value.monthTotals).toEqual([450000, 5 * 50000 + 2 * 50000 + 3 * 12500]);
+  });
+
+  it("program rekap groups items without a program as Tanpa Program, placed last", () => {
+    const qty = aggregateGimmickProgramRekap(movements, MONTHS, "qty");
+    expect(qty.rows.map((r) => [r.program, r.label, r.total])).toEqual([
+      ["Imlek 2027", "Imlek 2027", 17],
+      [null, "Tanpa Program", 3],
+    ]);
+    const value = aggregateGimmickProgramRekap(movements, MONTHS, "value");
+    expect(value.rows.map((r) => r.total)).toEqual([800000, 37500]);
+    expect(value.grandTotal).toBe(837500);
+  });
+
+  it("program rekap groups program names case-insensitively", () => {
+    const rekap = aggregateGimmickProgramRekap(
+      [movements[0], { ...movements[1], program: " imlek 2027" }],
+      MONTHS,
+      "qty"
+    );
+    expect(rekap.rows).toHaveLength(1);
+    expect(rekap.rows[0].total).toBe(15);
+  });
+});
+
+describe("gimmick rekap filters", () => {
+  const UUID_A = "11111111-1111-4111-8111-111111111111";
+
+  it("defaults to the last 6 months in qty mode", () => {
+    expect(parseGimmickRekapFilters({}, "2026-09-27")).toEqual({ from: "2026-04", to: "2026-09", mode: "qty" });
+  });
+
+  it("parses item, program and value mode, dropping invalid values and capping the range", () => {
+    expect(
+      parseGimmickRekapFilters(
+        { from: "2023-01", to: "2026-09", item: UUID_A, program: " Imlek 2027 ", mode: "value", brand: UUID_A },
+        "2026-09-27"
+      )
+    ).toEqual({ from: "2024-10", to: "2026-09", item: UUID_A, program: "Imlek 2027", mode: "value" });
+    expect(parseGimmickRekapFilters({ item: "x", mode: "rupiah" }, "2026-09-27")).toEqual({
+      from: "2026-04",
+      to: "2026-09",
+      mode: "qty",
+    });
+  });
+
+  it("round-trips through the query string, dropping the default qty mode", () => {
+    const filters = { from: "2026-01", to: "2026-03", program: "Imlek 2027", mode: "value" as const };
+    const qs = gimmickRekapFiltersQuery(filters);
+    expect(qs).toBe("from=2026-01&to=2026-03&program=Imlek+2027&mode=value");
+    expect(parseGimmickRekapFilters(Object.fromEntries(new URLSearchParams(qs)), "2026-09-27")).toEqual(filters);
+    expect(gimmickRekapFiltersQuery({ ...filters, mode: "qty" })).not.toContain("mode");
   });
 });
