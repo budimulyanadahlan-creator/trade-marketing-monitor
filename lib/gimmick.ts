@@ -111,6 +111,27 @@ export function distinctPrograms(items: { program: string | null }[]): string[] 
   return [...byKey.values()].sort((a, b) => a.localeCompare(b, "id"));
 }
 
+/**
+ * Program yang disimpan: jika sama dengan program yang sudah ada kecuali
+ * huruf besar/kecil, pakai ejaan yang sudah ada agar penamaan seragam.
+ */
+export function canonicalProgram(
+  input: string | undefined,
+  existing: { program: string | null }[]
+): string | null {
+  const value = input?.trim();
+  if (!value) return null;
+  return distinctPrograms(existing).find((p) => p.toLowerCase() === value.toLowerCase()) ?? value;
+}
+
+/**
+ * Pola `ilike` untuk filter program: sama persis kecuali huruf besar/kecil
+ * (seperti pengelompokan rekap), jadi wildcard `%`/`_` di nama di-escape.
+ */
+export function programIlikePattern(program: string): string {
+  return program.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
 // ============================================================
 // AKSES TAB
 // ============================================================

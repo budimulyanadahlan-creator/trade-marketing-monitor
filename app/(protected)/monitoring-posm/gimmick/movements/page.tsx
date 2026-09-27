@@ -24,6 +24,7 @@ import {
   GIMMICK_MOVEMENT_TYPES,
   gimmickMovementFiltersQuery,
   parseGimmickMovementFilters,
+  programIlikePattern,
   type GimmickMovementFilters,
 } from "@/lib/gimmick";
 import type { PosmMovementType } from "@/types/database";
@@ -70,7 +71,7 @@ export default async function GimmickMovementsPage({ searchParams }: { searchPar
   if (filters.item) query = query.eq("item_id", filters.item);
   if (filters.region) query = query.eq("region_id", filters.region);
   if (filters.distributor) query = query.eq("distributor_id", filters.distributor);
-  if (filters.program) query = query.eq("item.program", filters.program);
+  if (filters.program) query = query.ilike("item.program", programIlikePattern(filters.program));
 
   const offset = (filters.page - 1) * POSM_MOVEMENTS_PAGE_SIZE;
   const [{ data: movements, count }, { data: items }, { data: regions }, { data: distributors }] =

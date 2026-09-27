@@ -1,6 +1,6 @@
 import type { createClient } from "@/lib/supabase/server";
 import { monthDateBounds, monthRange } from "@/lib/posm";
-import type { GimmickRekapFilters, GimmickRekapMovement } from "@/lib/gimmick";
+import { programIlikePattern, type GimmickRekapFilters, type GimmickRekapMovement } from "@/lib/gimmick";
 import type { GimmickDestination, PosmMovementType } from "@/types/database";
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
@@ -45,7 +45,7 @@ export async function loadGimmickOutMovements(
       .gte("movement_date", start)
       .lte("movement_date", end);
     if (filters.item) query = query.eq("item_id", filters.item);
-    if (filters.program) query = query.eq("item.program", filters.program);
+    if (filters.program) query = query.ilike("item.program", programIlikePattern(filters.program));
 
     const { data, error } = await query.order("id").range(offset, offset + FETCH_PAGE_SIZE - 1);
     if (error) throw new Error(`Gagal memuat rekap gimmick: ${error.message}`);

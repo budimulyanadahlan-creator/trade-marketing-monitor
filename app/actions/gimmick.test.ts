@@ -18,6 +18,7 @@ function setupMocks({
   insertError = null,
   updateError = null,
   movementCount = 0,
+  existingPrograms = [],
 }: {
   role?: string;
   department?: string | null;
@@ -25,12 +26,27 @@ function setupMocks({
   updateError?: DbError;
   /** Jumlah mutasi item (termasuk yang terhapus). */
   movementCount?: number;
+  /** Program item lain yang sudah tersimpan. */
+  existingPrograms?: string[];
 } = {}) {
   const insertSingle = vi.fn().mockResolvedValue({ data: insertError ? null : { id: NEW_ID }, error: insertError });
   const insert = vi.fn().mockReturnValue({ select: () => ({ single: insertSingle }) });
   const updateIs = vi.fn().mockResolvedValue({ error: updateError });
   const updateEq = vi.fn().mockReturnValue({ is: updateIs });
   const update = vi.fn().mockReturnValue({ eq: updateEq });
+  // select("program").is().not()[.neq()] → daftar program yang sudah ada.
+  const programNeq = vi.fn();
+  const programQuery = {
+    is: () => programQuery,
+    not: () => programQuery,
+    neq: (...args: unknown[]) => {
+      programNeq(...args);
+      return programQuery;
+    },
+    then: (resolve: (v: unknown) => unknown) =>
+      resolve({ data: existingPrograms.map((program) => ({ program })), error: null }),
+  };
+  const select = vi.fn().mockReturnValue(programQuery);
 
   const client = {
     auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: "user-1" } } }) },
@@ -43,14 +59,14 @@ function setupMocks({
             data: { role, is_active: true, department: department ? { name: department } : null },
           }),
         };
-      if (table === "gimmick_items") return { insert, update };
+      if (table === "gimmick_items") return { insert, update, select };
       if (table === "gimmick_movements")
         return { select: () => ({ eq: vi.fn().mockResolvedValue({ count: movementCount }) }) };
       return {};
     }),
   };
   (createClient as ReturnType<typeof vi.fn>).mockResolvedValue(client);
-  return { insert, update, updateEq, updateIs, client };
+  return { insert, update, updateEq, updateIs, programNeq, client };
 }
 
 function formDataOf(entries: Record<string, string>) {
@@ -118,6 +134,24 @@ describe("saveGimmickItemAction", () => {
         program: "Imlek 2027",
       })
     );
+  });
+
+  it("reuses the existing program spelling when only the case differs", async () => {
+    const { insert } = setupMocks({ existingPrograms: ["Imlek 2027"] });
+
+    await saveGimmickItemAction({}, formDataOf({ ...validItem, program: "IMLEK 2027" }));
+
+    expect(insert).toHaveBeenCalledWith(expect.objectContaining({ program: "Imlek 2027" }));
+  });
+
+  it("ignores the edited item's own program when matching spellings", async () => {
+    const id = "22222222-2222-4222-8222-222222222222";
+    const { update, programNeq } = setupMocks();
+
+    await saveGimmickItemAction({}, formDataOf({ ...validItem, id, program: "Imlek 2027" }));
+
+    expect(programNeq).toHaveBeenCalledWith("id", id);
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ program: "Imlek 2027" }));
   });
 
   it.each([

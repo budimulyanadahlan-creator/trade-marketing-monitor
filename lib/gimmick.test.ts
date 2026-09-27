@@ -21,6 +21,8 @@ import {
   aggregateGimmickProgramRekap,
   gimmickRekapFiltersQuery,
   parseGimmickRekapFilters,
+  programIlikePattern,
+  canonicalProgram,
   type GimmickRekapMovement,
 } from "./gimmick";
 
@@ -330,5 +332,26 @@ describe("gimmick rekap filters", () => {
     expect(qs).toBe("from=2026-01&to=2026-03&program=Imlek+2027&mode=value");
     expect(parseGimmickRekapFilters(Object.fromEntries(new URLSearchParams(qs)), "2026-09-27")).toEqual(filters);
     expect(gimmickRekapFiltersQuery({ ...filters, mode: "qty" })).not.toContain("mode");
+  });
+});
+
+describe("programIlikePattern", () => {
+  it("escapes LIKE wildcards so the filter only ignores case", () => {
+    expect(programIlikePattern("Imlek 2027")).toBe("Imlek 2027");
+    expect(programIlikePattern("Promo 50%_Q1\\x")).toBe("Promo 50\\%\\_Q1\\\\x");
+  });
+});
+
+describe("canonicalProgram", () => {
+  const existing = [{ program: "Imlek 2027" }, { program: "Lebaran 2027" }, { program: null }];
+
+  it("reuses the existing spelling when the input differs only in case", () => {
+    expect(canonicalProgram("imlek 2027", existing)).toBe("Imlek 2027");
+    expect(canonicalProgram("LEBARAN 2027", existing)).toBe("Lebaran 2027");
+  });
+
+  it("keeps new programs and empty input as-is", () => {
+    expect(canonicalProgram("Natal 2027", existing)).toBe("Natal 2027");
+    expect(canonicalProgram(undefined, existing)).toBeNull();
   });
 });

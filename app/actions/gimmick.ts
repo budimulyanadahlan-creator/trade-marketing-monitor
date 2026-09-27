@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requirePosmWriter } from "@/lib/posm-writer";
 import {
+  canonicalProgram,
   cartonsToPcs,
   formatPcsWithCartons,
   GIMMICK_CATEGORIES,
@@ -89,6 +90,16 @@ export async function saveGimmickItemAction(
     }
 
     const { id, ...fields } = parsed.data;
+
+    // Program yang beda huruf besar/kecil saja memakai ejaan yang sudah ada.
+    // Item yang sedang diedit dikecualikan agar ejaannya sendiri bisa diperbaiki.
+    let existingPrograms: { program: string | null }[] = [];
+    if (fields.program) {
+      let query = supabase.from("gimmick_items").select("program").is("deleted_at", null).not("program", "is", null);
+      if (id) query = query.neq("id", id);
+      existingPrograms = (await query).data ?? [];
+    }
+
     const data = {
       code: fields.code,
       name: fields.name,
@@ -99,7 +110,7 @@ export async function saveGimmickItemAction(
       unit_cost: fields.unit_cost,
       suggested_price: fields.suggested_price ?? null,
       min_stock: fields.min_stock ?? null,
-      program: fields.program ?? null,
+      program: canonicalProgram(fields.program, existingPrograms),
     };
 
     const { data: inserted, error } = id
