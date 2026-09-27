@@ -34,7 +34,7 @@ import {
 import { AlertCircle, ArrowRightLeft, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { filterBySearch } from "@/lib/search";
-import { ASSET_CONDITIONS, ASSET_DESTINATION_LABELS, ASSET_TYPES } from "@/lib/posm";
+import { ASSET_CONDITIONS, ASSET_DESTINATION_LABELS, ASSET_TYPES, ASSET_WRITTEN_OFF } from "@/lib/posm";
 import { formatIDR } from "@/lib/utils";
 import type { AssetCondition, AssetDestination, MarketingAssetRow } from "@/types/database";
 import { PlacementDialog } from "./placement-dialog";
@@ -418,12 +418,11 @@ export function AssetLocation({
 
 // ---- Main Table ----
 
-const WRITTEN_OFF: AssetCondition = "Dihapusbukukan";
 const ALL_CONDITIONS = "all";
 
 /** Filter kondisi: default (kosong) menyembunyikan asset Dihapusbukukan. */
 function matchesCondition(condition: AssetCondition, filter: string) {
-  if (filter === "") return condition !== WRITTEN_OFF;
+  if (filter === "") return condition !== ASSET_WRITTEN_OFF;
   return filter === ALL_CONDITIONS || condition === filter;
 }
 
@@ -480,7 +479,7 @@ export function AssetsTable({
   const hasFilter =
     query.trim() !== "" || typeFilter !== "" || brandFilter !== "" || conditionFilter !== "" || regionFilter !== "";
   const hiddenWrittenOff =
-    conditionFilter === "" ? assets.filter((a) => a.condition === WRITTEN_OFF).length : 0;
+    conditionFilter === "" ? assets.filter((a) => a.condition === ASSET_WRITTEN_OFF).length : 0;
   const colSpan = canManage ? 8 : 7;
 
   return (
@@ -489,7 +488,7 @@ export function AssetsTable({
         <p className="text-sm text-slate-400">
           {filtered.length} asset
           {hiddenWrittenOff > 0 && (
-            <span className="text-slate-600"> • {hiddenWrittenOff} {WRITTEN_OFF.toLowerCase()} disembunyikan</span>
+            <span className="text-slate-600"> • {hiddenWrittenOff} {ASSET_WRITTEN_OFF.toLowerCase()} disembunyikan</span>
           )}
         </p>
         <div className="flex items-center gap-2 flex-wrap justify-end">
@@ -531,7 +530,7 @@ export function AssetsTable({
             onChange={(e) => setConditionFilter(e.target.value)}
             className="h-9 w-48"
           >
-            <option value="">Tanpa {WRITTEN_OFF}</option>
+            <option value="">Tanpa {ASSET_WRITTEN_OFF}</option>
             <option value={ALL_CONDITIONS}>Semua kondisi</option>
             {ASSET_CONDITIONS.map((c) => (
               <option key={c} value={c}>

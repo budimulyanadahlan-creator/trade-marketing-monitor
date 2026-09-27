@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2, X } from "lucide-react";
 import { searchPosmCampaignsAction, type PosmCampaignOption } from "@/app/actions/posm";
 import { SearchInput } from "@/components/ui/search-input";
@@ -24,27 +24,34 @@ export function SkpPicker({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const q = query.trim();
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // Nomor permintaan terbaru; hasil dari pencarian lama diabaikan.
+  const latestRequest = useRef(0);
+
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  // Pencarian (debounce 300 ms) dipicu langsung dari perubahan input.
+  function handleQueryChange(value: string) {
+    setQuery(value);
+    clearTimeout(timer.current);
+    const request = ++latestRequest.current;
+
+    const q = value.trim();
     if (q.length < 2) {
       setResults([]);
       setError(null);
+      setLoading(false);
       return;
     }
-    let cancelled = false;
     setLoading(true);
-    const timer = setTimeout(async () => {
+    timer.current = setTimeout(async () => {
       const result = await searchPosmCampaignsAction(q);
-      if (cancelled) return;
+      if (request !== latestRequest.current) return;
       setResults(result.campaigns);
       setError(result.error ?? null);
       setLoading(false);
     }, 300);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [query]);
+  }
 
   if (selected) {
     return (
@@ -71,7 +78,7 @@ export function SkpPicker({
 
   return (
     <div className="space-y-1">
-      <SearchInput value={query} onChange={setQuery} placeholder="Cari nomor SKP atau nama campaign..." />
+      <SearchInput value={query} onChange={handleQueryChange} placeholder="Cari nomor SKP atau nama campaign..." />
       {q.length >= 2 && (
         <div className="max-h-48 overflow-y-auto rounded-md border border-white/10 bg-slate-900 text-sm">
           {loading ? (
@@ -90,7 +97,7 @@ export function SkpPicker({
                 type="button"
                 onClick={() => {
                   setSelected(c);
-                  setQuery("");
+                  handleQueryChange("");
                 }}
                 className="block w-full px-3 py-2 text-left hover:bg-white/5"
               >

@@ -328,6 +328,19 @@ describe("summarizeAssets", () => {
     expect(summary.placed).toBe(2);
   });
 
+  it("leaves written-off assets out of the totals but still counts them by condition", () => {
+    const summary = summarizeAssets([
+      asset(5_000_000, "Baik", "placed"),
+      asset(2_000_000, "Dihapusbukukan", "warehouse"),
+    ]);
+
+    expect(summary.totalUnits).toBe(1);
+    expect(summary.totalValue).toBe(5_000_000);
+    expect(summary.inWarehouse).toBe(0);
+    expect(summary.placed).toBe(1);
+    expect(summary.byCondition.Dihapusbukukan).toBe(1);
+  });
+
   it("returns zeros for no assets", () => {
     const summary = summarizeAssets([]);
     expect(summary.totalUnits).toBe(0);

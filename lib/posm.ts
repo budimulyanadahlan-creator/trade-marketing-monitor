@@ -395,17 +395,26 @@ export type AssetSummary = {
   placed: number;
 };
 
-/** Kartu ringkas tab Asset; kondisi & lokasi dari penempatan terakhir. */
+export const ASSET_WRITTEN_OFF: AssetCondition = "Dihapusbukukan";
+
+/**
+ * Kartu ringkas tab Asset; kondisi & lokasi dari penempatan terakhir. Asset
+ * Dihapusbukukan tidak ikut total unit, nilai, dan lokasi (sama dengan
+ * tampilan default tabel), tetapi tetap dihitung per kondisi.
+ */
 export function summarizeAssets(assets: AssetSummaryInput[]): AssetSummary {
   const byCondition = Object.fromEntries(ASSET_CONDITIONS.map((c) => [c, 0])) as Record<AssetCondition, number>;
+  let totalUnits = 0;
   let totalValue = 0;
   let inWarehouse = 0;
   for (const a of assets) {
-    totalValue += Number(a.acquisition_value);
     byCondition[a.condition] += 1;
+    if (a.condition === ASSET_WRITTEN_OFF) continue;
+    totalUnits += 1;
+    totalValue += Number(a.acquisition_value);
     if (a.destination === "warehouse") inWarehouse += 1;
   }
-  return { totalUnits: assets.length, totalValue, byCondition, inWarehouse, placed: assets.length - inWarehouse };
+  return { totalUnits, totalValue, byCondition, inWarehouse, placed: totalUnits - inWarehouse };
 }
 
 // ============================================================
