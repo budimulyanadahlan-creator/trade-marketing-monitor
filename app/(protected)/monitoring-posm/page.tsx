@@ -173,7 +173,7 @@ async function AssetTab({ canManage }: { canManage: boolean }) {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiCard label="Total Unit" value={summary.totalUnits} type="count" />
+        <KpiCard label="Total Unit Aktif" value={summary.totalUnits} type="count" />
         <KpiCard label="Total Nilai Perolehan" value={summary.totalValue} type="currency" />
         <KpiCard label="Di Gudang Pusat" value={summary.inWarehouse} type="count" />
         <KpiCard label="Ditempatkan" value={summary.placed} type="count" />
