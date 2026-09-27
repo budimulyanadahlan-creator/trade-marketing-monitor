@@ -14,6 +14,7 @@ type Placement = { id: string; asset_id?: string; event_date: string; is_registr
 const ASSET_ID = "77777777-7777-4777-8777-777777777777";
 const REG_ID = "88888888-8888-4888-8888-888888888888";
 const MOVE_ID = "99999999-9999-4999-8999-999999999999";
+const NEW_PLACEMENT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const REGION_ID = "44444444-4444-4444-8444-444444444444";
 const DISTRIBUTOR_ID = "55555555-5555-4555-8555-555555555555";
 
@@ -29,6 +30,10 @@ function builder(read: { data: unknown }, write: { error: DbError }) {
       return b;
     });
   b.maybeSingle = vi.fn(() => Promise.resolve(read));
+  // insert().select("id").single() mengembalikan id catatan baru.
+  b.single = vi.fn(() =>
+    Promise.resolve(writing ? { data: write.error ? null : { id: NEW_PLACEMENT_ID }, ...write } : read)
+  );
   b.then = (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) =>
     Promise.resolve(writing ? write : read).then(resolve, reject);
   return b;
@@ -126,6 +131,14 @@ describe("saveAssetPlacementAction (move)", () => {
       condition: "Baik",
       notes: "Program display Q1",
     });
+  });
+
+  it("returns the new placement id so its photo can be uploaded", async () => {
+    setupMocks();
+
+    const result = await saveAssetPlacementAction({}, formDataOf(moveToStore));
+
+    expect(result).toEqual({ success: true, id: NEW_PLACEMENT_ID });
   });
 });
 

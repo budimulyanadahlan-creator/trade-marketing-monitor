@@ -26,6 +26,7 @@ import { formatDate } from "@/lib/utils";
 import type { AssetCondition } from "@/types/database";
 import { AssetConditionBadge, AssetLocation } from "../../assets-table";
 import { PlacementDialog, type PlacementFormValues } from "../../placement-dialog";
+import { PhotoThumb } from "../../posm-photo";
 
 type PlacementLocation = Pick<PlacementFormValues, "destination" | "store_name"> & {
   region_name: string | null;
@@ -140,6 +141,7 @@ export function AssetPlacementsPanel({
               <TableHead>Kondisi</TableHead>
               <TableHead>PIC</TableHead>
               <TableHead>Keterangan</TableHead>
+              <TableHead>Foto</TableHead>
               <TableHead>Dicatat Oleh</TableHead>
               {canManage && <TableHead className="text-right">Aksi</TableHead>}
             </TableRow>
@@ -167,6 +169,13 @@ export function AssetPlacementsPanel({
                 </TableCell>
                 <TableCell className="text-slate-300">{p.pic_name ?? "—"}</TableCell>
                 <TableCell className="max-w-xs text-slate-400">{p.notes ?? "—"}</TableCell>
+                <TableCell>
+                  {p.photo_url ? (
+                    <PhotoThumb url={p.photo_url} alt={`Foto bukti ${formatDate(p.event_date)}`} />
+                  ) : (
+                    <span className="text-slate-600">—</span>
+                  )}
+                </TableCell>
                 <TableCell className="text-slate-500">{p.creator_name ?? "—"}</TableCell>
                 {canManage && (
                   <TableCell className="text-right">

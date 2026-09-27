@@ -1,6 +1,8 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import type { AssetListRow } from "./assets-table";
+
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
 const { AssetsTable } = await import("./assets-table");
 
@@ -22,10 +24,11 @@ const base = {
   region_name: null,
   distributor_name: null,
   store_name: null,
+  photo_url: null,
 };
 
 const assets: AssetListRow[] = [
-  { ...base, id: "a1", code: "AST-0001", name: "Cooler Showcase", asset_type: "Cooler/Chiller", brand_id: "brand-1", brand_name: "Produk A", acquisition_value: 7_500_000, condition: "Baik", destination: "placed", region_id: "reg-1", region_name: "Jawa Barat", distributor_name: "PT Sumber Rejeki", store_name: "Toko Maju Jaya", can_delete: false },
+  { ...base, id: "a1", code: "AST-0001", name: "Cooler Showcase", asset_type: "Cooler/Chiller", brand_id: "brand-1", brand_name: "Produk A", acquisition_value: 7_500_000, condition: "Baik", destination: "placed", region_id: "reg-1", region_name: "Jawa Barat", distributor_name: "PT Sumber Rejeki", store_name: "Toko Maju Jaya", can_delete: false, photo_url: "https://storage.test/a1.jpg" },
   { ...base, id: "a2", code: "AST-0002", name: "Rak Display Besi", asset_type: "Rak Display", acquisition_value: 1_200_000, condition: "Rusak Ringan", destination: "warehouse", can_delete: true },
   { ...base, id: "a3", code: "AST-0003", name: "Tenda Lama", asset_type: "Tenda/Booth", acquisition_value: 500_000, condition: "Dihapusbukukan", destination: "warehouse", can_delete: false },
 ];
@@ -105,5 +108,16 @@ describe("AssetsTable", () => {
     fireEvent.change(screen.getByLabelText("Filter region"), { target: { value: "reg-1" } });
     expect(screen.getByText("Cooler Showcase")).toBeTruthy();
     expect(screen.queryByText("Rak Display Besi")).toBeNull();
+  });
+
+  it("shows a photo thumbnail that enlarges on click, only for assets with a photo", () => {
+    renderTable(false);
+    const thumbs = screen.getAllByTitle("Perbesar foto");
+    expect(thumbs).toHaveLength(1);
+    expect(within(screen.getByText("Cooler Showcase").closest("tr")!).getByTitle("Perbesar foto")).toBeTruthy();
+
+    fireEvent.click(thumbs[0]);
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByRole("img").getAttribute("src")).toBe("https://storage.test/a1.jpg");
   });
 });

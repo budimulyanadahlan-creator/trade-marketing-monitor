@@ -1,6 +1,8 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import type { AssetPlacementListRow } from "./asset-placements-panel";
+
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
 const { AssetPlacementsPanel } = await import("./asset-placements-panel");
 
@@ -16,6 +18,7 @@ const base = {
   pic_name: null,
   notes: null,
   creator_name: "Rina",
+  photo_url: null,
 };
 
 const warehouse = { destination: "warehouse" as const, store_name: null, region_name: null, distributor_name: null };
@@ -34,6 +37,7 @@ const placements: AssetPlacementListRow[] = [
     pic_name: "Pak Budi",
     condition: "Rusak Ringan",
     is_registration: false,
+    photo_url: "https://storage.test/move.jpg",
     previous: warehouse,
   },
   {
@@ -87,5 +91,13 @@ describe("AssetPlacementsPanel", () => {
     expect(within(regRow).queryByText("Hapus")).toBeNull();
     const moveRow = screen.getByText("Toko Maju Jaya").closest("tr")!;
     expect(within(moveRow).getByText("Hapus")).toBeTruthy();
+  });
+
+  it("shows the proof photo of a placement", () => {
+    renderPanel(false);
+    const moveRow = screen.getByText("Toko Maju Jaya").closest("tr")!;
+    expect(within(moveRow).getByRole("img").getAttribute("src")).toBe("https://storage.test/move.jpg");
+    const regRow = screen.getByText("Pendaftaran").closest("tr")!;
+    expect(within(regRow).queryByRole("img")).toBeNull();
   });
 });

@@ -15,6 +15,7 @@ const nextConfig: NextConfig = {
   // included here.
   outputFileTracingIncludes: {
     "/api/upload/claim-document": ["./node_modules/@img/**/*", "./node_modules/sharp/**/*"],
+    "/api/posm-photo": ["./node_modules/@img/**/*", "./node_modules/sharp/**/*"],
   },
 };
 

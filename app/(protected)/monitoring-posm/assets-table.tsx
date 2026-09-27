@@ -38,6 +38,7 @@ import { ASSET_CONDITIONS, ASSET_DESTINATION_LABELS, ASSET_TYPES, ASSET_WRITTEN_
 import { formatIDR } from "@/lib/utils";
 import type { AssetCondition, AssetDestination, MarketingAssetRow } from "@/types/database";
 import { PlacementDialog } from "./placement-dialog";
+import { PhotoField, PhotoThumb, usePhotoChange } from "./posm-photo";
 
 export type AssetListRow = Pick<
   MarketingAssetRow,
@@ -60,6 +61,8 @@ export type AssetListRow = Pick<
   store_name: string | null;
   /** Hanya punya catatan pendaftaran, jadi masih boleh dihapus. */
   can_delete: boolean;
+  /** Signed URL foto asset, null jika tidak ada. */
+  photo_url: string | null;
 };
 
 type Option = { id: string; name: string; is_active: boolean };
@@ -101,10 +104,12 @@ function AssetDialog({
   const isEdit = asset !== null;
   const [open, setOpen] = useState(false);
   const [destination, setDestination] = useState<AssetDestination>("warehouse");
+  const photo = usePhotoChange("asset");
   const [state, formAction, isPending] = useActionState(
     async (prev: SaveMarketingAssetState, formData: FormData) => {
       const result = await saveMarketingAssetAction(prev, formData);
       if (result.success) {
+        await photo.save(result.id);
         toast.success(isEdit ? "Asset diperbarui" : "Asset didaftarkan");
         setOpen(false);
       }
@@ -120,7 +125,10 @@ function AssetDialog({
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
-        if (next) setDestination("warehouse");
+        if (next) {
+          setDestination("warehouse");
+          photo.reset();
+        }
       }}
     >
       <DialogTrigger asChild>{trigger}</DialogTrigger>
@@ -228,6 +236,14 @@ function AssetDialog({
               />
             </div>
           </div>
+
+          <PhotoField
+            label="Foto Asset (opsional)"
+            currentUrl={asset?.photo_url ?? null}
+            value={photo.change}
+            onChange={photo.setChange}
+            disabled={isPending}
+          />
 
           {/* Lokasi awal hanya saat pendaftaran; perpindahan lewat form terpisah. */}
           {!isEdit && (
@@ -591,10 +607,18 @@ export function AssetsTable({
                     <code className="rounded bg-white/5 px-2 py-0.5 text-xs text-slate-300">{asset.code}</code>
                   </TableCell>
                   <TableCell className="font-medium">
-                    <Link href={`/monitoring-posm/assets/${asset.id}`} className="hover:text-emerald-400 hover:underline">
-                      {asset.name}
-                    </Link>
-                    {asset.serial_number && <p className="text-xs text-slate-500">{asset.serial_number}</p>}
+                    <div className="flex items-center gap-2">
+                      <PhotoThumb url={asset.photo_url} alt={`${asset.code} — ${asset.name}`} />
+                      <div>
+                        <Link
+                          href={`/monitoring-posm/assets/${asset.id}`}
+                          className="hover:text-emerald-400 hover:underline"
+                        >
+                          {asset.name}
+                        </Link>
+                        {asset.serial_number && <p className="text-xs text-slate-500">{asset.serial_number}</p>}
+                      </div>
+                    </div>
                   </TableCell>
                   <TableCell className="text-slate-300">{asset.asset_type}</TableCell>
                   <TableCell className="text-slate-400">{asset.brand_name ?? "—"}</TableCell>

@@ -88,7 +88,8 @@ const posmItemSchema = z.object({
     .optional(),
 });
 
-export type SavePosmItemState = { error?: string; success?: boolean };
+// id = record yang disimpan, dipakai form untuk upload foto sesudahnya.
+export type SavePosmItemState = { error?: string; success?: boolean; id?: string };
 
 export async function savePosmItemAction(
   _prevState: SavePosmItemState,
@@ -121,9 +122,9 @@ export async function savePosmItemAction(
       min_stock: fields.min_stock ?? null,
     };
 
-    const { error } = id
+    const { data: inserted, error } = id
       ? await supabase.from("posm_items").update(data).eq("id", id).is("deleted_at", null)
-      : await supabase.from("posm_items").insert(data);
+      : await supabase.from("posm_items").insert(data).select("id").single();
 
     if (error) {
       if (error.code === "23505")
@@ -132,7 +133,7 @@ export async function savePosmItemAction(
     }
 
     revalidatePath(PAGE_PATH);
-    return { success: true };
+    return { success: true, id: id ?? inserted?.id };
   } catch {
     return { error: FORBIDDEN };
   }
@@ -472,7 +473,7 @@ function placementColumns(p: z.infer<typeof placementFields>) {
   };
 }
 
-export type SaveMarketingAssetState = { error?: string; success?: boolean };
+export type SaveMarketingAssetState = { error?: string; success?: boolean; id?: string };
 
 function assetErrorMessage(error: { message: string; code?: string }, code: string) {
   if (error.code === "23505") return `Kode ${code} sudah dipakai asset lain. Gunakan kode lain.`;
@@ -519,7 +520,7 @@ export async function saveMarketingAssetAction(
         .is("deleted_at", null);
       if (error) return { error: assetErrorMessage(error, a.code) };
       revalidatePath(PAGE_PATH);
-      return { success: true };
+      return { success: true, id };
     }
 
     const placement = assetPlacementSchema.safeParse(placementFormValues(formData));
@@ -527,7 +528,7 @@ export async function saveMarketingAssetAction(
 
     const p = placementColumns(placement.data);
 
-    const { error } = await supabase.rpc("create_marketing_asset", {
+    const { data: newId, error } = await supabase.rpc("create_marketing_asset", {
       p_code: assetData.code,
       p_name: assetData.name,
       p_asset_type: assetData.asset_type,
@@ -548,7 +549,7 @@ export async function saveMarketingAssetAction(
     if (error) return { error: assetErrorMessage(error, a.code) };
 
     revalidatePath(PAGE_PATH);
-    return { success: true };
+    return { success: true, id: newId };
   } catch {
     return { error: FORBIDDEN };
   }
@@ -597,7 +598,7 @@ const placementSchema = placementFields
   })
   .superRefine(requireStoreLocation);
 
-export type SaveAssetPlacementState = { error?: string; success?: boolean };
+export type SaveAssetPlacementState = { error?: string; success?: boolean; id?: string };
 
 function placementDateMessage(v: PlacementDateViolation) {
   return v.kind === "before_registration"
@@ -658,18 +659,18 @@ export async function saveAssetPlacementAction(
     const violation = placementDateViolation(existing ?? [], { id, event_date: data.event_date });
     if (violation) return { error: placementDateMessage(violation) };
 
-    const { error } = id
+    const { data: inserted, error } = id
       ? await supabase
           .from("asset_placements")
           .update(data)
           .eq("id", id)
           .eq("asset_id", asset_id)
           .is("deleted_at", null)
-      : await supabase.from("asset_placements").insert({ asset_id, ...data });
+      : await supabase.from("asset_placements").insert({ asset_id, ...data }).select("id").single();
     if (error) return { error: placementErrorMessage(error) };
 
     revalidateAsset(asset_id);
-    return { success: true };
+    return { success: true, id: id ?? inserted?.id };
   } catch {
     return { error: FORBIDDEN };
   }

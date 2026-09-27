@@ -48,13 +48,21 @@ function fakeTable(rows: Row[], { insertError = null, updateError = null }: { in
     };
     return query;
   });
-  const insert = vi.fn().mockResolvedValue({ error: insertError });
+  // Bisa di-await langsung atau lewat .select("id").single() (mengembalikan id baru).
+  const insert = vi.fn(() => ({
+    select: () => ({
+      single: () => Promise.resolve({ data: insertError ? null : { id: NEW_ID }, error: insertError }),
+    }),
+    then: (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) =>
+      Promise.resolve({ error: insertError }).then(resolve, reject),
+  }));
   const updateIs = vi.fn().mockResolvedValue({ error: updateError });
   const updateEq = vi.fn().mockReturnValue({ is: updateIs });
   const update = vi.fn().mockReturnValue({ eq: updateEq });
   return { select, insert, update, updateEq, updateIs };
 }
 
+const NEW_ID = "77777777-7777-4777-8777-777777777777";
 const ITEM_ID = "33333333-3333-4333-8333-333333333333";
 const REGION_ID = "44444444-4444-4444-8444-444444444444";
 const DISTRIBUTOR_ID = "55555555-5555-4555-8555-555555555555";
@@ -149,6 +157,14 @@ describe("savePosmItemAction", () => {
     expect(insert).toHaveBeenCalledWith(
       expect.objectContaining({ brand_id: brandId, min_stock: 50 })
     );
+  });
+
+  it("returns the new item id so its photo can be uploaded", async () => {
+    setupMocks();
+
+    const result = await savePosmItemAction({}, formDataOf(validItem));
+
+    expect(result).toEqual({ success: true, id: NEW_ID });
   });
 
   it("updates an existing, non-deleted item when an id is given", async () => {

@@ -36,6 +36,7 @@ import { filterBySearch } from "@/lib/search";
 import { POSM_CATEGORIES, POSM_UNITS, type PosmStockStatus } from "@/lib/posm";
 import { formatDate } from "@/lib/utils";
 import { STOCK_STATUS_LABELS, StockStatusBadge } from "./stock-status-badge";
+import { PhotoField, PhotoThumb, usePhotoChange } from "./posm-photo";
 import type { PosmItemRow } from "@/types/database";
 
 export type PosmItemListRow = Pick<
@@ -47,6 +48,8 @@ export type PosmItemListRow = Pick<
   stock_status: PosmStockStatus;
   last_movement_date: string | null;
   has_movements: boolean;
+  /** Signed URL foto item, null jika tidak ada. */
+  photo_url: string | null;
 };
 
 type BrandOption = { id: string; name: string; is_active: boolean };
@@ -68,10 +71,12 @@ function PosmItemDialog({
 }) {
   const isEdit = item !== null;
   const [open, setOpen] = useState(false);
+  const photo = usePhotoChange("item");
   const [state, formAction, isPending] = useActionState(
     async (prev: SavePosmItemState, formData: FormData) => {
       const result = await savePosmItemAction(prev, formData);
       if (result.success) {
+        await photo.save(result.id);
         toast.success(isEdit ? "Item POSM diperbarui" : "Item POSM ditambahkan");
         setOpen(false);
       }
@@ -84,9 +89,15 @@ function PosmItemDialog({
   const brandOptions = brands.filter((b) => b.is_active || b.id === item?.brand_id);
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (next) photo.reset();
+      }}
+    >
       <DialogTrigger asChild>{trigger}</DialogTrigger>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{isEdit ? "Edit Item POSM" : "Tambah Item POSM"}</DialogTitle>
         </DialogHeader>
@@ -187,6 +198,13 @@ function PosmItemDialog({
               disabled={isPending}
             />
           </div>
+
+          <PhotoField
+            currentUrl={item?.photo_url ?? null}
+            value={photo.change}
+            onChange={photo.setChange}
+            disabled={isPending}
+          />
 
           <DialogFooter className="pt-2">
             <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={isPending}>
@@ -420,12 +438,15 @@ export function PosmItemsTable({
                     <code className="rounded bg-white/5 px-2 py-0.5 text-xs text-slate-300">{item.code}</code>
                   </TableCell>
                   <TableCell className="font-medium">
-                    <Link
-                      href={`/monitoring-posm/items/${item.id}`}
-                      className="hover:text-emerald-300 hover:underline underline-offset-4"
-                    >
-                      {item.name}
-                    </Link>
+                    <div className="flex items-center gap-2">
+                      <PhotoThumb url={item.photo_url} alt={`${item.code} — ${item.name}`} />
+                      <Link
+                        href={`/monitoring-posm/items/${item.id}`}
+                        className="hover:text-emerald-300 hover:underline underline-offset-4"
+                      >
+                        {item.name}
+                      </Link>
+                    </div>
                   </TableCell>
                   <TableCell className="text-slate-400">{item.brand_name ?? "—"}</TableCell>
                   <TableCell className="text-slate-300">{item.category}</TableCell>

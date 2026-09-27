@@ -7,6 +7,8 @@ import { withCampaignRefs } from "../../campaign-refs";
 import { StockStatusBadge } from "../../stock-status-badge";
 import { AuditHistoryLink } from "../../audit-history-link";
 import { requirePosmViewer } from "../../viewer";
+import { photoUrlOf, signPosmPhotos } from "../../photo-urls";
+import { PhotoThumb } from "../../posm-photo";
 import { PosmMovementsPanel, type PosmMovementListRow } from "./posm-movements-panel";
 
 export default async function PosmItemDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -16,7 +18,7 @@ export default async function PosmItemDetailPage({ params }: { params: Promise<{
   const [{ data: item }, { data: movements }, { data: regions }, { data: distributors }] = await Promise.all([
     supabase
       .from("posm_items")
-      .select("id, code, name, category, unit, min_stock, is_active, brand:brands(name)")
+      .select("id, code, name, category, unit, min_stock, is_active, photo_path, brand:brands(name)")
       .eq("id", id)
       .is("deleted_at", null)
       .maybeSingle(),
@@ -44,6 +46,7 @@ export default async function PosmItemDetailPage({ params }: { params: Promise<{
   ).reverse();
 
   const balance = balanceOf(rows);
+  const photoUrl = photoUrlOf(await signPosmPhotos(supabase, [item.photo_path]), item.photo_path);
   const brandName = (item.brand as { name: string } | null)?.name;
 
   return (
@@ -57,16 +60,19 @@ export default async function PosmItemDetailPage({ params }: { params: Promise<{
       </Link>
 
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <code className="rounded bg-white/5 px-2 py-0.5 text-xs text-slate-300">{item.code}</code>
-            {!item.is_active && <Badge variant="outline">Nonaktif</Badge>}
+        <div className="flex items-start gap-4">
+          <PhotoThumb url={photoUrl} alt={`${item.code} — ${item.name}`} className="h-24 w-24" />
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <code className="rounded bg-white/5 px-2 py-0.5 text-xs text-slate-300">{item.code}</code>
+              {!item.is_active && <Badge variant="outline">Nonaktif</Badge>}
+            </div>
+            <h1 className="text-2xl font-bold text-slate-100">{item.name}</h1>
+            <p className="text-sm text-slate-400">
+              {[brandName, item.category, `satuan ${item.unit}`].filter(Boolean).join(" • ")}
+            </p>
+            {isAdmin && <AuditHistoryLink recordId={item.id} />}
           </div>
-          <h1 className="text-2xl font-bold text-slate-100">{item.name}</h1>
-          <p className="text-sm text-slate-400">
-            {[brandName, item.category, `satuan ${item.unit}`].filter(Boolean).join(" • ")}
-          </p>
-          {isAdmin && <AuditHistoryLink recordId={item.id} />}
         </div>
 
         <div className="rounded-xl border border-white/10 bg-white/5 px-5 py-4 text-right">

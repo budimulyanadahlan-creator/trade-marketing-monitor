@@ -100,6 +100,14 @@ describe("saveMarketingAssetAction (new asset)", () => {
       p_notes: null,
     });
   });
+
+  it("returns the new asset id from the RPC so its photo can be uploaded", async () => {
+    setupMocks();
+
+    const result = await saveMarketingAssetAction({}, formDataOf(validAsset));
+
+    expect(result).toEqual({ success: true, id: "asset-1" });
+  });
 });
 
 describe("saveMarketingAssetAction initial placement", () => {

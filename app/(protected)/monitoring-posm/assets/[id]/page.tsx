@@ -6,6 +6,8 @@ import { withPreviousPlacement } from "@/lib/posm";
 import { formatDate, formatIDR } from "@/lib/utils";
 import { AssetConditionBadge, AssetLocation } from "../../assets-table";
 import { requirePosmViewer } from "../../viewer";
+import { photoUrlOf, signPosmPhotos } from "../../photo-urls";
+import { PhotoThumb } from "../../posm-photo";
 import { AssetPlacementsPanel, type AssetPlacementListRow } from "./asset-placements-panel";
 
 export default async function AssetDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -22,14 +24,14 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
   ] = await Promise.all([
     supabase
       .from("marketing_assets")
-      .select("id, code, name, asset_type, serial_number, acquisition_date, acquisition_value, brand:brands(name)")
+      .select("id, code, name, asset_type, serial_number, acquisition_date, acquisition_value, photo_path, brand:brands(name)")
       .eq("id", id)
       .is("deleted_at", null)
       .maybeSingle(),
     supabase
       .from("asset_placements")
       .select(
-        "id, event_date, destination, region_id, distributor_id, store_name, store_address, pic_name, condition, notes, is_registration, created_at, region:regions(name), distributor:distributors(name), creator:created_by(full_name)"
+        "id, event_date, destination, region_id, distributor_id, store_name, store_address, pic_name, condition, notes, is_registration, photo_path, created_at, region:regions(name), distributor:distributors(name), creator:created_by(full_name)"
       )
       .eq("asset_id", id)
       .is("deleted_at", null),
@@ -42,9 +44,11 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
 
   if (!asset || !placements?.length) notFound();
 
+  const photoUrls = await signPosmPhotos(supabase, [asset.photo_path, ...placements.map((p) => p.photo_path)]);
   const history = withPreviousPlacement(
-    placements.map(({ region, distributor, creator, ...p }) => ({
+    placements.map(({ region, distributor, creator, photo_path, ...p }) => ({
       ...p,
+      photo_url: photoUrlOf(photoUrls, photo_path),
       region_name: (region as { name: string } | null)?.name ?? null,
       distributor_name: (distributor as { name: string } | null)?.name ?? null,
       creator_name: (creator as { full_name: string } | null)?.full_name ?? null,
@@ -86,11 +90,14 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
       </Link>
 
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="space-y-1">
-          <code className="rounded bg-white/5 px-2 py-0.5 text-xs text-slate-300">{asset.code}</code>
-          <h1 className="text-2xl font-bold text-slate-100">{asset.name}</h1>
-          <p className="text-sm text-slate-400">{asset.asset_type}</p>
-          {isAdmin && <AuditHistoryLink recordId={asset.id} />}
+        <div className="flex items-start gap-4">
+          <PhotoThumb url={photoUrlOf(photoUrls, asset.photo_path)} alt={label} className="h-24 w-24" />
+          <div className="space-y-1">
+            <code className="rounded bg-white/5 px-2 py-0.5 text-xs text-slate-300">{asset.code}</code>
+            <h1 className="text-2xl font-bold text-slate-100">{asset.name}</h1>
+            <p className="text-sm text-slate-400">{asset.asset_type}</p>
+            {isAdmin && <AuditHistoryLink recordId={asset.id} />}
+          </div>
         </div>
 
         <div className="space-y-2 rounded-xl border border-white/10 bg-white/5 px-5 py-4">

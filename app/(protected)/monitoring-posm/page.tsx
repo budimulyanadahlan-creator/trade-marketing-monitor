@@ -15,6 +15,7 @@ import { AssetConditionBadge, AssetsTable, type AssetListRow } from "./assets-ta
 import { MonitoringPosmTabs, type MonitoringPosmTab } from "./monitoring-posm-tabs";
 import { PosmItemsTable, type PosmItemListRow } from "./posm-items-table";
 import { requirePosmViewer } from "./viewer";
+import { photoUrlOf, signPosmPhotos } from "./photo-urls";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
@@ -69,7 +70,7 @@ async function PosmTab({ canManage }: { canManage: boolean }) {
   const [{ data: items }, { data: brands }, { data: balances }] = await Promise.all([
     supabase
       .from("posm_items")
-      .select("id, code, name, brand_id, category, unit, min_stock, is_active, brand:brands(name)")
+      .select("id, code, name, brand_id, category, unit, min_stock, is_active, photo_path, brand:brands(name)")
       .is("deleted_at", null)
       .order("code"),
     supabase.from("brands").select("id, name, is_active").order("name"),
@@ -77,8 +78,9 @@ async function PosmTab({ canManage }: { canManage: boolean }) {
   ]);
 
   const balanceByItem = new Map((balances ?? []).map((b) => [b.item_id, b]));
+  const photoUrls = await signPosmPhotos(supabase, (items ?? []).map((i) => i.photo_path));
 
-  const rows: PosmItemListRow[] = (items ?? []).map(({ brand, ...item }) => {
+  const rows: PosmItemListRow[] = (items ?? []).map(({ brand, photo_path, ...item }) => {
     const b = balanceByItem.get(item.id);
     const balance = b?.balance ?? 0;
     return {
@@ -88,6 +90,7 @@ async function PosmTab({ canManage }: { canManage: boolean }) {
       stock_status: stockStatus(balance, item.min_stock),
       last_movement_date: b?.last_movement_date ?? null,
       has_movements: (b?.movement_count_all ?? 0) > 0,
+      photo_url: photoUrlOf(photoUrls, photo_path),
     };
   });
 
@@ -140,7 +143,7 @@ async function AssetTab({ canManage }: { canManage: boolean }) {
     supabase
       .from("marketing_assets")
       .select(
-        "id, code, name, asset_type, brand_id, serial_number, acquisition_date, acquisition_value, brand:brands(name)"
+        "id, code, name, asset_type, brand_id, serial_number, acquisition_date, acquisition_value, photo_path, brand:brands(name)"
       )
       .is("deleted_at", null)
       .order("code"),
@@ -156,10 +159,11 @@ async function AssetTab({ canManage }: { canManage: boolean }) {
   const statusByAsset = new Map((statuses ?? []).map((s) => [s.asset_id, s]));
   const regionName = new Map((regions ?? []).map((r) => [r.id, r.name]));
   const distributorName = new Map((distributors ?? []).map((d) => [d.id, d.name]));
+  const photoUrls = await signPosmPhotos(supabase, (assets ?? []).map((a) => a.photo_path));
 
   // Kondisi & lokasi dari catatan penempatan terakhir. Database menjamin
   // setiap asset punya penempatan; asset tanpa status dilewati.
-  const rows: AssetListRow[] = (assets ?? []).flatMap(({ brand, ...asset }) => {
+  const rows: AssetListRow[] = (assets ?? []).flatMap(({ brand, photo_path, ...asset }) => {
     const s = statusByAsset.get(asset.id);
     if (!s) return [];
     return [
@@ -174,6 +178,7 @@ async function AssetTab({ canManage }: { canManage: boolean }) {
         distributor_name: s.distributor_id ? (distributorName.get(s.distributor_id) ?? null) : null,
         store_name: s.store_name,
         can_delete: s.placement_count_all <= 1,
+        photo_url: photoUrlOf(photoUrls, photo_path),
       },
     ];
   });

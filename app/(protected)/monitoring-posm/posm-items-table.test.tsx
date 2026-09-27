@@ -1,6 +1,8 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import type { PosmItemListRow } from "./posm-items-table";
+
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
 const { PosmItemsTable } = await import("./posm-items-table");
 
@@ -12,9 +14,9 @@ const brands = [
 ];
 
 const items: PosmItemListRow[] = [
-  { id: "i1", code: "POSM-0001", name: "Wobbler Lebaran", brand_id: "brand-1", brand_name: "Produk A", category: "Wobbler", unit: "pcs", min_stock: 50, is_active: true, balance: 20, stock_status: "menipis", last_movement_date: "2026-01-10", has_movements: true },
-  { id: "i2", code: "POSM-0002", name: "Poster Ramadan", brand_id: "brand-2", brand_name: "Produk B", category: "Poster", unit: "lembar", min_stock: null, is_active: true, balance: 300, stock_status: "aman", last_movement_date: null, has_movements: false },
-  { id: "i3", code: "POSM-0003", name: "Hanger Lama", brand_id: null, brand_name: null, category: "Hanger", unit: "pcs", min_stock: null, is_active: false, balance: 0, stock_status: "habis", last_movement_date: null, has_movements: false },
+  { id: "i1", code: "POSM-0001", name: "Wobbler Lebaran", brand_id: "brand-1", brand_name: "Produk A", category: "Wobbler", unit: "pcs", min_stock: 50, is_active: true, balance: 20, stock_status: "menipis", last_movement_date: "2026-01-10", has_movements: true, photo_url: "https://storage.test/i1.jpg" },
+  { id: "i2", code: "POSM-0002", name: "Poster Ramadan", brand_id: "brand-2", brand_name: "Produk B", category: "Poster", unit: "lembar", min_stock: null, is_active: true, balance: 300, stock_status: "aman", last_movement_date: null, has_movements: false, photo_url: null },
+  { id: "i3", code: "POSM-0003", name: "Hanger Lama", brand_id: null, brand_name: null, category: "Hanger", unit: "pcs", min_stock: null, is_active: false, balance: 0, stock_status: "habis", last_movement_date: null, has_movements: false, photo_url: null },
 ];
 
 function renderTable(canManage: boolean) {
@@ -94,5 +96,12 @@ describe("PosmItemsTable stock", () => {
   it("links each item to its detail page", () => {
     renderTable(false);
     expect(screen.getByText("Poster Ramadan").closest("a")?.getAttribute("href")).toBe("/monitoring-posm/items/i2");
+  });
+
+  it("shows the item photo thumbnail next to its name", () => {
+    renderTable(false);
+    const row = screen.getByText("Wobbler Lebaran").closest("tr")!;
+    expect(within(row).getByRole("img").getAttribute("src")).toBe("https://storage.test/i1.jpg");
+    expect(within(screen.getByText("Poster Ramadan").closest("tr")!).queryByRole("img")).toBeNull();
   });
 });

@@ -20,6 +20,7 @@ import { AlertCircle, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { ASSET_CONDITIONS, ASSET_DESTINATION_LABELS } from "@/lib/posm";
 import type { AssetCondition, AssetDestination, AssetPlacementRow } from "@/types/database";
+import { PhotoField, usePhotoChange } from "./posm-photo";
 
 export type PlacementFormValues = Pick<
   AssetPlacementRow,
@@ -34,7 +35,10 @@ export type PlacementFormValues = Pick<
   | "condition"
   | "notes"
   | "is_registration"
->;
+> & {
+  /** Signed URL foto bukti, null jika tidak ada. */
+  photo_url: string | null;
+};
 
 type Option = { id: string; name: string; is_active: boolean };
 
@@ -71,10 +75,12 @@ export function PlacementDialog({
   const [open, setOpen] = useState(false);
   const [destination, setDestination] = useState<AssetDestination>(initialDestination);
   const storeListId = useId();
+  const photo = usePhotoChange("placement");
   const [state, formAction, isPending] = useActionState(
     async (prev: SaveAssetPlacementState, formData: FormData) => {
       const result = await saveAssetPlacementAction(prev, formData);
       if (result.success) {
+        await photo.save(result.id);
         toast.success(isEdit ? "Catatan penempatan diperbarui" : "Perpindahan asset dicatat");
         setOpen(false);
       }
@@ -98,7 +104,10 @@ export function PlacementDialog({
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
-        if (next) setDestination(initialDestination);
+        if (next) {
+          setDestination(initialDestination);
+          photo.reset();
+        }
       }}
     >
       <DialogTrigger asChild>{trigger}</DialogTrigger>
@@ -241,6 +250,14 @@ export function PlacementDialog({
               className="min-h-[64px]"
             />
           </div>
+
+          <PhotoField
+            label="Foto Bukti (opsional)"
+            currentUrl={placement?.photo_url ?? null}
+            value={photo.change}
+            onChange={photo.setChange}
+            disabled={isPending}
+          />
 
           <DialogFooter className="pt-2">
             <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={isPending}>
