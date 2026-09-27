@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRightLeft, Table2 } from "lucide-react";
+import { ArrowRightLeft, History, Table2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -28,7 +28,7 @@ export default async function MonitoringPosmPage({
 }: {
   searchParams: SearchParams;
 }) {
-  const { canManage } = await requirePosmViewer();
+  const { canManage, isAdmin } = await requirePosmViewer();
 
   const tab = resolveTab((await searchParams).tab);
 
@@ -42,7 +42,17 @@ export default async function MonitoringPosmPage({
         </p>
       </div>
 
-      <MonitoringPosmTabs active={tab} />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <MonitoringPosmTabs active={tab} />
+        {isAdmin && (
+          <Button asChild variant="outline" size="sm">
+            <Link href="/monitoring-posm/audit">
+              <History className="h-4 w-4" />
+              Audit Log
+            </Link>
+          </Button>
+        )}
+      </div>
 
       {tab === "posm" ? (
         <PosmTab canManage={canManage} />

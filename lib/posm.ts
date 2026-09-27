@@ -6,11 +6,13 @@ import type {
   AssetCondition,
   AssetDestination,
   AssetType,
+  PosmAuditAction,
   PosmCategory,
   PosmMovementType,
   PosmUnit,
   UserRole,
 } from "@/types/database";
+import { formatDate, formatIDR } from "@/lib/utils";
 
 // Daftar tetap — harus sama dengan check constraint posm_items (migrasi 043).
 export const POSM_CATEGORIES: readonly PosmCategory[] = [
@@ -462,4 +464,200 @@ export function placementDateViolation(
   if (registration && record.event_date < registration.event_date)
     return { kind: "before_registration", date: registration.event_date };
   return null;
+}
+
+// ============================================================
+// AUDIT LOG (posm_audit_log, trigger migrasi 043)
+// ============================================================
+
+export type AuditChange = { field: string; old: unknown; new: unknown };
+
+// Kolom pembukuan yang selalu berubah/tidak informatif di tampilan diff.
+const AUDIT_IGNORED_FIELDS = new Set(["id", "created_at", "created_by", "updated_at", "updated_by"]);
+
+/**
+ * Field yang berubah pada satu baris audit (nilai lama → baru). Insert
+ * menampilkan semua field yang terisi.
+ */
+export function auditChanges(
+  action: PosmAuditAction,
+  oldData: Record<string, unknown> | null,
+  newData: Record<string, unknown> | null
+): AuditChange[] {
+  const before = oldData ?? {};
+  const after = newData ?? {};
+  const fields = [...new Set([...Object.keys(before), ...Object.keys(after)])];
+  return fields
+    .filter((field) => !AUDIT_IGNORED_FIELDS.has(field))
+    .filter((field) =>
+      action === "insert"
+        ? after[field] !== null && after[field] !== undefined
+        : JSON.stringify(before[field] ?? null) !== JSON.stringify(after[field] ?? null)
+    )
+    .map((field) => ({ field, old: before[field] ?? null, new: after[field] ?? null }));
+}
+
+export const POSM_AUDIT_TABLES = ["posm_items", "posm_movements", "marketing_assets", "asset_placements"] as const;
+export type PosmAuditTable = (typeof POSM_AUDIT_TABLES)[number];
+
+export const POSM_AUDIT_TABLE_LABELS: Record<PosmAuditTable, string> = {
+  posm_items: "Item POSM",
+  posm_movements: "Mutasi POSM",
+  marketing_assets: "Asset",
+  asset_placements: "Penempatan Asset",
+};
+
+export const POSM_AUDIT_ACTIONS: readonly PosmAuditAction[] = ["insert", "update", "soft_delete"];
+
+export const POSM_AUDIT_ACTION_LABELS: Record<PosmAuditAction, string> = {
+  insert: "Tambah",
+  update: "Ubah",
+  soft_delete: "Hapus",
+};
+
+export const POSM_AUDIT_PAGE_SIZE = 50;
+
+export type PosmAuditFilters = {
+  table?: PosmAuditTable;
+  action?: PosmAuditAction;
+  actor?: string;
+  /** Record beserta turunannya (mutasi item / penempatan asset). */
+  record?: string;
+  from?: string;
+  to?: string;
+  page: number;
+};
+
+const AUDIT_FILTER_KEYS = ["table", "action", "actor", "record", "from", "to"] as const;
+
+export function parseAuditFilters(params: Record<string, string | string[] | undefined>): PosmAuditFilters {
+  const one = (key: string) => {
+    const v = params[key];
+    return typeof v === "string" ? v.trim() : undefined;
+  };
+  const matching = (key: string, pattern: RegExp) => {
+    const v = one(key);
+    return v && pattern.test(v) ? v : undefined;
+  };
+
+  const table = one("table");
+  const action = one("action");
+  const page = Number(one("page"));
+  const filters: PosmAuditFilters = {
+    table: POSM_AUDIT_TABLES.includes(table as PosmAuditTable) ? (table as PosmAuditTable) : undefined,
+    action: POSM_AUDIT_ACTIONS.includes(action as PosmAuditAction) ? (action as PosmAuditAction) : undefined,
+    actor: matching("actor", UUID),
+    record: matching("record", UUID),
+    from: matching("from", ISO_DATE),
+    to: matching("to", ISO_DATE),
+    page: Number.isInteger(page) && page > 1 ? page : 1,
+  };
+  return Object.fromEntries(Object.entries(filters).filter(([, v]) => v !== undefined)) as PosmAuditFilters;
+}
+
+/** Query string untuk filter audit (halaman 1 dan nilai kosong dihilangkan). */
+export function auditFiltersQuery(filters: Partial<PosmAuditFilters>): string {
+  const params = new URLSearchParams();
+  for (const key of AUDIT_FILTER_KEYS) {
+    const v = filters[key];
+    if (v) params.set(key, v);
+  }
+  if (filters.page && filters.page > 1) params.set("page", String(filters.page));
+  return params.toString();
+}
+
+export const POSM_AUDIT_FIELD_LABELS: Record<string, string> = {
+  code: "Kode",
+  name: "Nama",
+  brand_id: "Brand",
+  category: "Kategori",
+  unit: "Satuan",
+  min_stock: "Stok Minimum",
+  photo_path: "Foto",
+  is_active: "Aktif",
+  deleted_at: "Dihapus",
+  item_id: "Item",
+  movement_date: "Tanggal",
+  type: "Tipe",
+  quantity: "Qty",
+  region_id: "Region",
+  distributor_id: "Distributor",
+  campaign_id: "SKP",
+  notes: "Keterangan",
+  asset_type: "Jenis",
+  serial_number: "Nomor Seri / Merk",
+  acquisition_date: "Tanggal Perolehan",
+  acquisition_value: "Nilai Perolehan",
+  asset_id: "Asset",
+  event_date: "Tanggal",
+  destination: "Tujuan",
+  store_name: "Nama Toko",
+  store_address: "Alamat Toko",
+  pic_name: "PIC",
+  condition: "Kondisi",
+  is_registration: "Pendaftaran",
+};
+
+/** Kolom berisi id yang ditampilkan lewat nama (lookup). */
+export const POSM_AUDIT_REFERENCE_FIELDS = [
+  "brand_id",
+  "item_id",
+  "region_id",
+  "distributor_id",
+  "campaign_id",
+  "asset_id",
+] as const;
+
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Tanggal + jam WIB untuk kolom timestamptz audit. */
+export function formatAuditTimestamp(value: string): string {
+  return new Intl.DateTimeFormat("id-ID", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Jakarta",
+  }).format(new Date(value));
+}
+const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T/;
+
+/** Nilai audit dalam bentuk yang mudah dibaca; id referensi lewat `names`. */
+export function formatAuditValue(field: string, value: unknown, names: Map<string, string>): string {
+  if (value === null || value === undefined || value === "") return "—";
+  if (typeof value === "boolean") return value ? "Ya" : "Tidak";
+  if ((POSM_AUDIT_REFERENCE_FIELDS as readonly string[]).includes(field)) {
+    return names.get(String(value)) ?? String(value);
+  }
+  if (field === "type" && typeof value === "string" && value in POSM_MOVEMENT_LABELS) return POSM_MOVEMENT_LABELS[value as PosmMovementType];
+  if (field === "destination" && typeof value === "string" && value in ASSET_DESTINATION_LABELS) {
+    return ASSET_DESTINATION_LABELS[value as AssetDestination];
+  }
+  if (field === "acquisition_value") return formatIDR(Number(value));
+  if (typeof value === "number") return value.toLocaleString("id-ID");
+  if (typeof value === "string" && DATE_ONLY.test(value)) return formatDate(value);
+  if (typeof value === "string" && TIMESTAMP.test(value)) return formatAuditTimestamp(value);
+  return typeof value === "object" ? JSON.stringify(value) : String(value);
+}
+
+/** Label record dari snapshot audit (tetap bisa dibaca setelah record dihapus). */
+export function auditRecordLabel(table: string, data: Record<string, unknown>, names: Map<string, string>): string {
+  const ref = (id: unknown) => (typeof id === "string" ? names.get(id) ?? id : "—");
+  switch (table) {
+    case "posm_items":
+    case "marketing_assets":
+      return `${data.code ?? "—"} — ${data.name ?? "—"}`;
+    case "posm_movements": {
+      const type = POSM_MOVEMENT_LABELS[data.type as PosmMovementType] ?? String(data.type);
+      return `${type} ${formatAuditValue("quantity", data.quantity, names)} • ${ref(data.item_id)}`;
+    }
+    case "asset_placements": {
+      const destination = ASSET_DESTINATION_LABELS[data.destination as AssetDestination] ?? String(data.destination);
+      const place = data.destination === "placed" && data.store_name ? `${destination}: ${data.store_name}` : destination;
+      return `${place} • ${ref(data.asset_id)}`;
+    }
+    default:
+      return String(data.id ?? "—");
+  }
 }

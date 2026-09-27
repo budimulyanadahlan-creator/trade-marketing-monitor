@@ -5,12 +5,13 @@ import { Badge } from "@/components/ui/badge";
 import { balanceOf, stockStatus, withRunningBalance } from "@/lib/posm";
 import { withCampaignRefs } from "../../campaign-refs";
 import { StockStatusBadge } from "../../stock-status-badge";
+import { AuditHistoryLink } from "../../audit-history-link";
 import { requirePosmViewer } from "../../viewer";
 import { PosmMovementsPanel, type PosmMovementListRow } from "./posm-movements-panel";
 
 export default async function PosmItemDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const { supabase, canManage } = await requirePosmViewer();
+  const { supabase, canManage, isAdmin } = await requirePosmViewer();
 
   const [{ data: item }, { data: movements }, { data: regions }, { data: distributors }] = await Promise.all([
     supabase
@@ -65,6 +66,7 @@ export default async function PosmItemDetailPage({ params }: { params: Promise<{
           <p className="text-sm text-slate-400">
             {[brandName, item.category, `satuan ${item.unit}`].filter(Boolean).join(" • ")}
           </p>
+          {isAdmin && <AuditHistoryLink recordId={item.id} />}
         </div>
 
         <div className="rounded-xl border border-white/10 bg-white/5 px-5 py-4 text-right">

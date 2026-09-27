@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, Info } from "lucide-react";
+import { AuditHistoryLink } from "../../audit-history-link";
 import { withPreviousPlacement } from "@/lib/posm";
 import { formatDate, formatIDR } from "@/lib/utils";
 import { AssetConditionBadge, AssetLocation } from "../../assets-table";
@@ -9,7 +10,7 @@ import { AssetPlacementsPanel, type AssetPlacementListRow } from "./asset-placem
 
 export default async function AssetDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const { supabase, canManage } = await requirePosmViewer();
+  const { supabase, canManage, isAdmin } = await requirePosmViewer();
 
   const [
     { data: asset },
@@ -89,6 +90,7 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
           <code className="rounded bg-white/5 px-2 py-0.5 text-xs text-slate-300">{asset.code}</code>
           <h1 className="text-2xl font-bold text-slate-100">{asset.name}</h1>
           <p className="text-sm text-slate-400">{asset.asset_type}</p>
+          {isAdmin && <AuditHistoryLink recordId={asset.id} />}
         </div>
 
         <div className="space-y-2 rounded-xl border border-white/10 bg-white/5 px-5 py-4">

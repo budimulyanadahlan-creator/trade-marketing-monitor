@@ -5,7 +5,7 @@ import type { UserRole } from "@/types/database";
 
 /**
  * Guard halaman Monitoring POSM: wajib login, distributor dialihkan, dan
- * kembalikan apakah viewer boleh menulis (tombol aksi).
+ * kembalikan apakah viewer boleh menulis (tombol aksi) dan melihat audit log.
  */
 export async function requirePosmViewer() {
   const supabase = await createClient();
@@ -30,5 +30,8 @@ export async function requirePosmViewer() {
     departmentName: (profile.department as { name: string } | null)?.name,
   });
 
-  return { supabase, canManage };
+  // Audit log hanya untuk admin/superadmin (sama dengan RLS posm_audit_log).
+  const isAdmin = profile.role === "admin" || profile.role === "superadmin";
+
+  return { supabase, canManage, isAdmin };
 }

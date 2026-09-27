@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
   aggregateOutRekap,
+  auditChanges,
+  auditFiltersQuery,
+  auditRecordLabel,
+  formatAuditValue,
+  parseAuditFilters,
   availableFrom,
   balanceOf,
   canManagePosm,
@@ -403,5 +408,95 @@ describe("placementDateViolation", () => {
       date: "2026-03-01",
     });
     expect(placementDateViolation(existing, { id: "reg", event_date: "2026-03-01" })).toBeNull();
+  });
+});
+
+describe("auditChanges", () => {
+  it("lists only changed fields on update, ignoring bookkeeping columns", () => {
+    const old = { id: "x", name: "Poster A", min_stock: 10, updated_at: "t1", updated_by: "u1" };
+    const next = { id: "x", name: "Poster B", min_stock: 10, updated_at: "t2", updated_by: "u2" };
+    expect(auditChanges("update", old, next)).toEqual([{ field: "name", old: "Poster A", new: "Poster B" }]);
+  });
+
+  it("lists every filled field on insert", () => {
+    expect(
+      auditChanges("insert", null, { id: "x", code: "POSM-0001", brand_id: null, is_active: true, created_at: "t" })
+    ).toEqual([
+      { field: "code", old: null, new: "POSM-0001" },
+      { field: "is_active", old: null, new: true },
+    ]);
+  });
+
+  it("shows deleted_at on soft delete", () => {
+    expect(auditChanges("soft_delete", { deleted_at: null, qty: 1 }, { deleted_at: "2026-09-01", qty: 1 })).toEqual([
+      { field: "deleted_at", old: null, new: "2026-09-01" },
+    ]);
+  });
+});
+
+describe("parseAuditFilters", () => {
+  const uuid = "11111111-1111-4111-8111-111111111111";
+
+  it("keeps valid values and drops invalid ones", () => {
+    expect(
+      parseAuditFilters({
+        table: "posm_movements",
+        action: "soft_delete",
+        actor: uuid,
+        record: uuid,
+        from: "2026-09-01",
+        to: "bukan-tanggal",
+        page: "3",
+      })
+    ).toEqual({ table: "posm_movements", action: "soft_delete", actor: uuid, record: uuid, from: "2026-09-01", page: 3 });
+    expect(parseAuditFilters({ table: "users", action: "delete", actor: "x", page: "0" })).toEqual({ page: 1 });
+  });
+
+  it("round-trips through the query string without page 1", () => {
+    const filters = parseAuditFilters({ table: "marketing_assets", record: uuid });
+    expect(auditFiltersQuery(filters)).toBe(`table=marketing_assets&record=${uuid}`);
+    expect(auditFiltersQuery({ ...filters, page: 2 })).toBe(`table=marketing_assets&record=${uuid}&page=2`);
+  });
+});
+
+describe("formatAuditValue", () => {
+  const names = new Map([["r1", "Jawa Barat"]]);
+
+  it("renders values readably", () => {
+    expect(formatAuditValue("notes", null, names)).toBe("—");
+    expect(formatAuditValue("is_active", false, names)).toBe("Tidak");
+    expect(formatAuditValue("type", "out", names)).toBe("Keluar");
+    expect(formatAuditValue("destination", "warehouse", names)).toBe("Gudang Pusat");
+    expect(formatAuditValue("acquisition_value", 1500000, names)).toMatch(/^Rp\s?1\.500\.000$/);
+    expect(formatAuditValue("quantity", -1200, names)).toBe("-1.200");
+    expect(formatAuditValue("movement_date", "2026-09-05", names)).toBe("5 Sep 2026");
+  });
+
+  it("resolves referenced ids through the lookup and falls back to the raw id", () => {
+    expect(formatAuditValue("region_id", "r1", names)).toBe("Jawa Barat");
+    expect(formatAuditValue("distributor_id", "d9", names)).toBe("d9");
+  });
+});
+
+describe("auditRecordLabel", () => {
+  const names = new Map([
+    ["i1", "POSM-0001 — Poster Promo"],
+    ["a1", "AST-0001 — Chiller"],
+  ]);
+
+  it("uses code and name for master records", () => {
+    expect(auditRecordLabel("posm_items", { code: "POSM-0002", name: "Wobbler" }, names)).toBe("POSM-0002 — Wobbler");
+  });
+
+  it("describes movements and placements with their parent", () => {
+    expect(auditRecordLabel("posm_movements", { item_id: "i1", type: "out", quantity: -20 }, names)).toBe(
+      "Keluar -20 • POSM-0001 — Poster Promo"
+    );
+    expect(
+      auditRecordLabel("asset_placements", { asset_id: "a1", destination: "placed", store_name: "Toko Maju" }, names)
+    ).toBe("Ditempatkan: Toko Maju • AST-0001 — Chiller");
+    expect(auditRecordLabel("asset_placements", { asset_id: "a1", destination: "warehouse" }, names)).toBe(
+      "Gudang Pusat • AST-0001 — Chiller"
+    );
   });
 });
