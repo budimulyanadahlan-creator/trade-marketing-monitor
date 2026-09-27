@@ -19,6 +19,8 @@ import {
   summarizeAssets,
   parseMovementFilters,
   parseRekapFilters,
+  parsePosmExportParams,
+  posmExportHref,
   withRunningBalance,
   signedQuantity,
   stockStatus,
@@ -498,5 +500,30 @@ describe("auditRecordLabel", () => {
     expect(auditRecordLabel("asset_placements", { asset_id: "a1", destination: "warehouse" }, names)).toBe(
       "Gudang Pusat • AST-0001 — Chiller"
     );
+  });
+});
+
+describe("posmExportHref / parsePosmExportParams", () => {
+  const ITEM = "11111111-1111-1111-1111-111111111111";
+  const BRAND = "22222222-2222-2222-2222-222222222222";
+
+  it("membawa filter mutasi dan rekap aktif, lalu dibaca kembali tanpa halaman", () => {
+    const href = posmExportHref({
+      movements: { from: "2026-09-01", type: "out", item: ITEM, page: 3 },
+      rekap: { from: "2026-01", to: "2026-03", brand: BRAND },
+    });
+    expect(href.startsWith("/api/export/monitoring-posm?")).toBe(true);
+
+    const params = Object.fromEntries(new URL(href, "http://x").searchParams);
+    const parsed = parsePosmExportParams(params, "2026-09-27");
+    expect(parsed.movements).toEqual({ from: "2026-09-01", type: "out", item: ITEM, page: 1 });
+    expect(parsed.rekap).toEqual({ from: "2026-01", to: "2026-03", brand: BRAND });
+  });
+
+  it("tanpa parameter: semua mutasi dan rekap default 6 bulan terakhir", () => {
+    expect(posmExportHref({})).toBe("/api/export/monitoring-posm");
+    const parsed = parsePosmExportParams({}, "2026-09-27");
+    expect(parsed.movements).toEqual({ page: 1 });
+    expect(parsed.rekap).toEqual({ from: "2026-04", to: "2026-09" });
   });
 });

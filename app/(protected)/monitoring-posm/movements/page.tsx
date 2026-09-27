@@ -20,10 +20,12 @@ import {
   POSM_MOVEMENT_LABELS,
   POSM_MOVEMENT_TYPES,
   POSM_MOVEMENTS_PAGE_SIZE,
+  posmExportHref,
   type PosmMovementFilters,
 } from "@/lib/posm";
 import type { PosmMovementType } from "@/types/database";
 import { withCampaignRefs } from "../campaign-refs";
+import { ExportExcelButton } from "../export-excel-button";
 import { MovementDestination } from "../movement-destination";
 import { requirePosmViewer } from "../viewer";
 
@@ -164,7 +166,10 @@ export default async function PosmMovementsPage({ searchParams }: { searchParams
         </div>
       </form>
 
-      <p className="text-sm text-slate-400">{total.toLocaleString("id-ID")} mutasi</p>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-slate-400">{total.toLocaleString("id-ID")} mutasi</p>
+        <ExportExcelButton href={posmExportHref({ movements: filters })} />
+      </div>
 
       <div className="rounded-xl border border-white/8 bg-white/2 overflow-hidden">
         <Table>

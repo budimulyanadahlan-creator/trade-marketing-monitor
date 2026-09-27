@@ -7,11 +7,13 @@ import {
   ASSET_CONDITIONS,
   nextCode,
   POSM_CODE_PREFIX,
+  posmExportHref,
   stockStatus,
   summarizeAssets,
 } from "@/lib/posm";
 import { KpiCard } from "@/components/dashboard/kpi-card";
 import { AssetConditionBadge, AssetsTable, type AssetListRow } from "./assets-table";
+import { ExportExcelButton } from "./export-excel-button";
 import { MonitoringPosmTabs, type MonitoringPosmTab } from "./monitoring-posm-tabs";
 import { PosmItemsTable, type PosmItemListRow } from "./posm-items-table";
 import { requirePosmViewer } from "./viewer";
@@ -45,14 +47,17 @@ export default async function MonitoringPosmPage({
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <MonitoringPosmTabs active={tab} />
-        {isAdmin && (
-          <Button asChild variant="outline" size="sm">
-            <Link href="/monitoring-posm/audit">
-              <History className="h-4 w-4" />
-              Audit Log
-            </Link>
-          </Button>
-        )}
+        <div className="flex gap-2">
+          <ExportExcelButton href={posmExportHref({})} />
+          {isAdmin && (
+            <Button asChild variant="outline" size="sm">
+              <Link href="/monitoring-posm/audit">
+                <History className="h-4 w-4" />
+                Audit Log
+              </Link>
+            </Button>
+          )}
+        </div>
       </div>
 
       {tab === "posm" ? (

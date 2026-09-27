@@ -15,27 +15,21 @@ import { Select } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import {
   monthDateBounds,
+  monthLabel,
   movementFiltersQuery,
   parseRekapFilters,
+  posmExportHref,
   REKAP_MAX_MONTHS,
   type RekapFilters,
 } from "@/lib/posm";
 import { loadPosmOutRekap } from "@/lib/posm-rekap-data";
+import { ExportExcelButton } from "../export-excel-button";
 import { requirePosmViewer } from "../viewer";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 function todayInJakarta() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta" }).format(new Date());
-}
-
-function monthLabel(month: string) {
-  const [y, m] = month.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("id-ID", {
-    month: "short",
-    year: "numeric",
-    timeZone: "UTC",
-  });
 }
 
 function formatQty(qty: number) {
@@ -143,10 +137,13 @@ export default async function PosmRekapPage({ searchParams }: { searchParams: Se
         </div>
       </form>
 
-      <p className="text-xs text-slate-500">
-        Hanya mutasi Keluar yang dihitung (Saldo Awal, Masuk, dan Penyesuaian tidak termasuk). Rentang maksimum{" "}
-        {REKAP_MAX_MONTHS} bulan. Klik angka untuk melihat mutasinya.
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-xs text-slate-500">
+          Hanya mutasi Keluar yang dihitung (Saldo Awal, Masuk, dan Penyesuaian tidak termasuk). Rentang maksimum{" "}
+          {REKAP_MAX_MONTHS} bulan. Klik angka untuk melihat mutasinya.
+        </p>
+        <ExportExcelButton href={posmExportHref({ rekap: filters })} />
+      </div>
 
       <div className="rounded-xl border border-white/8 bg-white/2 overflow-x-auto">
         <Table>

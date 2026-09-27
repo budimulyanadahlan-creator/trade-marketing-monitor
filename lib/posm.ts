@@ -318,6 +318,16 @@ export function monthRange(from: string, to: string): string[] {
   return months;
 }
 
+/** Label bulan `YYYY-MM` gaya Indonesia, mis. "Agu 2026". */
+export function monthLabel(month: string): string {
+  const [y, m] = month.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("id-ID", {
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
 /** Tanggal pertama dan terakhir rentang bulan, untuk filter movement_date. */
 export function monthDateBounds(from: string, to: string): { start: string; end: string } {
   const [y, m] = to.split("-").map(Number);
@@ -353,6 +363,45 @@ export function parseRekapFilters(
 
   const filters: RekapFilters = { from, to, item: one("item", UUID), brand: one("brand", UUID) };
   return Object.fromEntries(Object.entries(filters).filter(([, v]) => v !== undefined)) as RekapFilters;
+}
+
+// ============================================================
+// EXPORT EXCEL
+// ============================================================
+// Filter mutasi memakai kunci yang sama dengan halaman daftar mutasi; filter
+// rekap diberi awalan `rekap_` karena `from`/`to` bentrok.
+
+const REKAP_EXPORT_PREFIX = "rekap_";
+
+export function posmExportHref({
+  movements,
+  rekap,
+}: {
+  movements?: Partial<PosmMovementFilters>;
+  rekap?: Partial<RekapFilters>;
+}): string {
+  const params = new URLSearchParams(movementFiltersQuery({ ...movements, page: 1 }));
+  for (const key of ["from", "to", "item", "brand"] as const) {
+    const v = rekap?.[key];
+    if (v) params.set(`${REKAP_EXPORT_PREFIX}${key}`, v);
+  }
+  const qs = params.toString();
+  return `/api/export/monitoring-posm${qs ? `?${qs}` : ""}`;
+}
+
+export function parsePosmExportParams(
+  params: Record<string, string | string[] | undefined>,
+  today: string
+): { movements: PosmMovementFilters; rekap: RekapFilters } {
+  const rekapParams = Object.fromEntries(
+    Object.entries(params)
+      .filter(([key]) => key.startsWith(REKAP_EXPORT_PREFIX))
+      .map(([key, v]) => [key.slice(REKAP_EXPORT_PREFIX.length), v])
+  );
+  return {
+    movements: { ...parseMovementFilters(params), page: 1 },
+    rekap: parseRekapFilters(rekapParams, today),
+  };
 }
 
 // ============================================================
