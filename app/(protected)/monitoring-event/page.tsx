@@ -2,6 +2,7 @@ import Link from "next/link";
 import { History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
+  eventExportHref,
   eventListSelect,
   eventLacksPhoto,
   eventNeedsUpdate,
@@ -11,8 +12,10 @@ import {
   todayInJakarta,
   type EventKpiSource,
 } from "@/lib/event";
+import { queryEventsForPeriod } from "@/lib/event-data";
 import { getFiscalPeriod, resolveFiscalPeriod } from "@/lib/monitoring-budget";
 import { MonitoringPeriodSelector } from "../monitoring-budget/monitoring-period-selector";
+import { ExportExcelButton } from "../monitoring-posm/export-excel-button";
 import { EventFilters } from "./event-filters";
 import { EventKpiRow } from "./event-kpis";
 import { EventsTable, type EventListRow } from "./events-table";
@@ -66,32 +69,11 @@ export default async function MonitoringEventPage({
   const { fiscalYear, quarter } = resolveFiscalPeriod(str(params.fy), str(params.q));
   const filters = parseEventListFilters(params);
 
-  // Filter brand lewat tautan aktif di event_brands.
-  const brandEventIds = filters.brand
-    ? (
-        await supabase
-          .from("event_brands")
-          .select("event_id")
-          .eq("brand_id", filters.brand)
-          .is("deleted_at", null)
-      ).data?.map((l) => l.event_id) ?? []
-    : null;
-
-  let query = supabase
-    .from("events")
-    .select(eventListSelect({ showCosts }))
-    .eq("fiscal_year", fiscalYear)
-    .eq("quarter", quarter)
-    .is("deleted_at", null);
-  if (filters.type) query = query.eq("event_type", filters.type);
-  if (filters.region) query = query.eq("region_id", filters.region);
-  if (filters.status) query = query.eq("status", filters.status);
-  if (brandEventIds) query = query.in("id", brandEventIds);
-
   // Filter memakai semua region/brand (termasuk nonaktif) agar event lama
-  // tetap bisa dicari; form hanya menawarkan yang aktif.
+  // tetap bisa dicari; form hanya menawarkan yang aktif. Query sama dengan
+  // export Excel agar isi file mengikuti tabel.
   const [{ data: events }, { data: allRegions }, { data: allBrands }, formOptions] = await Promise.all([
-    query.order("start_date").order("created_at"),
+    queryEventsForPeriod(supabase, eventListSelect({ showCosts }), { fiscalYear, quarter }, filters),
     supabase.from("regions").select("id, name").order("name"),
     supabase.from("brands").select("id, name").order("name"),
     canManage ? loadEventFormOptions(supabase) : null,
@@ -150,6 +132,8 @@ export default async function MonitoringEventPage({
           </p>
         </div>
         <div className="flex flex-wrap items-end gap-3">
+          {/* Distributor ikut: route menulis tanpa biaya/vendor untuknya. */}
+          <ExportExcelButton href={eventExportHref(fiscalYear, quarter, filters)} />
           {isAdmin && (
             <Button asChild variant="outline" size="sm">
               <Link href="/monitoring-event/audit">

@@ -2,6 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   canViewEvent,
   eventDetailSelect,
+  eventExportHref,
+  eventExportSelect,
+  eventFilterLabel,
   eventListSelect,
   publicEventKpis,
   eventFiscalPeriod,
@@ -224,6 +227,35 @@ describe("suggestFromCampaign", () => {
         { region_id: "r1", distributor_id: null, brand_id: "b1" }
       )
     ).toEqual({ fill: {}, confirm: {} });
+  });
+});
+
+describe("export helpers", () => {
+  const REGION = "33333333-3333-3333-3333-333333333333";
+
+  it("eventExportSelect requests costs and sampling value only for internal viewers", () => {
+    expect(eventExportSelect({ showCosts: true })).toContain("event_costs");
+    expect(eventExportSelect({ showCosts: true })).toContain("event_sampling_costs");
+    const distributor = eventExportSelect({ showCosts: false });
+    expect(distributor).not.toMatch(/event_costs|event_sampling_costs|vendor/);
+    expect(distributor).toContain("quantity");
+  });
+
+  it("eventFilterLabel summarizes active filters or says none", () => {
+    expect(eventFilterLabel({}, { region: new Map(), brand: new Map() })).toBe("Semua event");
+    expect(
+      eventFilterLabel(
+        { type: "Bazaar", region: REGION, status: "batal" },
+        { region: new Map([[REGION, "Jawa Barat"]]), brand: new Map() }
+      )
+    ).toBe("Jenis: Bazaar • Region: Jawa Barat • Status: Batal");
+  });
+
+  it("eventExportHref carries period and filters", () => {
+    expect(eventExportHref(2026, 2, {})).toBe("/api/export/monitoring-event?fy=2026&q=2");
+    expect(eventExportHref(2026, 3, { region: REGION, status: "rencana" })).toBe(
+      `/api/export/monitoring-event?fy=2026&q=3&region=${REGION}&status=rencana`
+    );
   });
 });
 

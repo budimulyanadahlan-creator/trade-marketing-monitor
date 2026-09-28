@@ -70,6 +70,16 @@ export function eventDetailSelect({ showCosts }: { showCosts: boolean }): string
     : `${base}, samplings:event_samplings(${sampling})`;
 }
 
+/** Kolom query export Excel; lihat eventListSelect. Qty sampling tetap untuk distributor. */
+export function eventExportSelect({ showCosts }: { showCosts: boolean }): string {
+  const base =
+    "id, name, event_type, start_date, end_date, region_id, distributor_id, location, pic_name, target_participants, target_sales, status, actual_participants, actual_sales, cancel_reason, notes, region:regions(name), distributor:distributors(name), brands:event_brands(deleted_at, brand:brands(name)), campaigns:event_campaigns(campaign_id, skp_number, deleted_at, created_at), photos:event_photos(deleted_at)";
+  const sampling = "product_name, quantity, unit, sort_order, created_at, deleted_at";
+  return showCosts
+    ? `${base}, costs:event_costs(planned_budget, planned_sample_budget, actual_budget, vendor:vendors(name)), samplings:event_samplings(${sampling}, cost:event_sampling_costs(value))`
+    : `${base}, samplings:event_samplings(${sampling})`;
+}
+
 // ============================================================
 // PERIODE
 // ============================================================
@@ -460,6 +470,29 @@ export function parseEventListFilters(params: Record<string, string | string[] |
   if (status && Object.hasOwn(EVENT_STATUS_LABELS, status)) filters.status = status as EventStatus;
 
   return filters;
+}
+
+/** Ringkasan filter aktif untuk judul export; nama region/brand lewat `names`. */
+export function eventFilterLabel(
+  filters: EventListFilters,
+  names: { region: Map<string, string>; brand: Map<string, string> }
+): string {
+  const parts: string[] = [];
+  if (filters.type) parts.push(`Jenis: ${filters.type}`);
+  if (filters.region) parts.push(`Region: ${names.region.get(filters.region) ?? filters.region}`);
+  if (filters.brand) parts.push(`Brand: ${names.brand.get(filters.brand) ?? filters.brand}`);
+  if (filters.status) parts.push(`Status: ${EVENT_STATUS_LABELS[filters.status]}`);
+  return parts.length ? parts.join(" • ") : "Semua event";
+}
+
+/** Link export Excel untuk kuartal dan filter aktif (route /api/export/monitoring-event). */
+export function eventExportHref(fiscalYear: number, quarter: number, filters: EventListFilters): string {
+  const params = new URLSearchParams({ fy: String(fiscalYear), q: String(quarter) });
+  for (const key of ["type", "region", "brand", "status"] as const) {
+    const v = filters[key];
+    if (v) params.set(key, v);
+  }
+  return `/api/export/monitoring-event?${params}`;
 }
 
 // ============================================================
