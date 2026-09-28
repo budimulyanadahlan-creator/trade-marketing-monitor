@@ -517,6 +517,31 @@ export type EventCostRow = {
   updated_at: string;
 };
 
+/** Tautan event ↔ brand; lepas tautan = soft delete. */
+export type EventBrandRow = {
+  id: string;
+  event_id: string;
+  brand_id: string;
+  created_by: string | null;
+  created_at: string;
+  deleted_at: string | null;
+};
+
+/**
+ * Tautan event ↔ SKP. campaign_id null jika SKP dihapus permanen;
+ * skp_number/campaign_name = snapshot saat ditautkan.
+ */
+export type EventCampaignRow = {
+  id: string;
+  event_id: string;
+  campaign_id: string | null;
+  skp_number: string | null;
+  campaign_name: string | null;
+  created_by: string | null;
+  created_at: string;
+  deleted_at: string | null;
+};
+
 export type PosmAuditAction = "insert" | "update" | "soft_delete";
 
 export type PosmAuditLogRow = {
@@ -1347,6 +1372,48 @@ export type Database = {
           }
         ];
       };
+      event_brands: {
+        Row: EventBrandRow;
+        Insert: { id?: string; event_id: string; brand_id: string; deleted_at?: string | null };
+        Update: { deleted_at?: string | null };
+        Relationships: [
+          {
+            foreignKeyName: "event_brands_event_id_fkey";
+            columns: ["event_id"];
+            isOneToOne: false;
+            referencedRelation: "events";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "event_brands_brand_id_fkey";
+            columns: ["brand_id"];
+            isOneToOne: false;
+            referencedRelation: "brands";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      event_campaigns: {
+        Row: EventCampaignRow;
+        Insert: { id?: string; event_id: string; campaign_id: string; deleted_at?: string | null };
+        Update: { deleted_at?: string | null };
+        Relationships: [
+          {
+            foreignKeyName: "event_campaigns_event_id_fkey";
+            columns: ["event_id"];
+            isOneToOne: false;
+            referencedRelation: "events";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "event_campaigns_campaign_id_fkey";
+            columns: ["campaign_id"];
+            isOneToOne: false;
+            referencedRelation: "campaigns";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
       posm_audit_log: {
         Row: PosmAuditLogRow;
         Insert: never;
@@ -1389,6 +1456,21 @@ export type Database = {
         Args: { p_ids: string[] };
         Returns: { id: string; skp_number: string | null; name: string }[];
       };
+      search_event_campaigns: {
+        Args: { p_query: string };
+        Returns: {
+          id: string;
+          skp_number: string | null;
+          name: string;
+          region_id: string | null;
+          distributor_id: string | null;
+          brand_id: string | null;
+        }[];
+      };
+      event_campaign_refs: {
+        Args: { p_ids: string[] };
+        Returns: { id: string; skp_number: string | null; name: string; status: string }[];
+      };
       gimmick_campaign_refs: {
         Args: { p_ids: string[] };
         Returns: { id: string; skp_number: string | null; name: string }[];
@@ -1427,6 +1509,11 @@ export type Database = {
           p_target_sales: number;
           p_planned_budget: number;
           p_planned_sample_budget: number;
+          p_distributor_id: string | null;
+          p_vendor_id: string | null;
+          p_notes: string | null;
+          p_brand_ids: string[];
+          p_campaign_ids: string[];
         };
         Returns: string;
       };
@@ -1444,6 +1531,11 @@ export type Database = {
           p_target_sales: number;
           p_planned_budget: number;
           p_planned_sample_budget: number;
+          p_distributor_id: string | null;
+          p_vendor_id: string | null;
+          p_notes: string | null;
+          p_brand_ids: string[];
+          p_campaign_ids: string[];
         };
         Returns: undefined;
       };

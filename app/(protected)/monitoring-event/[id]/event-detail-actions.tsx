@@ -14,7 +14,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { EventFormDialog, type EventFormValues, type RegionOption } from "../event-form-dialog";
+import { EventFormDialog, type EventFormOptions, type EventFormValues } from "../event-form-dialog";
 
 function DeleteEventButton({ id, name }: { id: string; name: string }) {
   const router = useRouter();
@@ -64,12 +64,12 @@ function DeleteEventButton({ id, name }: { id: string; name: string }) {
 }
 
 /** Tombol Edit & Hapus, hanya dirender untuk pemegang can_manage_posm(). */
-export function EventDetailActions({ event, regions }: { event: EventFormValues; regions: RegionOption[] }) {
+export function EventDetailActions({ event, options }: { event: EventFormValues; options: EventFormOptions }) {
   return (
     <div className="flex gap-2">
       <EventFormDialog
         event={event}
-        regions={regions}
+        options={options}
         trigger={
           <Button variant="outline" size="sm">
             <Pencil className="h-4 w-4" />

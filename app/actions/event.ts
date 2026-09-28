@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requirePosmWriter } from "@/lib/posm-writer";
-import { parseEventPlan, type EventPlanInput } from "@/lib/event";
+import { parseEventPlan, type EventPlan, type EventPlanInput } from "@/lib/event";
 
 const PAGE_PATH = "/monitoring-event";
 const FORBIDDEN = "Anda tidak memiliki akses.";
@@ -20,7 +20,13 @@ const PLAN_FIELDS = [
   "target_sales",
   "planned_budget",
   "planned_sample_budget",
+  "distributor_id",
+  "vendor_id",
+  "notes",
 ] as const satisfies readonly (keyof EventPlanInput)[];
+
+// Brand & SKP dikirim sebagai input berulang (satu per id).
+const LINK_FIELDS = ["brand_ids", "campaign_ids"] as const satisfies readonly (keyof EventPlanInput)[];
 
 function planValues(formData: FormData): EventPlanInput {
   const values: EventPlanInput = {};
@@ -28,7 +34,32 @@ function planValues(formData: FormData): EventPlanInput {
     const v = formData.get(field);
     if (typeof v === "string") values[field] = v;
   }
+  for (const field of LINK_FIELDS) {
+    values[field] = formData.getAll(field).filter((v): v is string => typeof v === "string" && v !== "");
+  }
   return values;
+}
+
+/** Parameter create_event/update_event dari hasil parseEventPlan. */
+function planRpcArgs({ event, costs, links }: EventPlan) {
+  return {
+    p_name: event.name,
+    p_event_type: event.event_type,
+    p_start_date: event.start_date,
+    p_end_date: event.end_date,
+    p_region_id: event.region_id,
+    p_location: event.location,
+    p_pic_name: event.pic_name,
+    p_target_participants: event.target_participants,
+    p_target_sales: event.target_sales,
+    p_planned_budget: costs.planned_budget,
+    p_planned_sample_budget: costs.planned_sample_budget,
+    p_distributor_id: event.distributor_id,
+    p_vendor_id: costs.vendor_id,
+    p_notes: event.notes,
+    p_brand_ids: links.brand_ids,
+    p_campaign_ids: links.campaign_ids,
+  };
 }
 
 // Pesan ramah untuk constraint migrasi 054 yang juga dicek di form, dan
@@ -36,6 +67,7 @@ function planValues(formData: FormData): EventPlanInput {
 function eventErrorMessage(error: { message: string }): string {
   if (error.message.includes("events_dates")) return "Tanggal selesai tidak boleh sebelum tanggal mulai";
   if (error.message.includes("EVENT_TIDAK_DITEMUKAN")) return NOT_FOUND;
+  if (error.message.includes("SKP_TIDAK_DITEMUKAN")) return "SKP yang dipilih tidak ditemukan.";
   return error.message;
 }
 
@@ -53,20 +85,7 @@ export async function createEventAction(
     const parsed = parseEventPlan(planValues(formData));
     if ("error" in parsed) return { error: parsed.error };
 
-    const { event, costs } = parsed.data;
-    const { data: id, error } = await supabase.rpc("create_event", {
-      p_name: event.name,
-      p_event_type: event.event_type,
-      p_start_date: event.start_date,
-      p_end_date: event.end_date,
-      p_region_id: event.region_id,
-      p_location: event.location,
-      p_pic_name: event.pic_name,
-      p_target_participants: event.target_participants,
-      p_target_sales: event.target_sales,
-      p_planned_budget: costs.planned_budget,
-      p_planned_sample_budget: costs.planned_sample_budget,
-    });
+    const { data: id, error } = await supabase.rpc("create_event", planRpcArgs(parsed.data));
     if (error) return { error: eventErrorMessage(error) };
 
     revalidatePath(PAGE_PATH);
@@ -94,21 +113,7 @@ export async function updateEventAction(
     const parsed = parseEventPlan(planValues(formData));
     if ("error" in parsed) return { error: parsed.error };
 
-    const { event, costs } = parsed.data;
-    const { error } = await supabase.rpc("update_event", {
-      p_id: id,
-      p_name: event.name,
-      p_event_type: event.event_type,
-      p_start_date: event.start_date,
-      p_end_date: event.end_date,
-      p_region_id: event.region_id,
-      p_location: event.location,
-      p_pic_name: event.pic_name,
-      p_target_participants: event.target_participants,
-      p_target_sales: event.target_sales,
-      p_planned_budget: costs.planned_budget,
-      p_planned_sample_budget: costs.planned_sample_budget,
-    });
+    const { error } = await supabase.rpc("update_event", { p_id: id, ...planRpcArgs(parsed.data) });
     if (error) return { error: eventErrorMessage(error) };
 
     revalidatePath(PAGE_PATH);
@@ -139,5 +144,33 @@ export async function deleteEventAction(id: string): Promise<{ error?: string }>
     return {};
   } catch {
     return { error: FORBIDDEN };
+  }
+}
+
+export type EventCampaignOption = {
+  id: string;
+  skp_number: string | null;
+  name: string;
+  region_id: string | null;
+  distributor_id: string | null;
+  brand_id: string | null;
+};
+
+// Lewat fungsi database search_event_campaigns (migrasi 056) karena RLS
+// campaigns membatasi user Marketing hanya melihat SKP miliknya sendiri.
+// Region/distributor/brand SKP dipakai form untuk saran isian.
+export async function searchEventCampaignsAction(
+  query: string
+): Promise<{ campaigns: EventCampaignOption[]; error?: string }> {
+  const q = query.trim();
+  try {
+    const { supabase } = await requirePosmWriter();
+    if (q.length < 2) return { campaigns: [] };
+
+    const { data, error } = await supabase.rpc("search_event_campaigns", { p_query: q });
+    if (error) return { campaigns: [], error: error.message };
+    return { campaigns: data ?? [] };
+  } catch {
+    return { campaigns: [], error: FORBIDDEN };
   }
 }

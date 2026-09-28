@@ -5,7 +5,7 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
-import { createEventAction, deleteEventAction, updateEventAction } from "./event";
+import { createEventAction, deleteEventAction, searchEventCampaignsAction, updateEventAction } from "./event";
 import { createClient } from "@/lib/supabase/server";
 
 const NEW_ID = "77777777-7777-4777-8777-777777777777";
@@ -48,11 +48,22 @@ function setupMocks({
   return { rpc, update, updateEq, updateIs };
 }
 
-function formDataOf(entries: Record<string, string>) {
+function formDataOf(entries: Record<string, string | string[]>) {
   const fd = new FormData();
-  for (const [k, v] of Object.entries(entries)) fd.set(k, v);
+  for (const [k, v] of Object.entries(entries)) {
+    if (Array.isArray(v)) v.forEach((item) => fd.append(k, item));
+    else fd.set(k, v);
+  }
   return fd;
 }
+
+const noLinks = {
+  p_distributor_id: null,
+  p_vendor_id: null,
+  p_notes: null,
+  p_brand_ids: [],
+  p_campaign_ids: [],
+};
 
 const validEvent = {
   name: "Bazaar Ramadhan",
@@ -91,7 +102,41 @@ describe("createEventAction", () => {
       p_target_sales: 50000000,
       p_planned_budget: 20000000,
       p_planned_sample_budget: 5000000,
+      ...noLinks,
     });
+  });
+
+  it("sends the optional distributor, vendor, notes, brands, and SKPs", async () => {
+    const { rpc } = setupMocks();
+    const BRAND_A = "22222222-2222-4222-8222-222222222222";
+    const BRAND_B = "33333333-3333-4333-8333-333333333333";
+    const DISTRIBUTOR = "44444444-4444-4444-8444-444444444444";
+    const VENDOR = "55555555-5555-4555-8555-555555555555";
+    const SKP_A = "66666666-6666-4666-8666-666666666666";
+    const SKP_B = "99999999-9999-4999-8999-999999999999";
+
+    await createEventAction(
+      {},
+      formDataOf({
+        ...validEvent,
+        distributor_id: DISTRIBUTOR,
+        vendor_id: VENDOR,
+        notes: "Didanai dua SKP",
+        brand_ids: [BRAND_A, BRAND_B],
+        campaign_ids: [SKP_A, SKP_B],
+      })
+    );
+
+    expect(rpc).toHaveBeenCalledWith(
+      "create_event",
+      expect.objectContaining({
+        p_distributor_id: DISTRIBUTOR,
+        p_vendor_id: VENDOR,
+        p_notes: "Didanai dua SKP",
+        p_brand_ids: [BRAND_A, BRAND_B],
+        p_campaign_ids: [SKP_A, SKP_B],
+      })
+    );
   });
 
   it("lets an admin outside Marketing/TM create events", async () => {
@@ -147,6 +192,7 @@ describe("updateEventAction", () => {
       p_target_sales: 50000000,
       p_planned_budget: 20000000,
       p_planned_sample_budget: 5000000,
+      ...noLinks,
     });
   });
 
@@ -185,5 +231,36 @@ describe("deleteEventAction", () => {
     const { update } = setupMocks({ role: "manager", department: "Sales" });
     expect(await deleteEventAction(EVENT_ID)).toEqual({ error: "Anda tidak memiliki akses." });
     expect(update).not.toHaveBeenCalled();
+  });
+});
+
+describe("searchEventCampaignsAction", () => {
+  const skp = {
+    id: "66666666-6666-4666-8666-666666666666",
+    skp_number: "SKP/2026/09/001",
+    name: "Bazaar Brand A",
+    region_id: REGION_ID,
+    distributor_id: null,
+    brand_id: "22222222-2222-4222-8222-222222222222",
+  };
+
+  it("searches SKPs by number or title through the database function", async () => {
+    const { rpc } = setupMocks();
+    rpc.mockResolvedValueOnce({ data: [skp], error: null });
+
+    expect(await searchEventCampaignsAction(" 2026/09 ")).toEqual({ campaigns: [skp] });
+    expect(rpc).toHaveBeenCalledWith("search_event_campaigns", { p_query: "2026/09" });
+  });
+
+  it("skips queries shorter than two characters", async () => {
+    const { rpc } = setupMocks();
+    expect(await searchEventCampaignsAction("a")).toEqual({ campaigns: [] });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("rejects a user outside Marketing/TM", async () => {
+    const { rpc } = setupMocks({ role: "user", department: "Sales" });
+    expect(await searchEventCampaignsAction("SKP")).toEqual({ campaigns: [], error: "Anda tidak memiliki akses." });
+    expect(rpc).not.toHaveBeenCalled();
   });
 });

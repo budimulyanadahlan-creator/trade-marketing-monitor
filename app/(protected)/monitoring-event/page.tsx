@@ -1,10 +1,13 @@
 import Link from "next/link";
 import { History } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { parseEventListFilters } from "@/lib/event";
 import { getFiscalPeriod, resolveFiscalPeriod } from "@/lib/monitoring-budget";
 import { MonitoringPeriodSelector } from "../monitoring-budget/monitoring-period-selector";
 import { requirePosmViewer } from "../monitoring-posm/viewer";
+import { EventFilters } from "./event-filters";
 import { EventsTable, type EventListRow } from "./events-table";
+import { loadEventFormOptions } from "./form-options";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
@@ -13,6 +16,7 @@ function str(v: string | string[] | undefined): string | undefined {
 }
 
 type CostEmbed = { planned_budget: number; planned_sample_budget: number } | null;
+type BrandEmbed = { deleted_at: string | null; brand: { name: string } | null }[];
 
 export default async function MonitoringEventPage({
   searchParams,
@@ -25,26 +29,50 @@ export default async function MonitoringEventPage({
   const params = await searchParams;
   const currentFiscalYear = getFiscalPeriod(new Date()).fiscalYear;
   const { fiscalYear, quarter } = resolveFiscalPeriod(str(params.fy), str(params.q));
+  const filters = parseEventListFilters(params);
 
-  const [{ data: events }, { data: regions }] = await Promise.all([
-    supabase
-      .from("events")
-      .select(
-        "id, name, event_type, start_date, end_date, location, pic_name, target_participants, target_sales, status, region:regions(name), costs:event_costs(planned_budget, planned_sample_budget)"
-      )
-      .eq("fiscal_year", fiscalYear)
-      .eq("quarter", quarter)
-      .is("deleted_at", null)
-      .order("start_date")
-      .order("created_at"),
-    supabase.from("regions").select("id, name").eq("is_active", true).order("name"),
+  // Filter brand lewat tautan aktif di event_brands.
+  const brandEventIds = filters.brand
+    ? (
+        await supabase
+          .from("event_brands")
+          .select("event_id")
+          .eq("brand_id", filters.brand)
+          .is("deleted_at", null)
+      ).data?.map((l) => l.event_id) ?? []
+    : null;
+
+  let query = supabase
+    .from("events")
+    .select(
+      "id, name, event_type, start_date, end_date, location, pic_name, target_participants, target_sales, status, region:regions(name), costs:event_costs(planned_budget, planned_sample_budget), brands:event_brands(deleted_at, brand:brands(name))"
+    )
+    .eq("fiscal_year", fiscalYear)
+    .eq("quarter", quarter)
+    .is("deleted_at", null);
+  if (filters.type) query = query.eq("event_type", filters.type);
+  if (filters.region) query = query.eq("region_id", filters.region);
+  if (filters.status) query = query.eq("status", filters.status);
+  if (brandEventIds) query = query.in("id", brandEventIds);
+
+  // Filter memakai semua region/brand (termasuk nonaktif) agar event lama
+  // tetap bisa dicari; form hanya menawarkan yang aktif.
+  const [{ data: events }, { data: allRegions }, { data: allBrands }, formOptions] = await Promise.all([
+    query.order("start_date").order("created_at"),
+    supabase.from("regions").select("id, name").order("name"),
+    supabase.from("brands").select("id, name").order("name"),
+    canManage ? loadEventFormOptions(supabase) : null,
   ]);
 
-  const rows: EventListRow[] = (events ?? []).map(({ region, costs, ...e }) => {
+  const rows: EventListRow[] = (events ?? []).map(({ region, costs, brands, ...e }) => {
     const c = costs as CostEmbed;
     return {
       ...e,
       region_name: (region as { name: string } | null)?.name ?? null,
+      brand_names: (brands as BrandEmbed)
+        .filter((b) => !b.deleted_at && b.brand)
+        .map((b) => b.brand!.name)
+        .sort(),
       planned_budget: c?.planned_budget ?? null,
       planned_sample_budget: c?.planned_sample_budget ?? null,
     };
@@ -77,10 +105,12 @@ export default async function MonitoringEventPage({
         </div>
       </div>
 
+      <EventFilters filters={filters} regions={allRegions ?? []} brands={allBrands ?? []} />
+
       <EventsTable
         events={rows}
-        regions={regions ?? []}
-        canManage={canManage}
+        formOptions={formOptions}
+        filtered={Object.keys(filters).length > 0}
         periodLabel={`FY ${fiscalYear} Q${quarter}`}
       />
     </div>

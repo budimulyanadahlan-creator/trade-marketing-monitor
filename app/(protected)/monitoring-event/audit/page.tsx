@@ -52,8 +52,8 @@ export default async function EventAuditPage({ searchParams }: { searchParams: S
 
   const filters = parseEventAuditFilters(await searchParams);
 
-  // Baris event_costs memakai record_id = event_id, jadi filter record
-  // sekaligus mencakup perubahan biaya event tersebut.
+  // Baris event_costs dan tautan memakai record_id = event_id, jadi filter
+  // record sekaligus mencakup perubahan biaya dan tautan event tersebut.
   let query = supabase
     .from("posm_audit_log")
     .select("id, table_name, record_id, action, old_data, new_data, changed_by, changed_at", { count: "exact" })
@@ -65,14 +65,21 @@ export default async function EventAuditPage({ searchParams }: { searchParams: S
   if (filters.to) query = query.lte("changed_at", `${filters.to}T23:59:59.999+07:00`);
 
   const offset = (filters.page - 1) * POSM_AUDIT_PAGE_SIZE;
-  const [{ data: logs, count }, { data: users }, { data: regions }, { data: distributors }, { data: vendors }] =
-    await Promise.all([
-      query.order("changed_at", { ascending: false }).range(offset, offset + POSM_AUDIT_PAGE_SIZE - 1),
-      supabase.from("users").select("id, full_name, role").order("full_name"),
-      supabase.from("regions").select("id, name"),
-      supabase.from("distributors").select("id, name"),
-      supabase.from("vendors").select("id, name"),
-    ]);
+  const [
+    { data: logs, count },
+    { data: users },
+    { data: regions },
+    { data: distributors },
+    { data: vendors },
+    { data: brands },
+  ] = await Promise.all([
+    query.order("changed_at", { ascending: false }).range(offset, offset + POSM_AUDIT_PAGE_SIZE - 1),
+    supabase.from("users").select("id, full_name, role").order("full_name"),
+    supabase.from("regions").select("id, name"),
+    supabase.from("distributors").select("id, name"),
+    supabase.from("vendors").select("id, name"),
+    supabase.from("brands").select("id, name"),
+  ]);
 
   const entries = (logs ?? []) as PosmAuditLogRow[];
 
@@ -88,6 +95,7 @@ export default async function EventAuditPage({ searchParams }: { searchParams: S
     ...(regions ?? []).map((r) => [r.id, r.name] as const),
     ...(distributors ?? []).map((d) => [d.id, d.name] as const),
     ...(vendors ?? []).map((v) => [v.id, v.name] as const),
+    ...(brands ?? []).map((b) => [b.id, b.name] as const),
     ...(events ?? []).map((ev) => [ev.id, ev.deleted_at ? `${ev.name} (dihapus)` : ev.name] as const),
   ]);
   const userNames = new Map((users ?? []).map((u) => [u.id, u.full_name]));
@@ -110,7 +118,7 @@ export default async function EventAuditPage({ searchParams }: { searchParams: S
       <div>
         <h1 className="text-2xl font-bold text-slate-100 mb-1">Audit Log Event</h1>
         <p className="text-slate-400 text-sm">
-          Semua perubahan event dan biayanya, termasuk event yang sudah dihapus
+          Semua perubahan event, biaya, dan tautan brand/SKP, termasuk event yang sudah dihapus
         </p>
       </div>
 
@@ -191,8 +199,9 @@ export default async function EventAuditPage({ searchParams }: { searchParams: S
         <div className="space-y-3">
           {entries.map((e) => {
             const changes = auditChanges(e.action, e.old_data, e.new_data).filter(
-              // Kolom turunan/kunci yang tidak informatif di diff.
-              (c) => c.field !== "fiscal_year" && c.field !== "quarter" && c.field !== "event_id"
+              // Kolom turunan/kunci yang tidak informatif di diff; SKP tampil
+              // lewat snapshot skp_number/campaign_name.
+              (c) => !["fiscal_year", "quarter", "event_id", "campaign_id"].includes(c.field)
             );
             const label = names.get(e.record_id) ?? String((e.new_data ?? e.old_data)?.name ?? e.record_id);
             return (

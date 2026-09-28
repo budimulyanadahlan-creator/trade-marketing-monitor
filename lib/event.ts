@@ -62,8 +62,33 @@ const requiredAmount = (label: string, { integer = false } = {}) => {
     .pipe(integer ? number.int(`${label} harus bilangan bulat`) : number);
 };
 
+/** Id referensi opsional; string kosong/tidak ada = null. */
+const optionalId = (message: string) =>
+  z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => v || null)
+    .pipe(z.string().uuid(message).nullable());
+
+/** Daftar id (checkbox/hidden input berulang), duplikat dibuang. */
+const idList = (message: string) =>
+  z
+    .array(z.string().uuid(message))
+    .optional()
+    .transform((ids) => [...new Set(ids ?? [])]);
+
 const eventPlanSchema = z
   .object({
+    distributor_id: optionalId("Distributor tidak valid"),
+    vendor_id: optionalId("Vendor tidak valid"),
+    notes: z
+      .string()
+      .trim()
+      .optional()
+      .transform((v) => v || null),
+    brand_ids: idList("Brand tidak valid"),
+    campaign_ids: idList("SKP tidak valid"),
     name: requiredText("Nama event harus diisi"),
     event_type: z.enum(EVENT_TYPES as [EventType, ...EventType[]], { error: "Pilih jenis event" }),
     start_date: isoDate("Tanggal mulai harus diisi"),
@@ -81,36 +106,129 @@ const eventPlanSchema = z
     message: "Tanggal selesai tidak boleh sebelum tanggal mulai",
   });
 
-export type EventPlanInput = Partial<Record<keyof z.input<typeof eventPlanSchema>, string>>;
+type EventLinkField = "brand_ids" | "campaign_ids";
+type EventCostField = "planned_budget" | "planned_sample_budget" | "vendor_id";
+
+export type EventPlanInput = Partial<
+  Record<Exclude<keyof z.input<typeof eventPlanSchema>, EventLinkField>, string> &
+    Record<EventLinkField, string[]>
+>;
+
+type EventPlanOutput = z.output<typeof eventPlanSchema>;
 
 export type EventPlan = {
-  event: Omit<z.output<typeof eventPlanSchema>, "planned_budget" | "planned_sample_budget">;
-  costs: { planned_budget: number; planned_sample_budget: number };
+  event: Omit<EventPlanOutput, EventCostField | EventLinkField>;
+  costs: Pick<EventPlanOutput, EventCostField>;
+  links: Pick<EventPlanOutput, EventLinkField>;
 };
 
 /**
- * Validasi field wajib event berstatus Rencana. Mengembalikan kolom `events`
- * dan `event_costs` yang siap disimpan, atau pesan error pertama.
+ * Validasi form event: field wajib Rencana plus tautan opsional (brand,
+ * distributor, vendor, SKP, keterangan). Mengembalikan kolom `events`,
+ * `event_costs`, dan tautan yang siap disimpan, atau pesan error pertama.
  */
 export function parseEventPlan(values: EventPlanInput): { error: string } | { data: EventPlan } {
   const parsed = eventPlanSchema.safeParse(values);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Input tidak valid" };
-  const { planned_budget, planned_sample_budget, ...event } = parsed.data;
-  return { data: { event, costs: { planned_budget, planned_sample_budget } } };
+  const { planned_budget, planned_sample_budget, vendor_id, brand_ids, campaign_ids, ...event } = parsed.data;
+  return {
+    data: {
+      event,
+      costs: { planned_budget, planned_sample_budget, vendor_id },
+      links: { brand_ids, campaign_ids },
+    },
+  };
+}
+
+// ============================================================
+// FILTER TABEL
+// ============================================================
+
+export type EventListFilters = {
+  type?: EventType;
+  region?: string;
+  brand?: string;
+  status?: EventStatus;
+};
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Filter tabel dari query string; nilai yang tidak dikenal diabaikan. */
+export function parseEventListFilters(params: Record<string, string | string[] | undefined>): EventListFilters {
+  const one = (key: string) => {
+    const v = params[key];
+    return Array.isArray(v) ? v[0] : v;
+  };
+  const filters: EventListFilters = {};
+
+  const type = one("type");
+  if (type && (EVENT_TYPES as readonly string[]).includes(type)) filters.type = type as EventType;
+  const region = one("region");
+  if (region && UUID_RE.test(region)) filters.region = region;
+  const brand = one("brand");
+  if (brand && UUID_RE.test(brand)) filters.brand = brand;
+  const status = one("status");
+  if (status && Object.hasOwn(EVENT_STATUS_LABELS, status)) filters.status = status as EventStatus;
+
+  return filters;
+}
+
+// ============================================================
+// SARAN DARI SKP
+// ============================================================
+
+/** Field event yang bisa disarankan dari SKP; "" = belum diisi. */
+export type EventSuggestibleFields = { region_id: string; distributor_id: string; brand_ids: string[] };
+
+export type CampaignSuggestionSource = {
+  region_id: string | null;
+  distributor_id: string | null;
+  brand_id: string | null;
+};
+
+/**
+ * Saran region/distributor/brand dari SKP yang dipilih. Field yang masih
+ * kosong langsung diisi (`fill`); field yang sudah berisi nilai lain hanya
+ * diubah setelah konfirmasi user (`confirm`). Brand ditambahkan ke daftar,
+ * bukan menggantikan. Budget sengaja tidak disarankan.
+ */
+export function suggestFromCampaign(
+  current: EventSuggestibleFields,
+  campaign: CampaignSuggestionSource
+): { fill: Partial<EventSuggestibleFields>; confirm: Partial<EventSuggestibleFields> } {
+  const fill: Partial<EventSuggestibleFields> = {};
+  const confirm: Partial<EventSuggestibleFields> = {};
+
+  for (const field of ["region_id", "distributor_id"] as const) {
+    const suggested = campaign[field];
+    if (!suggested || current[field] === suggested) continue;
+    if (current[field]) confirm[field] = suggested;
+    else fill[field] = suggested;
+  }
+
+  if (campaign.brand_id && !current.brand_ids.includes(campaign.brand_id)) {
+    const next = [...current.brand_ids, campaign.brand_id];
+    if (current.brand_ids.length) confirm.brand_ids = next;
+    else fill.brand_ids = next;
+  }
+
+  return { fill, confirm };
 }
 
 // ============================================================
 // AUDIT LOG (posm_audit_log, trigger migrasi 055)
 // ============================================================
 
-// Baris event_costs dicatat dengan record_id = event_id, sehingga riwayat
-// satu event mencakup perubahan biayanya.
-export const EVENT_AUDIT_TABLES = ["events", "event_costs"] as const;
+// Baris event_costs dan tautan (migrasi 056) dicatat dengan record_id =
+// event_id, sehingga riwayat satu event mencakup biaya dan tautannya.
+export const EVENT_AUDIT_TABLES = ["events", "event_costs", "event_brands", "event_campaigns"] as const;
 export type EventAuditTable = (typeof EVENT_AUDIT_TABLES)[number];
 
 export const EVENT_AUDIT_TABLE_LABELS: Record<EventAuditTable, string> = {
   events: "Event",
   event_costs: "Biaya Event",
+  event_brands: "Brand Event",
+  event_campaigns: "SKP Event",
 };
 
 export type EventAuditFilters = AuditFilters<EventAuditTable>;
@@ -143,6 +261,10 @@ export const EVENT_AUDIT_FIELD_LABELS: Record<string, string> = {
   actual_budget: "Realisasi Budget Event",
   planned_sample_budget: "Rencana Budget Sample",
   vendor_id: "Vendor",
+  brand_id: "Brand",
+  campaign_id: "SKP",
+  skp_number: "Nomor SKP",
+  campaign_name: "Judul SKP",
 };
 
 const EVENT_AUDIT_CURRENCY_FIELDS = new Set([

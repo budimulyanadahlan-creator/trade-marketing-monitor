@@ -17,7 +17,7 @@ import { EVENT_STATUS_LABELS } from "@/lib/event";
 import { formatIDR } from "@/lib/utils";
 import type { EventRow } from "@/types/database";
 import { EVENT_STATUS_VARIANT, formatEventDateRange } from "./event-display";
-import { EventFormDialog, type RegionOption } from "./event-form-dialog";
+import { EventFormDialog, type EventFormOptions } from "./event-form-dialog";
 
 export type EventListRow = Pick<
   EventRow,
@@ -33,6 +33,7 @@ export type EventListRow = Pick<
   | "status"
 > & {
   region_name: string | null;
+  brand_names: string[];
   planned_budget: number | null;
   planned_sample_budget: number | null;
 };
@@ -41,28 +42,31 @@ const detailHref = (id: string) => `/monitoring-event/${id}`;
 
 // ---- Main Table ----
 
+/** `formOptions` hanya dikirim untuk pemegang hak tulis (tombol Tambah Event). */
 export function EventsTable({
   events,
-  regions,
-  canManage,
+  formOptions,
+  filtered,
   periodLabel,
 }: {
   events: EventListRow[];
-  regions: RegionOption[];
-  canManage: boolean;
+  formOptions: EventFormOptions | null;
+  filtered: boolean;
   periodLabel: string;
 }) {
   const router = useRouter();
+  const canManage = formOptions !== null;
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-sm text-slate-400">
           {events.length} event di {periodLabel}
+          {filtered && " (terfilter)"}
         </p>
-        {canManage && (
+        {formOptions && (
           <EventFormDialog
-            regions={regions}
+            options={formOptions}
             trigger={
               <Button size="sm">
                 <Plus className="h-4 w-4" />
@@ -108,7 +112,10 @@ export function EventsTable({
                     >
                       {e.name}
                     </Link>
-                    <div className="text-xs text-slate-500">{e.event_type}</div>
+                    <div className="text-xs text-slate-500">
+                      {e.event_type}
+                      {e.brand_names.length > 0 && ` • ${e.brand_names.join(", ")}`}
+                    </div>
                   </TableCell>
                   <TableCell className="text-slate-300">{e.region_name ?? "—"}</TableCell>
                   <TableCell className="text-slate-300">{e.location}</TableCell>
@@ -131,8 +138,14 @@ export function EventsTable({
             ) : (
               <TableRow>
                 <TableCell colSpan={10} className="text-center py-12 text-slate-500">
-                  Belum ada event di {periodLabel}.
-                  {canManage && " Tambah event pertama lewat tombol Tambah Event."}
+                  {filtered ? (
+                    <>Tidak ada event di {periodLabel} yang cocok dengan filter.</>
+                  ) : (
+                    <>
+                      Belum ada event di {periodLabel}.
+                      {canManage && " Tambah event pertama lewat tombol Tambah Event."}
+                    </>
+                  )}
                 </TableCell>
               </TableRow>
             )}
