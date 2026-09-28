@@ -1,11 +1,18 @@
 import Link from "next/link";
 import { History } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { eventNeedsUpdate, parseEventListFilters, todayInJakarta } from "@/lib/event";
+import {
+  eventNeedsUpdate,
+  parseEventListFilters,
+  summarizeEventKpis,
+  todayInJakarta,
+  type EventKpiSource,
+} from "@/lib/event";
 import { getFiscalPeriod, resolveFiscalPeriod } from "@/lib/monitoring-budget";
 import { MonitoringPeriodSelector } from "../monitoring-budget/monitoring-period-selector";
 import { requirePosmViewer } from "../monitoring-posm/viewer";
 import { EventFilters } from "./event-filters";
+import { EventKpiRow } from "./event-kpis";
 import { EventsTable, type EventListRow } from "./events-table";
 import { loadEventFormOptions } from "./form-options";
 
@@ -15,7 +22,8 @@ function str(v: string | string[] | undefined): string | undefined {
   return Array.isArray(v) ? v[0] : v;
 }
 
-type CostEmbed = { planned_budget: number; planned_sample_budget: number } | null;
+type CostEmbed = { planned_budget: number; planned_sample_budget: number; actual_budget: number | null } | null;
+type SamplingEmbed = { deleted_at: string | null; cost: { value: number } | null }[];
 type BrandEmbed = { deleted_at: string | null; brand: { name: string } | null }[];
 
 export default async function MonitoringEventPage({
@@ -45,7 +53,7 @@ export default async function MonitoringEventPage({
   let query = supabase
     .from("events")
     .select(
-      "id, name, event_type, start_date, end_date, location, pic_name, target_participants, target_sales, status, region:regions(name), costs:event_costs(planned_budget, planned_sample_budget), brands:event_brands(deleted_at, brand:brands(name))"
+      "id, name, event_type, start_date, end_date, location, pic_name, target_participants, target_sales, status, actual_participants, actual_sales, region:regions(name), costs:event_costs(planned_budget, planned_sample_budget, actual_budget), brands:event_brands(deleted_at, brand:brands(name)), samplings:event_samplings(deleted_at, cost:event_sampling_costs(value))"
     )
     .eq("fiscal_year", fiscalYear)
     .eq("quarter", quarter)
@@ -65,8 +73,27 @@ export default async function MonitoringEventPage({
   ]);
 
   const today = todayInJakarta();
-  const rows: EventListRow[] = (events ?? []).map(({ region, costs, brands, ...e }) => {
+
+  // KPI memakai baris yang sama dengan tabel, sehingga ikut kuartal dan
+  // semua filter; event terhapus sudah tersaring di query.
+  const kpiSources: EventKpiSource[] = [];
+
+  const rows: EventListRow[] = (events ?? []).map(({ region, costs, brands, samplings, actual_participants, actual_sales, ...e }) => {
     const c = costs as CostEmbed;
+    const optional = (v: number | null | undefined) => (v == null ? null : Number(v));
+    kpiSources.push({
+      status: e.status,
+      target_participants: Number(e.target_participants),
+      target_sales: Number(e.target_sales),
+      actual_participants: optional(actual_participants),
+      actual_sales: optional(actual_sales),
+      planned_budget: Number(c?.planned_budget ?? 0),
+      actual_budget: optional(c?.actual_budget),
+      planned_sample_budget: Number(c?.planned_sample_budget ?? 0),
+      sampling_value: (samplings as SamplingEmbed)
+        .filter((s) => !s.deleted_at)
+        .reduce((sum, s) => sum + Number(s.cost?.value ?? 0), 0),
+    });
     return {
       ...e,
       region_name: (region as { name: string } | null)?.name ?? null,
@@ -108,6 +135,8 @@ export default async function MonitoringEventPage({
       </div>
 
       <EventFilters filters={filters} regions={allRegions ?? []} brands={allBrands ?? []} />
+
+      <EventKpiRow kpis={summarizeEventKpis(kpiSources)} />
 
       <EventsTable
         events={rows}

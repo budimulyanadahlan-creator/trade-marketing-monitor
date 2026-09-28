@@ -8,6 +8,7 @@ import {
   parseEventSampling,
   parseEventPlan,
   parseEventStatusUpdate,
+  summarizeEventKpis,
   summarizeEventSampling,
   suggestFromCampaign,
   todayInJakarta,
@@ -413,5 +414,93 @@ describe("summarizeEventSampling", () => {
       remaining: 5_000_000,
       percentOfPlan: 0,
     });
+  });
+});
+
+type KpiEvent = Parameters<typeof summarizeEventKpis>[0][number];
+
+const kpiEvent = (overrides: Partial<KpiEvent>): KpiEvent => ({
+  status: "rencana",
+  target_participants: 0,
+  target_sales: 0,
+  actual_participants: null,
+  actual_sales: null,
+  planned_budget: 0,
+  actual_budget: null,
+  planned_sample_budget: 0,
+  sampling_value: 0,
+  ...overrides,
+});
+
+describe("summarizeEventKpis", () => {
+  it("counts events per status", () => {
+    const kpis = summarizeEventKpis([
+      kpiEvent({ status: "rencana" }),
+      kpiEvent({ status: "terlaksana" }),
+      kpiEvent({ status: "terlaksana" }),
+      kpiEvent({ status: "batal" }),
+    ]);
+    expect(kpis.counts).toEqual({ rencana: 1, terlaksana: 2, batal: 1, total: 4 });
+  });
+});
+
+describe("summarizeEventKpis — target vs aktual", () => {
+  it("targets Rencana + Terlaksana, actuals only from Terlaksana, Batal excluded", () => {
+    const kpis = summarizeEventKpis([
+      kpiEvent({ status: "rencana", target_participants: 100, target_sales: 1_000_000 }),
+      kpiEvent({
+        status: "terlaksana",
+        target_participants: 200,
+        target_sales: 2_000_000,
+        actual_participants: 250,
+        actual_sales: 1_800_000,
+      }),
+      kpiEvent({ status: "batal", target_participants: 999, target_sales: 9_999_999 }),
+      // Koreksi Terlaksana → Rencana: realisasi lama tersimpan tapi bukan aktual.
+      kpiEvent({ status: "rencana", target_participants: 50, actual_participants: 40, actual_sales: 500_000 }),
+    ]);
+    expect(kpis.participants).toEqual({ target: 350, actual: 250 });
+    expect(kpis.sales).toEqual({ target: 3_000_000, actual: 1_800_000 });
+  });
+});
+
+describe("summarizeEventKpis — budget", () => {
+  const kpis = summarizeEventKpis([
+    kpiEvent({ status: "rencana", planned_budget: 10_000_000, planned_sample_budget: 1_000_000, sampling_value: 300_000 }),
+    kpiEvent({
+      status: "terlaksana",
+      planned_budget: 20_000_000,
+      actual_budget: 18_000_000,
+      planned_sample_budget: 2_000_000,
+      sampling_value: 2_500_000,
+    }),
+    // Biaya hangus event Batal tetap terpakai, rencananya tidak dihitung.
+    kpiEvent({
+      status: "batal",
+      planned_budget: 50_000_000,
+      actual_budget: 5_000_000,
+      planned_sample_budget: 4_000_000,
+      sampling_value: 100_000,
+    }),
+    kpiEvent({ status: "batal", planned_budget: 7_000_000, actual_budget: null }),
+    kpiEvent({ status: "rencana", planned_budget: 1_000_000, actual_budget: 900_000 }),
+  ]);
+
+  it("plans from Rencana + Terlaksana and spends Terlaksana + Batal realisation", () => {
+    expect(kpis.budget).toEqual({ target: 31_000_000, actual: 23_000_000 });
+  });
+
+  it("compares planned sample budget with sampling value used by Terlaksana + Batal", () => {
+    expect(kpis.sampleBudget).toEqual({ target: 3_000_000, actual: 2_600_000 });
+  });
+});
+
+it("summarizeEventKpis returns zeros for no events", () => {
+  expect(summarizeEventKpis([])).toEqual({
+    counts: { rencana: 0, terlaksana: 0, batal: 0, total: 0 },
+    participants: { target: 0, actual: 0 },
+    sales: { target: 0, actual: 0 },
+    budget: { target: 0, actual: 0 },
+    sampleBudget: { target: 0, actual: 0 },
   });
 });

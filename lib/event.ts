@@ -283,6 +283,71 @@ export function summarizeEventSampling(rows: { value: number }[], plannedSampleB
 }
 
 // ============================================================
+// KPI KUARTAL
+// ============================================================
+
+export type EventKpiSource = {
+  status: EventStatus;
+  target_participants: number;
+  target_sales: number;
+  actual_participants: number | null;
+  actual_sales: number | null;
+  planned_budget: number;
+  actual_budget: number | null;
+  planned_sample_budget: number;
+  /** Total nilai Rp baris sampling aktif event ini. */
+  sampling_value: number;
+};
+
+export type EventKpiPair = { target: number; actual: number };
+
+export type EventKpis = {
+  counts: Record<EventStatus, number> & { total: number };
+  participants: EventKpiPair;
+  sales: EventKpiPair;
+  /** Budget event rencana vs realisasi (terpakai). */
+  budget: EventKpiPair;
+  /** Budget sample rencana vs nilai sampling terpakai. */
+  sampleBudget: EventKpiPair;
+};
+
+/**
+ * Agregasi KPI event kuartal/filter aktif (event terhapus tidak ikut dikirim).
+ * Target dan rencana budget dari Rencana + Terlaksana (Batal dikeluarkan).
+ * Aktual peserta/sales hanya dari Terlaksana, sehingga realisasi lama pada
+ * event yang dikoreksi ke Rencana tidak dihitung. Budget dan sampling
+ * terpakai dari Terlaksana + Batal, karena event Batal bisa punya biaya hangus.
+ */
+export function summarizeEventKpis(events: EventKpiSource[]): EventKpis {
+  const counts = { rencana: 0, terlaksana: 0, batal: 0, total: events.length };
+  const participants = { target: 0, actual: 0 };
+  const sales = { target: 0, actual: 0 };
+  const budget = { target: 0, actual: 0 };
+  const sampleBudget = { target: 0, actual: 0 };
+
+  for (const e of events) {
+    counts[e.status] += 1;
+
+    if (e.status !== "rencana") {
+      budget.actual += e.actual_budget ?? 0;
+      sampleBudget.actual += e.sampling_value;
+    }
+    if (e.status === "batal") continue;
+
+    participants.target += e.target_participants;
+    sales.target += e.target_sales;
+    budget.target += e.planned_budget;
+    sampleBudget.target += e.planned_sample_budget;
+    if (e.status === "terlaksana") {
+      participants.actual += e.actual_participants ?? 0;
+      sales.actual += e.actual_sales ?? 0;
+    }
+  }
+
+  return { counts, participants, sales, budget, sampleBudget };
+}
+
+// ============================================================
 // FILTER TABEL
 // ============================================================
 
