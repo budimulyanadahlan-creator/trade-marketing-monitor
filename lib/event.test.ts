@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
+  canViewEvent,
+  eventDetailSelect,
+  eventListSelect,
+  publicEventKpis,
   eventFiscalPeriod,
   eventNeedsUpdate,
   formatEventAuditValue,
@@ -502,5 +506,91 @@ it("summarizeEventKpis returns zeros for no events", () => {
     sales: { target: 0, actual: 0 },
     budget: { target: 0, actual: 0 },
     sampleBudget: { target: 0, actual: 0 },
+  });
+});
+
+describe("canViewEvent — akses distributor (mirror RLS migrasi 059)", () => {
+  const event = { region_id: "region-a", distributor_id: "dist-x" };
+  const distributor = (region_id: string | null, distributor_id: string | null) => ({
+    role: "distributor" as const,
+    region_id,
+    distributor_id,
+  });
+
+  it("lets internal roles see every event regardless of region", () => {
+    for (const role of ["user", "manager", "finance", "admin", "superadmin"] as const) {
+      expect(canViewEvent(event, { role, region_id: "region-b", distributor_id: null })).toBe(true);
+    }
+  });
+
+  it("lets a distributor see an event in its region", () => {
+    expect(canViewEvent(event, distributor("region-a", "dist-y"))).toBe(true);
+  });
+
+  it("lets a distributor see an event that links its distributor in another region", () => {
+    expect(canViewEvent(event, distributor("region-b", "dist-x"))).toBe(true);
+  });
+
+  it("lets a distributor without a region see only events linking its distributor", () => {
+    expect(canViewEvent(event, distributor(null, "dist-x"))).toBe(true);
+    expect(canViewEvent(event, distributor(null, "dist-y"))).toBe(false);
+  });
+
+  it("hides an event when neither region nor distributor matches", () => {
+    expect(canViewEvent(event, distributor("region-b", "dist-y"))).toBe(false);
+  });
+
+  it("never matches on a missing distributor on either side", () => {
+    expect(canViewEvent({ region_id: "region-a", distributor_id: null }, distributor("region-b", null))).toBe(false);
+  });
+});
+
+describe("eventListSelect / eventDetailSelect — kolom per viewer", () => {
+  const COST_SOURCES = ["event_costs", "event_sampling_costs", "vendor", "budget", "value"];
+
+  it.each([
+    ["list", eventListSelect],
+    ["detail", eventDetailSelect],
+  ])("never requests cost, sampling value, or vendor data for distributors (%s)", (_, select) => {
+    const columns = select({ showCosts: false });
+    for (const source of COST_SOURCES) expect(columns).not.toContain(source);
+  });
+
+  it.each([
+    ["list", eventListSelect],
+    ["detail", eventDetailSelect],
+  ])("requests costs and sampling values for internal viewers (%s)", (_, select) => {
+    const columns = select({ showCosts: true });
+    expect(columns).toContain("event_costs");
+    expect(columns).toContain("event_sampling_costs");
+  });
+
+  it("keeps sampling qty for distributors on the detail page", () => {
+    expect(eventDetailSelect({ showCosts: false })).toContain("samplings:event_samplings(id, product_name, quantity, unit");
+  });
+
+  it("requests the vendor only on the internal detail page", () => {
+    expect(eventDetailSelect({ showCosts: true })).toContain("vendor:vendors(name)");
+  });
+});
+
+describe("publicEventKpis", () => {
+  it("keeps only counts, participants, and sales for distributors", () => {
+    const kpis = summarizeEventKpis([
+      {
+        status: "terlaksana",
+        target_participants: 100,
+        target_sales: 1_000_000,
+        actual_participants: 120,
+        actual_sales: 900_000,
+        planned_budget: 5_000_000,
+        actual_budget: 4_000_000,
+        planned_sample_budget: 1_000_000,
+        sampling_value: 500_000,
+      },
+    ]);
+    const visible = publicEventKpis(kpis);
+    expect(Object.keys(visible).sort()).toEqual(["counts", "participants", "sales"]);
+    expect(visible.participants).toEqual({ target: 100, actual: 120 });
   });
 });

@@ -4,13 +4,21 @@ import type { ReactNode } from "react";
 import { ArrowLeft, History } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { getStatusConfig } from "@/lib/campaign-status";
-import { EVENT_STATUS_LABELS, eventFiscalPeriod, eventNeedsUpdate, todayInJakarta } from "@/lib/event";
+import { isDistributorAllowedOnCampaign } from "@/lib/distributor-campaign-guard";
+import {
+  canViewEvent,
+  EVENT_STATUS_LABELS,
+  eventDetailSelect,
+  eventFiscalPeriod,
+  eventNeedsUpdate,
+  todayInJakarta,
+} from "@/lib/event";
 import { auditFiltersQuery, formatAuditTimestamp } from "@/lib/posm";
 import { cn, formatIDR } from "@/lib/utils";
-import type { CampaignStatus } from "@/types/database";
-import { requirePosmViewer } from "../../monitoring-posm/viewer";
+import type { CampaignStatus, EventRow } from "@/types/database";
 import { EVENT_STATUS_VARIANT, formatEventDateRange, NeedsUpdateBadge } from "../event-display";
 import { loadEventFormOptions } from "../form-options";
+import { requireEventViewer } from "../viewer";
 import { EventDetailActions } from "./event-detail-actions";
 import { EventSamplingSection, type EventSamplingItem } from "./event-sampling-section";
 
@@ -40,8 +48,41 @@ type SamplingEmbed = {
   sort_order: number;
   created_at: string;
   deleted_at: string | null;
-  cost: { value: number } | null;
+  /** Tidak ada untuk distributor (eventDetailSelect tanpa biaya). */
+  cost?: { value: number } | null;
 }[];
+
+// Bentuk baris eventDetailSelect(); costs hanya ada untuk internal.
+type EventDetailQueryRow = Pick<
+  EventRow,
+  | "id"
+  | "name"
+  | "event_type"
+  | "start_date"
+  | "end_date"
+  | "region_id"
+  | "distributor_id"
+  | "location"
+  | "pic_name"
+  | "target_participants"
+  | "target_sales"
+  | "status"
+  | "actual_participants"
+  | "actual_sales"
+  | "cancel_reason"
+  | "notes"
+  | "created_at"
+  | "updated_at"
+> & {
+  region: Named;
+  distributor: Named;
+  costs?: CostEmbed;
+  brands: BrandEmbed;
+  campaigns: CampaignEmbed;
+  samplings: SamplingEmbed;
+  creator: { full_name: string } | null;
+  updater: { full_name: string } | null;
+};
 
 function Field({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
   return (
@@ -54,40 +95,41 @@ function Field({ label, children, className }: { label: string; children: ReactN
 
 export default async function EventDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  // Distributor dialihkan sampai fase 7; hak tulis = can_manage_posm().
-  const { supabase, canManage, isAdmin } = await requirePosmViewer();
+  // Distributor hanya melihat event region/distributornya (RLS migrasi 059)
+  // dan tanpa biaya, nilai sampling, maupun vendor; hak tulis = can_manage_posm().
+  const { supabase, viewer, showCosts, canManage, isAdmin } = await requireEventViewer();
 
   if (!UUID.test(id)) notFound();
 
-  const { data: event } = await supabase
+  const { data } = await supabase
     .from("events")
-    .select(
-      "id, name, event_type, start_date, end_date, region_id, distributor_id, location, pic_name, target_participants, target_sales, status, actual_participants, actual_sales, cancel_reason, notes, created_at, updated_at, region:regions(name), distributor:distributors(name), costs:event_costs(planned_budget, planned_sample_budget, actual_budget, vendor_id, vendor:vendors(name)), brands:event_brands(brand_id, deleted_at, brand:brands(name)), campaigns:event_campaigns(campaign_id, skp_number, campaign_name, deleted_at, created_at), samplings:event_samplings(id, product_name, quantity, unit, sort_order, created_at, deleted_at, cost:event_sampling_costs(value)), creator:users!events_created_by_fkey(full_name), updater:users!events_updated_by_fkey(full_name)"
-    )
+    .select(eventDetailSelect({ showCosts }))
     .eq("id", id)
     .is("deleted_at", null)
     .maybeSingle();
+  const event = data as unknown as EventDetailQueryRow | null;
 
-  // Event terhapus diperlakukan sama dengan id yang tidak ada.
-  if (!event) notFound();
+  // Event terhapus, dan event di luar region/distributor akun distributor
+  // (lapis kedua selain RLS), diperlakukan sama dengan id yang tidak ada.
+  if (!event || !canViewEvent(event, viewer)) notFound();
 
   const { region, distributor, costs, brands, campaigns, samplings, creator, updater, ...e } = event;
-  const regionName = (region as Named)?.name ?? null;
-  const distributorName = (distributor as Named)?.name ?? null;
-  const cost = costs as CostEmbed;
+  const regionName = region?.name ?? null;
+  const distributorName = distributor?.name ?? null;
+  const cost = costs ?? null;
   const vendorName = cost?.vendor?.name ?? null;
-  const creatorName = (creator as { full_name: string } | null)?.full_name;
-  const updaterName = (updater as { full_name: string } | null)?.full_name;
+  const creatorName = creator?.full_name;
+  const updaterName = updater?.full_name;
   const { fiscalYear, quarter } = eventFiscalPeriod(e.start_date);
   const today = todayInJakarta();
   const actualBudget = cost?.actual_budget == null ? null : Number(cost.actual_budget);
   const hasRealization = e.actual_participants !== null || e.actual_sales !== null || actualBudget !== null;
 
-  const linkedBrands = (brands as BrandEmbed)
+  const linkedBrands = brands
     .filter((b) => !b.deleted_at)
     .map((b) => ({ id: b.brand_id, name: b.brand?.name ?? b.brand_id }))
     .sort((a, b) => a.name.localeCompare(b.name));
-  const samplingItems: EventSamplingItem[] = (samplings as SamplingEmbed)
+  const samplingItems: EventSamplingItem[] = samplings
     .filter((s) => !s.deleted_at)
     .sort((a, b) => a.sort_order - b.sort_order || a.created_at.localeCompare(b.created_at))
     .map((s) => ({
@@ -95,18 +137,25 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
       product_name: s.product_name,
       quantity: Number(s.quantity),
       unit: s.unit,
-      value: Number(s.cost?.value ?? 0),
+      // Kunci nilai tidak dikirim sama sekali ke browser distributor.
+      ...(showCosts && { value: Number(s.cost?.value ?? 0) }),
     }));
-  const linkedCampaigns = (campaigns as CampaignEmbed)
+  const linkedCampaigns = campaigns
     .filter((c) => !c.deleted_at)
     .sort((a, b) => a.created_at.localeCompare(b.created_at));
 
-  // Nomor/judul/status terkini lewat event_campaign_refs (migrasi 056),
+  // Nomor/judul/status terkini lewat event_campaign_refs (migrasi 056/059),
   // karena RLS campaigns tidak mengizinkan semua pembaca melihat SKP ini.
   // SKP yang dihapus permanen (campaign_id null) memakai snapshot.
   const campaignIds = linkedCampaigns.flatMap((c) => (c.campaign_id ? [c.campaign_id] : []));
-  const [{ data: refs }, formOptions] = await Promise.all([
+  const isDistributor = viewer.role === "distributor";
+  const [{ data: refs }, { data: readableCampaigns }, formOptions] = await Promise.all([
     campaignIds.length ? supabase.rpc("event_campaign_refs", { p_ids: campaignIds }) : Promise.resolve({ data: [] }),
+    // Distributor hanya mendapat link ke SKP yang bisa dibukanya: terbaca
+    // lewat RLS campaigns dan milik distributornya (atau belum ditetapkan).
+    isDistributor && campaignIds.length
+      ? supabase.from("campaigns").select("id, distributor_id").in("id", campaignIds)
+      : Promise.resolve({ data: null }),
     canManage && cost
       ? loadEventFormOptions(supabase, {
           region: regionName ? { id: e.region_id, name: regionName } : null,
@@ -117,10 +166,18 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
       : null,
   ]);
   const refById = new Map((refs ?? []).map((r) => [r.id, r]));
+  const openableIds = isDistributor
+    ? new Set(
+        (readableCampaigns ?? [])
+          .filter((c) => isDistributorAllowedOnCampaign(c.distributor_id, viewer.distributor_id))
+          .map((c) => c.id)
+      )
+    : null;
   const skps = linkedCampaigns.map((c) => {
     const ref = c.campaign_id ? refById.get(c.campaign_id) : undefined;
     return {
       id: c.campaign_id,
+      openable: !!c.campaign_id && (openableIds?.has(c.campaign_id) ?? true),
       skp_number: ref?.skp_number ?? c.skp_number,
       name: ref?.name ?? c.campaign_name ?? "SKP",
       status: (ref?.status ?? null) as CampaignStatus | null,
@@ -222,12 +279,16 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
             <Field label="Target Sales">
               <span className="tabular-nums">{formatIDR(Number(e.target_sales))}</span>
             </Field>
-            <Field label="Rencana Budget Event">
-              <span className="tabular-nums">{cost ? formatIDR(Number(cost.planned_budget)) : "—"}</span>
-            </Field>
-            <Field label="Rencana Budget Sample">
-              <span className="tabular-nums">{cost ? formatIDR(Number(cost.planned_sample_budget)) : "—"}</span>
-            </Field>
+            {showCosts && (
+              <>
+                <Field label="Rencana Budget Event">
+                  <span className="tabular-nums">{cost ? formatIDR(Number(cost.planned_budget)) : "—"}</span>
+                </Field>
+                <Field label="Rencana Budget Sample">
+                  <span className="tabular-nums">{cost ? formatIDR(Number(cost.planned_sample_budget)) : "—"}</span>
+                </Field>
+              </>
+            )}
           </dl>
         </section>
 
@@ -248,9 +309,11 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
             <Field label="Hasil Sales">
               <span className="tabular-nums">{e.actual_sales === null ? "—" : formatIDR(Number(e.actual_sales))}</span>
             </Field>
-            <Field label="Realisasi Budget Event">
-              <span className="tabular-nums">{actualBudget === null ? "—" : formatIDR(actualBudget)}</span>
-            </Field>
+            {showCosts && (
+              <Field label="Realisasi Budget Event">
+                <span className="tabular-nums">{actualBudget === null ? "—" : formatIDR(actualBudget)}</span>
+              </Field>
+            )}
             {(e.status === "batal" || e.cancel_reason) && (
               <Field label="Alasan Batal" className="col-span-2">
                 {e.cancel_reason ? <span className="whitespace-pre-line">{e.cancel_reason}</span> : "—"}
@@ -264,7 +327,7 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
       <EventSamplingSection
         eventId={e.id}
         samplings={samplingItems}
-        plannedSampleBudget={cost ? Number(cost.planned_sample_budget) : 0}
+        plannedSampleBudget={showCosts ? Number(cost?.planned_sample_budget ?? 0) : null}
         canManage={canManage}
       />
 
@@ -285,13 +348,13 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
             )}
           </Field>
           <Field label="Distributor">{distributorName ?? "—"}</Field>
-          <Field label="Vendor Penyelenggara">{vendorName ?? "—"}</Field>
+          {showCosts && <Field label="Vendor Penyelenggara">{vendorName ?? "—"}</Field>}
           <Field label="SKP Terkait" className="sm:col-span-2 lg:col-span-4">
             {skps.length ? (
               <ul className="space-y-1.5">
                 {skps.map((s, i) => (
                   <li key={s.id ?? `deleted-${i}`} className="flex flex-wrap items-center gap-2">
-                    {s.id ? (
+                    {s.id && s.openable ? (
                       <Link href={`/campaigns/${s.id}`} className="text-emerald-300 hover:underline underline-offset-4">
                         <code>{s.skp_number ?? "Tanpa nomor"}</code>
                       </Link>

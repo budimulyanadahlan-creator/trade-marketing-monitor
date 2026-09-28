@@ -2,19 +2,21 @@ import Link from "next/link";
 import { History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
+  eventListSelect,
   eventNeedsUpdate,
   parseEventListFilters,
+  publicEventKpis,
   summarizeEventKpis,
   todayInJakarta,
   type EventKpiSource,
 } from "@/lib/event";
 import { getFiscalPeriod, resolveFiscalPeriod } from "@/lib/monitoring-budget";
 import { MonitoringPeriodSelector } from "../monitoring-budget/monitoring-period-selector";
-import { requirePosmViewer } from "../monitoring-posm/viewer";
 import { EventFilters } from "./event-filters";
 import { EventKpiRow } from "./event-kpis";
 import { EventsTable, type EventListRow } from "./events-table";
 import { loadEventFormOptions } from "./form-options";
+import { requireEventViewer } from "./viewer";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
@@ -26,13 +28,36 @@ type CostEmbed = { planned_budget: number; planned_sample_budget: number; actual
 type SamplingEmbed = { deleted_at: string | null; cost: { value: number } | null }[];
 type BrandEmbed = { deleted_at: string | null; brand: { name: string } | null }[];
 
+// Bentuk baris eventListSelect(); costs & samplings hanya ada untuk internal.
+type EventListQueryRow = Pick<
+  EventListRow,
+  | "id"
+  | "name"
+  | "event_type"
+  | "start_date"
+  | "end_date"
+  | "location"
+  | "pic_name"
+  | "target_participants"
+  | "target_sales"
+  | "status"
+> & {
+  actual_participants: number | null;
+  actual_sales: number | null;
+  region: { name: string } | null;
+  brands: BrandEmbed;
+  costs?: CostEmbed;
+  samplings?: SamplingEmbed;
+};
+
 export default async function MonitoringEventPage({
   searchParams,
 }: {
   searchParams: SearchParams;
 }) {
-  // Distributor dialihkan sampai fase 7; hak tulis = can_manage_posm().
-  const { supabase, canManage, isAdmin } = await requirePosmViewer();
+  // Distributor hanya melihat event region/distributornya (RLS migrasi 059)
+  // dan tanpa biaya; hak tulis = can_manage_posm().
+  const { supabase, showCosts, canManage, isAdmin } = await requireEventViewer();
 
   const params = await searchParams;
   const currentFiscalYear = getFiscalPeriod(new Date()).fiscalYear;
@@ -52,9 +77,7 @@ export default async function MonitoringEventPage({
 
   let query = supabase
     .from("events")
-    .select(
-      "id, name, event_type, start_date, end_date, location, pic_name, target_participants, target_sales, status, actual_participants, actual_sales, region:regions(name), costs:event_costs(planned_budget, planned_sample_budget, actual_budget), brands:event_brands(deleted_at, brand:brands(name)), samplings:event_samplings(deleted_at, cost:event_sampling_costs(value))"
-    )
+    .select(eventListSelect({ showCosts }))
     .eq("fiscal_year", fiscalYear)
     .eq("quarter", quarter)
     .is("deleted_at", null);
@@ -78,34 +101,40 @@ export default async function MonitoringEventPage({
   // semua filter; event terhapus sudah tersaring di query.
   const kpiSources: EventKpiSource[] = [];
 
-  const rows: EventListRow[] = (events ?? []).map(({ region, costs, brands, samplings, actual_participants, actual_sales, ...e }) => {
-    const c = costs as CostEmbed;
-    const optional = (v: number | null | undefined) => (v == null ? null : Number(v));
-    kpiSources.push({
-      status: e.status,
-      target_participants: Number(e.target_participants),
-      target_sales: Number(e.target_sales),
-      actual_participants: optional(actual_participants),
-      actual_sales: optional(actual_sales),
-      planned_budget: Number(c?.planned_budget ?? 0),
-      actual_budget: optional(c?.actual_budget),
-      planned_sample_budget: Number(c?.planned_sample_budget ?? 0),
-      sampling_value: (samplings as SamplingEmbed)
-        .filter((s) => !s.deleted_at)
-        .reduce((sum, s) => sum + Number(s.cost?.value ?? 0), 0),
-    });
-    return {
-      ...e,
-      region_name: (region as { name: string } | null)?.name ?? null,
-      brand_names: (brands as BrandEmbed)
-        .filter((b) => !b.deleted_at && b.brand)
-        .map((b) => b.brand!.name)
-        .sort(),
-      planned_budget: c?.planned_budget ?? null,
-      planned_sample_budget: c?.planned_sample_budget ?? null,
-      needs_update: eventNeedsUpdate(e, today),
-    };
-  });
+  const rows: EventListRow[] = ((events ?? []) as unknown as EventListQueryRow[]).map(
+    ({ region, costs, brands, samplings, actual_participants, actual_sales, ...e }) => {
+      const c = costs ?? null;
+      const optional = (v: number | null | undefined) => (v == null ? null : Number(v));
+      kpiSources.push({
+        status: e.status,
+        target_participants: Number(e.target_participants),
+        target_sales: Number(e.target_sales),
+        actual_participants: optional(actual_participants),
+        actual_sales: optional(actual_sales),
+        planned_budget: Number(c?.planned_budget ?? 0),
+        actual_budget: optional(c?.actual_budget),
+        planned_sample_budget: Number(c?.planned_sample_budget ?? 0),
+        sampling_value: (samplings ?? [])
+          .filter((s) => !s.deleted_at)
+          .reduce((sum, s) => sum + Number(s.cost?.value ?? 0), 0),
+      });
+      return {
+        ...e,
+        region_name: region?.name ?? null,
+        brand_names: brands
+          .filter((b) => !b.deleted_at && b.brand)
+          .map((b) => b.brand!.name)
+          .sort(),
+        // Kunci biaya tidak dikirim sama sekali ke browser distributor.
+        ...(showCosts && {
+          planned_budget: c?.planned_budget ?? null,
+          planned_sample_budget: c?.planned_sample_budget ?? null,
+        }),
+        needs_update: eventNeedsUpdate(e, today),
+      };
+    }
+  );
+  const kpis = summarizeEventKpis(kpiSources);
 
   return (
     <div className="space-y-6">
@@ -136,11 +165,12 @@ export default async function MonitoringEventPage({
 
       <EventFilters filters={filters} regions={allRegions ?? []} brands={allBrands ?? []} />
 
-      <EventKpiRow kpis={summarizeEventKpis(kpiSources)} />
+      <EventKpiRow kpis={showCosts ? kpis : publicEventKpis(kpis)} />
 
       <EventsTable
         events={rows}
         formOptions={formOptions}
+        showCosts={showCosts}
         filtered={Object.keys(filters).length > 0}
         periodLabel={`FY ${fiscalYear} Q${quarter}`}
       />

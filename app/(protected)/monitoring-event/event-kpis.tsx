@@ -1,4 +1,4 @@
-import { EVENT_STATUS_LABELS, type EventKpiPair, type EventKpis } from "@/lib/event";
+import { EVENT_STATUS_LABELS, type EventKpiPair, type EventKpis, type PublicEventKpis } from "@/lib/event";
 import { cn, formatIDR } from "@/lib/utils";
 
 const formatCount = (n: number) => n.toLocaleString("id-ID");
@@ -49,9 +49,12 @@ function PairCard({
   );
 }
 
-export function EventKpiRow({ kpis }: { kpis: EventKpis }) {
+/** Kartu budget hanya dirender jika `kpis` memuatnya (bukan distributor, lihat publicEventKpis). */
+export function EventKpiRow({ kpis }: { kpis: EventKpis | PublicEventKpis }) {
+  const budget = "budget" in kpis ? kpis : null;
+
   return (
-    <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-5">
+    <div className={cn("grid gap-3 grid-cols-1 sm:grid-cols-2", budget ? "xl:grid-cols-5" : "xl:grid-cols-3")}>
       <KpiShell label="Jumlah Event">
         <p className="text-xl font-bold tracking-tight text-slate-100">{formatCount(kpis.counts.total)}</p>
         <dl className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
@@ -65,22 +68,26 @@ export function EventKpiRow({ kpis }: { kpis: EventKpis }) {
       </KpiShell>
       <PairCard label="Peserta" pair={kpis.participants} format={formatCount} targetLabel="Target" actualLabel="Aktual" />
       <PairCard label="Sales" pair={kpis.sales} format={formatIDR} targetLabel="Target" actualLabel="Aktual" />
-      <PairCard
-        label="Budget Event"
-        pair={kpis.budget}
-        format={formatIDR}
-        targetLabel="Rencana"
-        actualLabel="Realisasi"
-        overIsBad
-      />
-      <PairCard
-        label="Budget Sample"
-        pair={kpis.sampleBudget}
-        format={formatIDR}
-        targetLabel="Rencana"
-        actualLabel="Terpakai"
-        overIsBad
-      />
+      {budget && (
+        <>
+          <PairCard
+            label="Budget Event"
+            pair={budget.budget}
+            format={formatIDR}
+            targetLabel="Rencana"
+            actualLabel="Realisasi"
+            overIsBad
+          />
+          <PairCard
+            label="Budget Sample"
+            pair={budget.sampleBudget}
+            format={formatIDR}
+            targetLabel="Rencana"
+            actualLabel="Terpakai"
+            overIsBad
+          />
+        </>
+      )}
     </div>
   );
 }

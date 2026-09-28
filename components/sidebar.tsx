@@ -66,8 +66,8 @@ const navItems: NavItem[] = [
     href: "/monitoring-event",
     label: "Monitoring Event",
     icon: <CalendarDays className="h-4 w-4" />,
-    // Distributor menyusul di fase 7 (plans/plan-monitoring-event.md).
-    roles: ["user", "manager", "finance", "admin", "superadmin"],
+    // Distributor: hanya event region/distributornya, tanpa biaya (migrasi 059).
+    roles: ["user", "manager", "finance", "admin", "superadmin", "distributor"],
   },
   {
     href: "/admin/users",

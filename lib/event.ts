@@ -6,7 +6,7 @@ import { z } from "zod";
 import { getFiscalPeriod, type FiscalPeriod } from "@/lib/monitoring-budget";
 import { formatAuditValue, parseAuditFiltersFor, type AuditFilters } from "@/lib/posm";
 import { formatIDR } from "@/lib/utils";
-import type { EventStatus, EventType } from "@/types/database";
+import type { EventStatus, EventType, UserRole } from "@/types/database";
 
 export const EVENT_STATUS_LABELS: Record<EventStatus, string> = {
   rencana: "Rencana",
@@ -26,6 +26,49 @@ export const EVENT_TYPES: readonly EventType[] = [
   "Local Region Event",
   "Lainnya",
 ];
+
+// ============================================================
+// AKSES
+// ============================================================
+
+export type EventViewer = { role: UserRole; region_id: string | null; distributor_id: string | null };
+
+/**
+ * Apakah viewer boleh melihat event. Internal: semua event. Distributor:
+ * event di region akunnya, atau event yang menautkan distributornya.
+ * Harus sama dengan policy select events (migrasi 059).
+ */
+export function canViewEvent(
+  event: { region_id: string; distributor_id: string | null },
+  viewer: EventViewer
+): boolean {
+  if (viewer.role !== "distributor") return true;
+  if (viewer.region_id && viewer.region_id === event.region_id) return true;
+  return !!viewer.distributor_id && viewer.distributor_id === event.distributor_id;
+}
+
+/**
+ * Kolom query halaman daftar. Tanpa `showCosts` (distributor), biaya,
+ * nilai sampling, dan vendor tidak diminta sama sekali, sehingga tidak ikut
+ * terkirim ke browser meskipun RLS sudah menolaknya.
+ */
+export function eventListSelect({ showCosts }: { showCosts: boolean }): string {
+  const base =
+    "id, name, event_type, start_date, end_date, location, pic_name, target_participants, target_sales, status, actual_participants, actual_sales, region:regions(name), brands:event_brands(deleted_at, brand:brands(name))";
+  return showCosts
+    ? `${base}, costs:event_costs(planned_budget, planned_sample_budget, actual_budget), samplings:event_samplings(deleted_at, cost:event_sampling_costs(value))`
+    : base;
+}
+
+/** Kolom query halaman detail; lihat eventListSelect. Qty sampling tetap untuk distributor. */
+export function eventDetailSelect({ showCosts }: { showCosts: boolean }): string {
+  const base =
+    "id, name, event_type, start_date, end_date, region_id, distributor_id, location, pic_name, target_participants, target_sales, status, actual_participants, actual_sales, cancel_reason, notes, created_at, updated_at, region:regions(name), distributor:distributors(name), brands:event_brands(brand_id, deleted_at, brand:brands(name)), campaigns:event_campaigns(campaign_id, skp_number, campaign_name, deleted_at, created_at), creator:users!events_created_by_fkey(full_name), updater:users!events_updated_by_fkey(full_name)";
+  const sampling = "id, product_name, quantity, unit, sort_order, created_at, deleted_at";
+  return showCosts
+    ? `${base}, costs:event_costs(planned_budget, planned_sample_budget, actual_budget, vendor_id, vendor:vendors(name)), samplings:event_samplings(${sampling}, cost:event_sampling_costs(value))`
+    : `${base}, samplings:event_samplings(${sampling})`;
+}
 
 // ============================================================
 // PERIODE
@@ -345,6 +388,13 @@ export function summarizeEventKpis(events: EventKpiSource[]): EventKpis {
   }
 
   return { counts, participants, sales, budget, sampleBudget };
+}
+
+export type PublicEventKpis = Pick<EventKpis, "counts" | "participants" | "sales">;
+
+/** KPI untuk distributor: tanpa budget event maupun budget sample. */
+export function publicEventKpis({ counts, participants, sales }: EventKpis): PublicEventKpis {
+  return { counts, participants, sales };
 }
 
 // ============================================================

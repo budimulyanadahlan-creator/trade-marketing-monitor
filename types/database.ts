@@ -1521,7 +1521,7 @@ export type Database = {
       };
       event_campaign_refs: {
         Args: { p_ids: string[] };
-        Returns: { id: string; skp_number: string | null; name: string; status: string }[];
+        Returns: { id: string; skp_number: string | null; name: string; status: string; distributor_id: string | null }[];
       };
       gimmick_campaign_refs: {
         Args: { p_ids: string[] };

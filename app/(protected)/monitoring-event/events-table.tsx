@@ -34,8 +34,9 @@ export type EventListRow = Pick<
 > & {
   region_name: string | null;
   brand_names: string[];
-  planned_budget: number | null;
-  planned_sample_budget: number | null;
+  /** Tidak ada untuk distributor (showCosts false). */
+  planned_budget?: number | null;
+  planned_sample_budget?: number | null;
   /** Dihitung di server dengan tanggal WIB (eventNeedsUpdate). */
   needs_update: boolean;
 };
@@ -44,15 +45,20 @@ const detailHref = (id: string) => `/monitoring-event/${id}`;
 
 // ---- Main Table ----
 
-/** `formOptions` hanya dikirim untuk pemegang hak tulis (tombol Tambah Event). */
+/**
+ * `formOptions` hanya dikirim untuk pemegang hak tulis (tombol Tambah Event).
+ * Kolom budget hanya dirender jika `showCosts` (bukan distributor).
+ */
 export function EventsTable({
   events,
   formOptions,
+  showCosts,
   filtered,
   periodLabel,
 }: {
   events: EventListRow[];
   formOptions: EventFormOptions | null;
+  showCosts: boolean;
   filtered: boolean;
   periodLabel: string;
 }) {
@@ -90,8 +96,12 @@ export function EventsTable({
               <TableHead>PIC</TableHead>
               <TableHead className="text-right">Target Peserta</TableHead>
               <TableHead className="text-right">Target Sales</TableHead>
-              <TableHead className="text-right">Budget Event</TableHead>
-              <TableHead className="text-right">Budget Sample</TableHead>
+              {showCosts && (
+                <>
+                  <TableHead className="text-right">Budget Event</TableHead>
+                  <TableHead className="text-right">Budget Sample</TableHead>
+                </>
+              )}
               <TableHead>Status</TableHead>
             </TableRow>
           </TableHeader>
@@ -126,12 +136,16 @@ export function EventsTable({
                     {e.target_participants.toLocaleString("id-ID")}
                   </TableCell>
                   <TableCell className="text-right tabular-nums text-slate-300">{formatIDR(e.target_sales)}</TableCell>
-                  <TableCell className="text-right tabular-nums text-slate-300">
-                    {e.planned_budget === null ? "—" : formatIDR(e.planned_budget)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums text-slate-300">
-                    {e.planned_sample_budget === null ? "—" : formatIDR(e.planned_sample_budget)}
-                  </TableCell>
+                  {showCosts && (
+                    <>
+                      <TableCell className="text-right tabular-nums text-slate-300">
+                        {e.planned_budget == null ? "—" : formatIDR(e.planned_budget)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums text-slate-300">
+                        {e.planned_sample_budget == null ? "—" : formatIDR(e.planned_sample_budget)}
+                      </TableCell>
+                    </>
+                  )}
                   <TableCell>
                     <div className="flex flex-wrap gap-1">
                       <Badge variant={EVENT_STATUS_VARIANT[e.status]}>{EVENT_STATUS_LABELS[e.status]}</Badge>
@@ -142,7 +156,7 @@ export function EventsTable({
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={10} className="text-center py-12 text-slate-500">
+                <TableCell colSpan={showCosts ? 10 : 8} className="text-center py-12 text-slate-500">
                   {filtered ? (
                     <>Tidak ada event di {periodLabel} yang cocok dengan filter.</>
                   ) : (

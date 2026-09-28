@@ -27,7 +27,8 @@ export type EventSamplingItem = {
   product_name: string;
   quantity: number;
   unit: string;
-  value: number;
+  /** Tidak ada untuk distributor (nilai Rp internal saja). */
+  value?: number;
 };
 
 const formatQty = (n: number) => n.toLocaleString("id-ID", { maximumFractionDigits: 2 });
@@ -201,6 +202,7 @@ function DeleteSamplingButton({ eventId, sampling }: { eventId: string; sampling
 /**
  * Rincian sampling per produk + total nilai dibandingkan rencana budget
  * sample. Tombol tambah/edit/hapus hanya untuk pemegang can_manage_posm().
+ * `plannedSampleBudget` null (distributor): hanya produk, qty, dan satuan.
  */
 export function EventSamplingSection({
   eventId,
@@ -210,10 +212,14 @@ export function EventSamplingSection({
 }: {
   eventId: string;
   samplings: EventSamplingItem[];
-  plannedSampleBudget: number;
+  plannedSampleBudget: number | null;
   canManage: boolean;
 }) {
-  const summary = summarizeEventSampling(samplings, plannedSampleBudget);
+  const showValues = plannedSampleBudget !== null;
+  const summary = summarizeEventSampling(
+    samplings.map((s) => ({ value: s.value ?? 0 })),
+    plannedSampleBudget ?? 0
+  );
   const over = summary.remaining < 0;
 
   return (
@@ -241,7 +247,7 @@ export function EventSamplingSection({
                 <th className="py-2 pr-4 font-medium">Produk</th>
                 <th className="py-2 pr-4 text-right font-medium">Qty</th>
                 <th className="py-2 pr-4 font-medium">Satuan</th>
-                <th className="py-2 pr-4 text-right font-medium">Nilai</th>
+                {showValues && <th className="py-2 pr-4 text-right font-medium">Nilai</th>}
                 {canManage && <th className="w-20 py-2" />}
               </tr>
             </thead>
@@ -251,7 +257,7 @@ export function EventSamplingSection({
                   <td className="py-2 pr-4">{s.product_name}</td>
                   <td className="py-2 pr-4 text-right tabular-nums">{formatQty(s.quantity)}</td>
                   <td className="py-2 pr-4 text-slate-400">{s.unit}</td>
-                  <td className="py-2 pr-4 text-right tabular-nums">{formatIDR(s.value)}</td>
+                  {showValues && <td className="py-2 pr-4 text-right tabular-nums">{formatIDR(s.value ?? 0)}</td>}
                   {canManage && (
                     <td className="py-1 text-right">
                       <div className="flex justify-end gap-1">
@@ -277,29 +283,31 @@ export function EventSamplingSection({
         <p className="text-sm text-slate-500">Belum ada rincian sampling.</p>
       )}
 
-      <dl className="mt-4 grid gap-x-6 gap-y-3 border-t border-white/8 pt-4 sm:grid-cols-3">
-        <div className="space-y-1">
-          <dt className="text-xs font-medium uppercase tracking-wider text-slate-500">Total Nilai Sampling</dt>
-          <dd className="text-sm tabular-nums text-slate-200">{formatIDR(summary.total)}</dd>
-        </div>
-        <div className="space-y-1">
-          <dt className="text-xs font-medium uppercase tracking-wider text-slate-500">Rencana Budget Sample</dt>
-          <dd className="text-sm tabular-nums text-slate-200">{formatIDR(summary.planned)}</dd>
-        </div>
-        <div className="space-y-1">
-          <dt className="text-xs font-medium uppercase tracking-wider text-slate-500">
-            {over ? "Melebihi Rencana" : "Sisa Rencana"}
-          </dt>
-          <dd className={cn("text-sm tabular-nums", over ? "text-rose-400" : "text-emerald-300")}>
-            {formatIDR(Math.abs(summary.remaining))}
-            {summary.percentOfPlan !== null && (
-              <span className="ml-1.5 text-xs text-slate-500">
-                ({summary.percentOfPlan.toLocaleString("id-ID", { maximumFractionDigits: 1 })}% terpakai)
-              </span>
-            )}
-          </dd>
-        </div>
-      </dl>
+      {showValues && (
+        <dl className="mt-4 grid gap-x-6 gap-y-3 border-t border-white/8 pt-4 sm:grid-cols-3">
+          <div className="space-y-1">
+            <dt className="text-xs font-medium uppercase tracking-wider text-slate-500">Total Nilai Sampling</dt>
+            <dd className="text-sm tabular-nums text-slate-200">{formatIDR(summary.total)}</dd>
+          </div>
+          <div className="space-y-1">
+            <dt className="text-xs font-medium uppercase tracking-wider text-slate-500">Rencana Budget Sample</dt>
+            <dd className="text-sm tabular-nums text-slate-200">{formatIDR(summary.planned)}</dd>
+          </div>
+          <div className="space-y-1">
+            <dt className="text-xs font-medium uppercase tracking-wider text-slate-500">
+              {over ? "Melebihi Rencana" : "Sisa Rencana"}
+            </dt>
+            <dd className={cn("text-sm tabular-nums", over ? "text-rose-400" : "text-emerald-300")}>
+              {formatIDR(Math.abs(summary.remaining))}
+              {summary.percentOfPlan !== null && (
+                <span className="ml-1.5 text-xs text-slate-500">
+                  ({summary.percentOfPlan.toLocaleString("id-ID", { maximumFractionDigits: 1 })}% terpakai)
+                </span>
+              )}
+            </dd>
+          </div>
+        </dl>
+      )}
     </section>
   );
 }
