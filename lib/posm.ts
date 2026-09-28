@@ -584,8 +584,9 @@ export const POSM_AUDIT_ACTION_LABELS: Record<PosmAuditAction, string> = {
 
 export const POSM_AUDIT_PAGE_SIZE = 50;
 
-export type PosmAuditFilters = {
-  table?: PosmAuditTable;
+/** Filter audit; `T` = tabel yang boleh dipilih (POSM atau modul lain, mis. event). */
+export type AuditFilters<T extends string> = {
+  table?: T;
   action?: PosmAuditAction;
   actor?: string;
   /** Record beserta turunannya (mutasi item / penempatan asset). */
@@ -595,9 +596,19 @@ export type PosmAuditFilters = {
   page: number;
 };
 
+export type PosmAuditFilters = AuditFilters<PosmAuditTable>;
+
 const AUDIT_FILTER_KEYS = ["table", "action", "actor", "record", "from", "to"] as const;
 
 export function parseAuditFilters(params: Record<string, string | string[] | undefined>): PosmAuditFilters {
+  return parseAuditFiltersFor(params, POSM_AUDIT_TABLES);
+}
+
+/** Seperti parseAuditFilters, dengan daftar tabel milik modul pemanggil. */
+export function parseAuditFiltersFor<T extends string>(
+  params: Record<string, string | string[] | undefined>,
+  tables: readonly T[]
+): AuditFilters<T> {
   const one = (key: string) => {
     const v = params[key];
     return typeof v === "string" ? v.trim() : undefined;
@@ -610,8 +621,8 @@ export function parseAuditFilters(params: Record<string, string | string[] | und
   const table = one("table");
   const action = one("action");
   const page = Number(one("page"));
-  const filters: PosmAuditFilters = {
-    table: POSM_AUDIT_TABLES.includes(table as PosmAuditTable) ? (table as PosmAuditTable) : undefined,
+  const filters: AuditFilters<T> = {
+    table: tables.includes(table as T) ? (table as T) : undefined,
     action: POSM_AUDIT_ACTIONS.includes(action as PosmAuditAction) ? (action as PosmAuditAction) : undefined,
     actor: matching("actor", UUID),
     record: matching("record", UUID),
@@ -619,11 +630,11 @@ export function parseAuditFilters(params: Record<string, string | string[] | und
     to: matching("to", ISO_DATE),
     page: Number.isInteger(page) && page > 1 ? page : 1,
   };
-  return Object.fromEntries(Object.entries(filters).filter(([, v]) => v !== undefined)) as PosmAuditFilters;
+  return Object.fromEntries(Object.entries(filters).filter(([, v]) => v !== undefined)) as AuditFilters<T>;
 }
 
 /** Query string untuk filter audit (halaman 1 dan nilai kosong dihilangkan). */
-export function auditFiltersQuery(filters: Partial<PosmAuditFilters>): string {
+export function auditFiltersQuery(filters: Partial<AuditFilters<string>>): string {
   const params = new URLSearchParams();
   for (const key of AUDIT_FILTER_KEYS) {
     const v = filters[key];

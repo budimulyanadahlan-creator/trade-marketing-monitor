@@ -4,6 +4,8 @@
 
 import { z } from "zod";
 import { getFiscalPeriod, type FiscalPeriod } from "@/lib/monitoring-budget";
+import { formatAuditValue, parseAuditFiltersFor, type AuditFilters } from "@/lib/posm";
+import { formatIDR } from "@/lib/utils";
 import type { EventStatus, EventType } from "@/types/database";
 
 export const EVENT_STATUS_LABELS: Record<EventStatus, string> = {
@@ -95,4 +97,71 @@ export function parseEventPlan(values: EventPlanInput): { error: string } | { da
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Input tidak valid" };
   const { planned_budget, planned_sample_budget, ...event } = parsed.data;
   return { data: { event, costs: { planned_budget, planned_sample_budget } } };
+}
+
+// ============================================================
+// AUDIT LOG (posm_audit_log, trigger migrasi 055)
+// ============================================================
+
+// Baris event_costs dicatat dengan record_id = event_id, sehingga riwayat
+// satu event mencakup perubahan biayanya.
+export const EVENT_AUDIT_TABLES = ["events", "event_costs"] as const;
+export type EventAuditTable = (typeof EVENT_AUDIT_TABLES)[number];
+
+export const EVENT_AUDIT_TABLE_LABELS: Record<EventAuditTable, string> = {
+  events: "Event",
+  event_costs: "Biaya Event",
+};
+
+export type EventAuditFilters = AuditFilters<EventAuditTable>;
+
+export function parseEventAuditFilters(params: Record<string, string | string[] | undefined>): EventAuditFilters {
+  return parseAuditFiltersFor(params, EVENT_AUDIT_TABLES);
+}
+
+export const EVENT_AUDIT_FIELD_LABELS: Record<string, string> = {
+  name: "Nama Event",
+  event_type: "Jenis",
+  start_date: "Tanggal Mulai",
+  end_date: "Tanggal Selesai",
+  fiscal_year: "Tahun Fiskal",
+  quarter: "Kuartal",
+  region_id: "Region",
+  location: "Lokasi",
+  distributor_id: "Distributor",
+  pic_name: "PIC",
+  target_participants: "Target Peserta",
+  target_sales: "Target Sales",
+  status: "Status",
+  actual_participants: "Peserta Aktual",
+  actual_sales: "Hasil Sales",
+  cancel_reason: "Alasan Batal",
+  notes: "Keterangan",
+  deleted_at: "Dihapus",
+  event_id: "Event",
+  planned_budget: "Rencana Budget Event",
+  actual_budget: "Realisasi Budget Event",
+  planned_sample_budget: "Rencana Budget Sample",
+  vendor_id: "Vendor",
+};
+
+const EVENT_AUDIT_CURRENCY_FIELDS = new Set([
+  "target_sales",
+  "actual_sales",
+  "planned_budget",
+  "actual_budget",
+  "planned_sample_budget",
+]);
+
+/** Nilai audit event yang mudah dibaca; id referensi (region, vendor, event) lewat `names`. */
+export function formatEventAuditValue(field: string, value: unknown, names: Map<string, string>): string {
+  if (value === null || value === undefined || value === "") return "—";
+  if (EVENT_AUDIT_CURRENCY_FIELDS.has(field)) return formatIDR(Number(value));
+  if (field === "status" && typeof value === "string" && value in EVENT_STATUS_LABELS) {
+    return EVENT_STATUS_LABELS[value as EventStatus];
+  }
+  if ((field === "vendor_id" || field === "event_id") && typeof value === "string") {
+    return names.get(value) ?? value;
+  }
+  return formatAuditValue(field, value, names);
 }

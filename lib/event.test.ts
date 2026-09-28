@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { eventFiscalPeriod, parseEventPlan } from "./event";
+import { eventFiscalPeriod, formatEventAuditValue, parseEventAuditFilters, parseEventPlan } from "./event";
 
 describe("eventFiscalPeriod", () => {
   it("places an event spanning 28 Sep – 3 Oct in Q2 by its start date", () => {
@@ -90,5 +90,45 @@ describe("parseEventPlan", () => {
       planned_sample_budget: "0",
     });
     expect(result).toHaveProperty("data.costs", { planned_budget: 0, planned_sample_budget: 0 });
+  });
+});
+
+describe("parseEventAuditFilters", () => {
+  const uuid = "88888888-8888-4888-8888-888888888888";
+
+  it("accepts the event tables and a record id", () => {
+    expect(parseEventAuditFilters({ table: "event_costs", record: uuid, action: "soft_delete" })).toEqual({
+      table: "event_costs",
+      record: uuid,
+      action: "soft_delete",
+      page: 1,
+    });
+  });
+
+  it("ignores tables outside the event module", () => {
+    expect(parseEventAuditFilters({ table: "posm_items" })).toEqual({ page: 1 });
+  });
+});
+
+describe("formatEventAuditValue", () => {
+  const names = new Map([["r1", "Jawa Timur"]]);
+
+  it.each([
+    ["target_sales", 50000000],
+    ["planned_budget", "20000000"],
+    ["actual_budget", 1500000],
+    ["planned_sample_budget", 5000000],
+    ["actual_sales", 0],
+  ])("formats %s as rupiah", (field, value) => {
+    expect(formatEventAuditValue(field, value, names)).toMatch(/^Rp/);
+  });
+
+  it("shows the status label and region name", () => {
+    expect(formatEventAuditValue("status", "terlaksana", names)).toBe("Terlaksana");
+    expect(formatEventAuditValue("region_id", "r1", names)).toBe("Jawa Timur");
+  });
+
+  it("formats participant counts as plain numbers", () => {
+    expect(formatEventAuditValue("target_participants", 1000, names)).toBe("1.000");
   });
 });

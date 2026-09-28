@@ -1303,6 +1303,20 @@ export type Database = {
             isOneToOne: false;
             referencedRelation: "distributors";
             referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "events_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "users";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "events_updated_by_fkey";
+            columns: ["updated_by"];
+            isOneToOne: false;
+            referencedRelation: "users";
+            referencedColumns: ["id"];
           }
         ];
       };
@@ -1415,6 +1429,23 @@ export type Database = {
           p_planned_sample_budget: number;
         };
         Returns: string;
+      };
+      update_event: {
+        Args: {
+          p_id: string;
+          p_name: string;
+          p_event_type: EventType;
+          p_start_date: string;
+          p_end_date: string;
+          p_region_id: string;
+          p_location: string;
+          p_pic_name: string;
+          p_target_participants: number;
+          p_target_sales: number;
+          p_planned_budget: number;
+          p_planned_sample_budget: number;
+        };
+        Returns: undefined;
       };
       increment_skp_counter: {
         Args: { p_year: number; p_month: number };

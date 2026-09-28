@@ -1,3 +1,6 @@
+import Link from "next/link";
+import { History } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { getFiscalPeriod, resolveFiscalPeriod } from "@/lib/monitoring-budget";
 import { MonitoringPeriodSelector } from "../monitoring-budget/monitoring-period-selector";
 import { requirePosmViewer } from "../monitoring-posm/viewer";
@@ -17,7 +20,7 @@ export default async function MonitoringEventPage({
   searchParams: SearchParams;
 }) {
   // Distributor dialihkan sampai fase 7; hak tulis = can_manage_posm().
-  const { supabase, canManage } = await requirePosmViewer();
+  const { supabase, canManage, isAdmin } = await requirePosmViewer();
 
   const params = await searchParams;
   const currentFiscalYear = getFiscalPeriod(new Date()).fiscalYear;
@@ -57,11 +60,21 @@ export default async function MonitoringEventPage({
             {!canManage && <span className="text-slate-600"> • mode baca saja</span>}
           </p>
         </div>
-        <MonitoringPeriodSelector
-          fiscalYear={fiscalYear}
-          quarter={quarter}
-          currentFiscalYear={currentFiscalYear}
-        />
+        <div className="flex flex-wrap items-end gap-3">
+          {isAdmin && (
+            <Button asChild variant="outline" size="sm">
+              <Link href="/monitoring-event/audit">
+                <History className="h-4 w-4" />
+                Audit Log
+              </Link>
+            </Button>
+          )}
+          <MonitoringPeriodSelector
+            fiscalYear={fiscalYear}
+            quarter={quarter}
+            currentFiscalYear={currentFiscalYear}
+          />
+        </div>
       </div>
 
       <EventsTable
