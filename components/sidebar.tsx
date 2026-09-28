@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   BarChart3,
+  CalendarDays,
   LayoutDashboard,
   FileText,
   CheckSquare,
@@ -59,6 +60,13 @@ const navItems: NavItem[] = [
     href: "/monitoring-posm",
     label: "Monitoring POSM",
     icon: <Package className="h-4 w-4" />,
+    roles: ["user", "manager", "finance", "admin", "superadmin"],
+  },
+  {
+    href: "/monitoring-event",
+    label: "Monitoring Event",
+    icon: <CalendarDays className="h-4 w-4" />,
+    // Distributor menyusul di fase 7 (plans/plan-monitoring-event.md).
     roles: ["user", "manager", "finance", "admin", "superadmin"],
   },
   {

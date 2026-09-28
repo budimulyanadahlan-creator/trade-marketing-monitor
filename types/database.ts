@@ -467,6 +467,56 @@ export type AssetCurrentStatusRow = {
   placement_count_all: number;
 };
 
+export type EventType =
+  | "Senam/Olahraga"
+  | "Perayaan"
+  | "Bazaar"
+  | "Lomba/Run"
+  | "Aktivitas Outlet MT"
+  | "School to School"
+  | "Launching Produk Baru"
+  | "Local Region Event"
+  | "Lainnya";
+export type EventStatus = "rencana" | "terlaksana" | "batal";
+
+export type EventRow = {
+  id: string;
+  name: string;
+  event_type: EventType;
+  start_date: string;
+  end_date: string;
+  /** Diturunkan database dari start_date (kolom generated). */
+  fiscal_year: number;
+  quarter: number;
+  region_id: string;
+  location: string;
+  distributor_id: string | null;
+  pic_name: string;
+  target_participants: number;
+  target_sales: number;
+  status: EventStatus;
+  actual_participants: number | null;
+  actual_sales: number | null;
+  cancel_reason: string | null;
+  notes: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+};
+
+/** Biaya event (1:1 dengan events) — tidak pernah boleh dibaca distributor. */
+export type EventCostRow = {
+  event_id: string;
+  planned_budget: number;
+  actual_budget: number | null;
+  planned_sample_budget: number;
+  vendor_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type PosmAuditAction = "insert" | "update" | "soft_delete";
 
 export type PosmAuditLogRow = {
@@ -1214,6 +1264,75 @@ export type Database = {
           }
         ];
       };
+      events: {
+        Row: EventRow;
+        Insert: {
+          id?: string;
+          name: string;
+          event_type: EventType;
+          start_date: string;
+          end_date: string;
+          region_id: string;
+          location: string;
+          distributor_id?: string | null;
+          pic_name: string;
+          target_participants: number;
+          target_sales: number;
+          status?: EventStatus;
+          actual_participants?: number | null;
+          actual_sales?: number | null;
+          cancel_reason?: string | null;
+          notes?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: Partial<Omit<EventRow, "id" | "fiscal_year" | "quarter" | "created_at" | "created_by">>;
+        Relationships: [
+          {
+            foreignKeyName: "events_region_id_fkey";
+            columns: ["region_id"];
+            isOneToOne: false;
+            referencedRelation: "regions";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "events_distributor_id_fkey";
+            columns: ["distributor_id"];
+            isOneToOne: false;
+            referencedRelation: "distributors";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      event_costs: {
+        Row: EventCostRow;
+        Insert: {
+          event_id: string;
+          planned_budget: number;
+          actual_budget?: number | null;
+          planned_sample_budget: number;
+          vendor_id?: string | null;
+        };
+        Update: Partial<Omit<EventCostRow, "event_id" | "created_at">>;
+        Relationships: [
+          {
+            foreignKeyName: "event_costs_event_id_fkey";
+            columns: ["event_id"];
+            isOneToOne: true;
+            referencedRelation: "events";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "event_costs_vendor_id_fkey";
+            columns: ["vendor_id"];
+            isOneToOne: false;
+            referencedRelation: "vendors";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
       posm_audit_log: {
         Row: PosmAuditLogRow;
         Insert: never;
@@ -1278,6 +1397,22 @@ export type Database = {
           p_pic_name: string | null;
           p_condition: AssetCondition;
           p_notes: string | null;
+        };
+        Returns: string;
+      };
+      create_event: {
+        Args: {
+          p_name: string;
+          p_event_type: EventType;
+          p_start_date: string;
+          p_end_date: string;
+          p_region_id: string;
+          p_location: string;
+          p_pic_name: string;
+          p_target_participants: number;
+          p_target_sales: number;
+          p_planned_budget: number;
+          p_planned_sample_budget: number;
         };
         Returns: string;
       };
