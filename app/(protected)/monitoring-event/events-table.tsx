@@ -16,7 +16,7 @@ import {
 import { EVENT_STATUS_LABELS } from "@/lib/event";
 import { formatIDR } from "@/lib/utils";
 import type { EventRow } from "@/types/database";
-import { EVENT_STATUS_VARIANT, formatEventDateRange } from "./event-display";
+import { EVENT_STATUS_VARIANT, formatEventDateRange, NeedsUpdateBadge } from "./event-display";
 import { EventFormDialog, type EventFormOptions } from "./event-form-dialog";
 
 export type EventListRow = Pick<
@@ -36,6 +36,8 @@ export type EventListRow = Pick<
   brand_names: string[];
   planned_budget: number | null;
   planned_sample_budget: number | null;
+  /** Dihitung di server dengan tanggal WIB (eventNeedsUpdate). */
+  needs_update: boolean;
 };
 
 const detailHref = (id: string) => `/monitoring-event/${id}`;
@@ -131,7 +133,10 @@ export function EventsTable({
                     {e.planned_sample_budget === null ? "—" : formatIDR(e.planned_sample_budget)}
                   </TableCell>
                   <TableCell>
-                    <Badge variant={EVENT_STATUS_VARIANT[e.status]}>{EVENT_STATUS_LABELS[e.status]}</Badge>
+                    <div className="flex flex-wrap gap-1">
+                      <Badge variant={EVENT_STATUS_VARIANT[e.status]}>{EVENT_STATUS_LABELS[e.status]}</Badge>
+                      {e.needs_update && <NeedsUpdateBadge />}
+                    </div>
                   </TableCell>
                 </TableRow>
               ))

@@ -5,7 +5,13 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
-import { createEventAction, deleteEventAction, searchEventCampaignsAction, updateEventAction } from "./event";
+import {
+  createEventAction,
+  deleteEventAction,
+  searchEventCampaignsAction,
+  updateEventAction,
+  updateEventStatusAction,
+} from "./event";
 import { createClient } from "@/lib/supabase/server";
 
 const NEW_ID = "77777777-7777-4777-8777-777777777777";
@@ -17,11 +23,13 @@ function setupMocks({
   department = "Trade Marketing",
   rpcError = null,
   deletedRows = [{ id: EVENT_ID }],
+  existingEvent = { start_date: "2026-09-01" },
 }: {
   role?: string;
   department?: string | null;
   rpcError?: { message: string; code?: string } | null;
   deletedRows?: { id: string }[];
+  existingEvent?: { start_date: string } | null;
 } = {}) {
   const rpc = vi.fn().mockResolvedValue({ data: rpcError ? null : NEW_ID, error: rpcError });
   const updateSelect = vi.fn().mockResolvedValue({ data: deletedRows, error: null });
@@ -40,7 +48,14 @@ function setupMocks({
             data: { role, is_active: true, department: department ? { name: department } : null },
           }),
         };
-      if (table === "events") return { update };
+      if (table === "events")
+        return {
+          update,
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          is: vi.fn().mockReturnThis(),
+          maybeSingle: vi.fn().mockResolvedValue({ data: existingEvent, error: null }),
+        };
       return {};
     }),
   };
@@ -261,6 +276,96 @@ describe("searchEventCampaignsAction", () => {
   it("rejects a user outside Marketing/TM", async () => {
     const { rpc } = setupMocks({ role: "user", department: "Sales" });
     expect(await searchEventCampaignsAction("SKP")).toEqual({ campaigns: [], error: "Anda tidak memiliki akses." });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+});
+
+describe("updateEventStatusAction", () => {
+  it("marks a started event Terlaksana with its realization in one RPC", async () => {
+    const { rpc } = setupMocks();
+
+    const result = await updateEventStatusAction(
+      {},
+      formDataOf({
+        id: EVENT_ID,
+        status: "terlaksana",
+        actual_participants: "850",
+        actual_sales: "42000000",
+        actual_budget: "19500000",
+      })
+    );
+
+    expect(result).toEqual({ success: true, id: EVENT_ID });
+    expect(rpc).toHaveBeenCalledWith("set_event_status", {
+      p_id: EVENT_ID,
+      p_status: "terlaksana",
+      p_actual_participants: 850,
+      p_actual_sales: 42000000,
+      p_actual_budget: 19500000,
+      p_cancel_reason: null,
+    });
+  });
+
+  it("rejects Terlaksana for an event whose start date is still in the future", async () => {
+    const { rpc } = setupMocks({ existingEvent: { start_date: "2999-01-01" } });
+    expect(
+      await updateEventStatusAction(
+        {},
+        formDataOf({ id: EVENT_ID, status: "terlaksana", actual_participants: "1", actual_sales: "1", actual_budget: "1" })
+      )
+    ).toEqual({ error: "Event belum dimulai, belum bisa ditandai Terlaksana" });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("cancels a future event with a reason and a forfeited budget", async () => {
+    const { rpc } = setupMocks({ existingEvent: { start_date: "2999-01-01" } });
+    expect(
+      await updateEventStatusAction(
+        {},
+        formDataOf({ id: EVENT_ID, status: "batal", cancel_reason: "Venue batal", actual_budget: "2500000" })
+      )
+    ).toEqual({ success: true, id: EVENT_ID });
+    expect(rpc).toHaveBeenCalledWith("set_event_status", {
+      p_id: EVENT_ID,
+      p_status: "batal",
+      p_actual_participants: null,
+      p_actual_sales: null,
+      p_actual_budget: 2500000,
+      p_cancel_reason: "Venue batal",
+    });
+  });
+
+  it("returns the validation message for Batal without a reason", async () => {
+    const { rpc } = setupMocks();
+    expect(await updateEventStatusAction({}, formDataOf({ id: EVENT_ID, status: "batal" }))).toEqual({
+      error: "Alasan batal harus diisi",
+    });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("reports a deleted or unknown event", async () => {
+    const { rpc } = setupMocks({ existingEvent: null });
+    expect(await updateEventStatusAction({}, formDataOf({ id: EVENT_ID, status: "rencana" }))).toEqual({
+      error: "Event tidak ditemukan atau sudah dihapus.",
+    });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("maps a database rejection of an unstarted event to the same message", async () => {
+    setupMocks({ rpcError: { message: "EVENT_BELUM_DIMULAI: event belum dimulai" } });
+    expect(
+      await updateEventStatusAction(
+        {},
+        formDataOf({ id: EVENT_ID, status: "terlaksana", actual_participants: "1", actual_sales: "1", actual_budget: "1" })
+      )
+    ).toEqual({ error: "Event belum dimulai, belum bisa ditandai Terlaksana" });
+  });
+
+  it("rejects a user outside Marketing/TM without calling the database", async () => {
+    const { rpc } = setupMocks({ role: "manager", department: "Sales" });
+    expect(await updateEventStatusAction({}, formDataOf({ id: EVENT_ID, status: "rencana" }))).toEqual({
+      error: "Anda tidak memiliki akses.",
+    });
     expect(rpc).not.toHaveBeenCalled();
   });
 });

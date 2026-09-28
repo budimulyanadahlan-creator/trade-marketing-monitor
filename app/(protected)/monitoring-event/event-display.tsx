@@ -1,3 +1,4 @@
+import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
 import type { EventStatus } from "@/types/database";
 
@@ -10,4 +11,13 @@ export const EVENT_STATUS_VARIANT: Record<EventStatus, "secondary" | "default" |
 
 export function formatEventDateRange(start: string, end: string) {
   return start === end ? formatDate(start) : `${formatDate(start)} – ${formatDate(end)}`;
+}
+
+/** Event Rencana yang tanggal selesainya sudah lewat (eventNeedsUpdate). */
+export function NeedsUpdateBadge() {
+  return (
+    <Badge variant="warning" title="Tanggal selesai sudah lewat, isi realisasi atau ubah status">
+      Perlu update
+    </Badge>
+  );
 }

@@ -1539,6 +1539,17 @@ export type Database = {
         };
         Returns: undefined;
       };
+      set_event_status: {
+        Args: {
+          p_id: string;
+          p_status: EventStatus;
+          p_actual_participants: number | null;
+          p_actual_sales: number | null;
+          p_actual_budget: number | null;
+          p_cancel_reason: string | null;
+        };
+        Returns: undefined;
+      };
       increment_skp_counter: {
         Args: { p_year: number; p_month: number };
         Returns: number;

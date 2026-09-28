@@ -2,7 +2,15 @@
 
 import { revalidatePath } from "next/cache";
 import { requirePosmWriter } from "@/lib/posm-writer";
-import { parseEventPlan, type EventPlan, type EventPlanInput } from "@/lib/event";
+import {
+  EVENT_NOT_STARTED,
+  parseEventPlan,
+  parseEventStatusUpdate,
+  todayInJakarta,
+  type EventPlan,
+  type EventPlanInput,
+  type EventStatusUpdateInput,
+} from "@/lib/event";
 
 const PAGE_PATH = "/monitoring-event";
 const FORBIDDEN = "Anda tidak memiliki akses.";
@@ -62,10 +70,15 @@ function planRpcArgs({ event, costs, links }: EventPlan) {
   };
 }
 
-// Pesan ramah untuk constraint migrasi 054 yang juga dicek di form, dan
+// Pesan ramah untuk constraint migrasi 054/057 yang juga dicek di form, dan
 // penolakan update_event (migrasi 055).
 function eventErrorMessage(error: { message: string }): string {
   if (error.message.includes("events_dates")) return "Tanggal selesai tidak boleh sebelum tanggal mulai";
+  if (error.message.includes("EVENT_BELUM_DIMULAI")) return EVENT_NOT_STARTED;
+  if (error.message.includes("EVENT_TANPA_REALISASI") || error.message.includes("events_terlaksana_realization")) {
+    return "Event Terlaksana wajib punya peserta aktual, hasil sales, dan realisasi budget";
+  }
+  if (error.message.includes("events_batal_reason")) return "Alasan batal harus diisi";
   if (error.message.includes("EVENT_TIDAK_DITEMUKAN")) return NOT_FOUND;
   if (error.message.includes("SKP_TIDAK_DITEMUKAN")) return "SKP yang dipilih tidak ditemukan.";
   return error.message;
@@ -114,6 +127,62 @@ export async function updateEventAction(
     if ("error" in parsed) return { error: parsed.error };
 
     const { error } = await supabase.rpc("update_event", { p_id: id, ...planRpcArgs(parsed.data) });
+    if (error) return { error: eventErrorMessage(error) };
+
+    revalidatePath(PAGE_PATH);
+    revalidatePath(`${PAGE_PATH}/${id}`);
+    return { success: true, id };
+  } catch {
+    return { error: FORBIDDEN };
+  }
+}
+
+const STATUS_FIELDS = [
+  "status",
+  "actual_participants",
+  "actual_sales",
+  "actual_budget",
+  "cancel_reason",
+] as const satisfies readonly (keyof EventStatusUpdateInput)[];
+
+// Ubah status + realisasi lewat set_event_status (migrasi 057), yang juga
+// menegakkan aturan per status. Tanggal mulai dibaca dari database agar
+// aturan "Terlaksana hanya setelah dimulai" tidak bergantung pada form.
+export async function updateEventStatusAction(
+  _prevState: UpdateEventState,
+  formData: FormData
+): Promise<UpdateEventState> {
+  try {
+    const { supabase } = await requirePosmWriter();
+
+    const id = formData.get("id");
+    if (typeof id !== "string" || !id) return { error: NOT_FOUND };
+
+    const { data: event } = await supabase
+      .from("events")
+      .select("start_date")
+      .eq("id", id)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (!event) return { error: NOT_FOUND };
+
+    const values: EventStatusUpdateInput = {};
+    for (const field of STATUS_FIELDS) {
+      const v = formData.get(field);
+      if (typeof v === "string") values[field] = v;
+    }
+    const parsed = parseEventStatusUpdate(values, { startDate: event.start_date, today: todayInJakarta() });
+    if ("error" in parsed) return { error: parsed.error };
+
+    const { status, actual_participants, actual_sales, actual_budget, cancel_reason } = parsed.data;
+    const { error } = await supabase.rpc("set_event_status", {
+      p_id: id,
+      p_status: status,
+      p_actual_participants: actual_participants,
+      p_actual_sales: actual_sales,
+      p_actual_budget: actual_budget,
+      p_cancel_reason: cancel_reason,
+    });
     if (error) return { error: eventErrorMessage(error) };
 
     revalidatePath(PAGE_PATH);

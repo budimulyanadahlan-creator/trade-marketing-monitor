@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { History } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { parseEventListFilters } from "@/lib/event";
+import { eventNeedsUpdate, parseEventListFilters, todayInJakarta } from "@/lib/event";
 import { getFiscalPeriod, resolveFiscalPeriod } from "@/lib/monitoring-budget";
 import { MonitoringPeriodSelector } from "../monitoring-budget/monitoring-period-selector";
 import { requirePosmViewer } from "../monitoring-posm/viewer";
@@ -64,6 +64,7 @@ export default async function MonitoringEventPage({
     canManage ? loadEventFormOptions(supabase) : null,
   ]);
 
+  const today = todayInJakarta();
   const rows: EventListRow[] = (events ?? []).map(({ region, costs, brands, ...e }) => {
     const c = costs as CostEmbed;
     return {
@@ -75,6 +76,7 @@ export default async function MonitoringEventPage({
         .sort(),
       planned_budget: c?.planned_budget ?? null,
       planned_sample_budget: c?.planned_sample_budget ?? null,
+      needs_update: eventNeedsUpdate(e, today),
     };
   });
 

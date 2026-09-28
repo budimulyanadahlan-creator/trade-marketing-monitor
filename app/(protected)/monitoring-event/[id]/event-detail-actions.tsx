@@ -15,6 +15,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { EventFormDialog, type EventFormOptions, type EventFormValues } from "../event-form-dialog";
+import { EventStatusDialog, type EventStatusValues } from "./event-status-dialog";
 
 function DeleteEventButton({ id, name }: { id: string; name: string }) {
   const router = useRouter();
@@ -63,10 +64,21 @@ function DeleteEventButton({ id, name }: { id: string; name: string }) {
   );
 }
 
-/** Tombol Edit & Hapus, hanya dirender untuk pemegang can_manage_posm(). */
-export function EventDetailActions({ event, options }: { event: EventFormValues; options: EventFormOptions }) {
+/** Tombol Ubah Status, Edit & Hapus, hanya dirender untuk pemegang can_manage_posm(). */
+export function EventDetailActions({
+  event,
+  status,
+  options,
+  today,
+}: {
+  event: EventFormValues;
+  status: EventStatusValues;
+  options: EventFormOptions;
+  today: string;
+}) {
   return (
-    <div className="flex gap-2">
+    <div className="flex flex-wrap gap-2">
+      <EventStatusDialog event={status} today={today} />
       <EventFormDialog
         event={event}
         options={options}

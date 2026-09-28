@@ -141,6 +141,101 @@ export function parseEventPlan(values: EventPlanInput): { error: string } | { da
 }
 
 // ============================================================
+// STATUS & REALISASI
+// ============================================================
+
+/** Angka rupiah opsional ≥ 0; string kosong/tidak ada = null. */
+const optionalAmount = (label: string) =>
+  z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => v || null)
+    .pipe(
+      z.coerce
+        .number<string>({ error: `${label} harus berupa angka` })
+        .min(0, `${label} tidak boleh negatif`)
+        .nullable()
+    );
+
+// Aturan yang sama ditegakkan di database (migrasi 057). Status Rencana
+// tidak mengubah field realisasi: nilainya tetap tersimpan untuk koreksi,
+// tetapi tidak dihitung sebagai aktual.
+const eventStatusSchema = z.discriminatedUnion(
+  "status",
+  [
+    z.object({ status: z.literal("rencana") }),
+    z.object({
+      status: z.literal("terlaksana"),
+      actual_participants: requiredAmount("Peserta aktual", { integer: true }),
+      actual_sales: requiredAmount("Hasil sales"),
+      actual_budget: requiredAmount("Realisasi budget event"),
+    }),
+    z.object({
+      status: z.literal("batal"),
+      cancel_reason: requiredText("Alasan batal harus diisi"),
+      // Boleh diisi untuk biaya hangus (misalnya DP vendor).
+      actual_budget: optionalAmount("Realisasi budget event"),
+    }),
+  ],
+  { error: "Pilih status" }
+);
+
+export type EventStatusUpdateInput = Partial<
+  Record<"status" | "actual_participants" | "actual_sales" | "actual_budget" | "cancel_reason", string>
+>;
+
+/** Nilai yang dikirim ke set_event_status; null = tidak diubah/dikosongkan sesuai status. */
+export type EventStatusUpdate = {
+  status: EventStatus;
+  actual_participants: number | null;
+  actual_sales: number | null;
+  actual_budget: number | null;
+  cancel_reason: string | null;
+};
+
+/**
+ * Validasi perubahan status. Terlaksana wajib peserta aktual, hasil sales,
+ * dan realisasi budget, dan hanya jika tanggal mulai ≤ hari ini (`YYYY-MM-DD`).
+ * Batal wajib alasan; realisasi budget opsional.
+ */
+export function parseEventStatusUpdate(
+  values: EventStatusUpdateInput,
+  { startDate, today }: { startDate: string; today: string }
+): { error: string } | { data: EventStatusUpdate } {
+  const parsed = eventStatusSchema.safeParse(values);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Input tidak valid" };
+  const v = parsed.data;
+
+  if (v.status === "terlaksana" && startDate > today) {
+    return { error: EVENT_NOT_STARTED };
+  }
+
+  return {
+    data: {
+      status: v.status,
+      actual_participants: v.status === "terlaksana" ? v.actual_participants : null,
+      actual_sales: v.status === "terlaksana" ? v.actual_sales : null,
+      actual_budget: v.status === "rencana" ? null : v.actual_budget,
+      cancel_reason: v.status === "batal" ? v.cancel_reason : null,
+    },
+  };
+}
+
+export const EVENT_NOT_STARTED = "Event belum dimulai, belum bisa ditandai Terlaksana";
+
+/** Tanggal hari ini (`YYYY-MM-DD`) di zona Asia/Jakarta, sama dengan database. */
+export function todayInJakarta(now: Date = new Date()): string {
+  // en-CA memformat tanggal sebagai YYYY-MM-DD.
+  return now.toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" });
+}
+
+/** Badge "Perlu update": masih Rencana padahal tanggal selesai sudah lewat. */
+export function eventNeedsUpdate(event: { status: EventStatus; end_date: string }, today: string): boolean {
+  return event.status === "rencana" && event.end_date < today;
+}
+
+// ============================================================
 // FILTER TABEL
 // ============================================================
 

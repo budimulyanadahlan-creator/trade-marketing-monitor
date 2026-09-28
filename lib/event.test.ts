@@ -1,11 +1,14 @@
 import { describe, it, expect } from "vitest";
 import {
   eventFiscalPeriod,
+  eventNeedsUpdate,
   formatEventAuditValue,
   parseEventAuditFilters,
   parseEventListFilters,
   parseEventPlan,
+  parseEventStatusUpdate,
   suggestFromCampaign,
+  todayInJakarta,
 } from "./event";
 
 describe("eventFiscalPeriod", () => {
@@ -235,5 +238,109 @@ describe("event link audit", () => {
 
   it("shows the linked brand name", () => {
     expect(formatEventAuditValue("brand_id", "b1", new Map([["b1", "Want Want"]]))).toBe("Want Want");
+  });
+});
+
+describe("parseEventStatusUpdate", () => {
+  const today = "2026-09-28";
+
+  it("accepts Terlaksana with all realization fields for an event that has started", () => {
+    expect(
+      parseEventStatusUpdate(
+        { status: "terlaksana", actual_participants: "850", actual_sales: "42000000", actual_budget: "19500000" },
+        { startDate: "2026-09-28", today }
+      )
+    ).toEqual({
+      data: {
+        status: "terlaksana",
+        actual_participants: 850,
+        actual_sales: 42000000,
+        actual_budget: 19500000,
+        cancel_reason: null,
+      },
+    });
+  });
+
+  it.each([
+    [{ actual_sales: "1", actual_budget: "1" }, "Peserta aktual harus diisi"],
+    [{ actual_participants: "1", actual_budget: "1" }, "Hasil sales harus diisi"],
+    [{ actual_participants: "1", actual_sales: "1", actual_budget: "" }, "Realisasi budget event harus diisi"],
+    [{ actual_participants: "1.5", actual_sales: "1", actual_budget: "1" }, "Peserta aktual harus bilangan bulat"],
+    [{ actual_participants: "1", actual_sales: "-1", actual_budget: "1" }, "Hasil sales tidak boleh negatif"],
+  ])("rejects Terlaksana with missing or invalid realization %o", (fields, error) => {
+    expect(parseEventStatusUpdate({ status: "terlaksana", ...fields }, { startDate: "2026-09-01", today })).toEqual({
+      error,
+    });
+  });
+
+  it("rejects Terlaksana for an event that has not started yet", () => {
+    expect(
+      parseEventStatusUpdate(
+        { status: "terlaksana", actual_participants: "1", actual_sales: "1", actual_budget: "1" },
+        { startDate: "2026-09-29", today }
+      )
+    ).toEqual({ error: "Event belum dimulai, belum bisa ditandai Terlaksana" });
+  });
+
+  it("rejects Batal without a reason", () => {
+    expect(parseEventStatusUpdate({ status: "batal", cancel_reason: "  " }, { startDate: "2026-10-10", today })).toEqual({
+      error: "Alasan batal harus diisi",
+    });
+  });
+
+  it("accepts Batal with a forfeited budget, even before the event starts", () => {
+    expect(
+      parseEventStatusUpdate(
+        { status: "batal", cancel_reason: "Venue batal", actual_budget: "2500000", actual_sales: "99" },
+        { startDate: "2026-10-10", today }
+      )
+    ).toEqual({
+      data: {
+        status: "batal",
+        actual_participants: null,
+        actual_sales: null,
+        actual_budget: 2500000,
+        cancel_reason: "Venue batal",
+      },
+    });
+  });
+
+  it("accepts Batal without a realized budget", () => {
+    expect(
+      parseEventStatusUpdate({ status: "batal", cancel_reason: "Hujan", actual_budget: "" }, { startDate: "2026-10-10", today })
+    ).toMatchObject({ data: { status: "batal", actual_budget: null } });
+  });
+
+  it("accepts a correction back to Rencana without touching realization", () => {
+    expect(parseEventStatusUpdate({ status: "rencana", actual_budget: "5" }, { startDate: "2026-09-01", today })).toEqual({
+      data: { status: "rencana", actual_participants: null, actual_sales: null, actual_budget: null, cancel_reason: null },
+    });
+  });
+
+  it("rejects an unknown status", () => {
+    expect(parseEventStatusUpdate({ status: "selesai" }, { startDate: "2026-09-01", today })).toEqual({
+      error: "Pilih status",
+    });
+  });
+});
+
+describe("eventNeedsUpdate", () => {
+  const today = "2026-09-28";
+
+  it.each([
+    ["rencana", "2026-09-27", true],
+    ["rencana", "2026-09-28", false],
+    ["rencana", "2026-10-01", false],
+    ["terlaksana", "2026-09-01", false],
+    ["batal", "2026-09-01", false],
+  ] as const)("status %s ending %s → %s", (status, end_date, expected) => {
+    expect(eventNeedsUpdate({ status, end_date }, today)).toBe(expected);
+  });
+});
+
+describe("todayInJakarta", () => {
+  it("uses the Jakarta date, not UTC", () => {
+    // 28 Sep 18:30 UTC = 29 Sep 01:30 WIB.
+    expect(todayInJakarta(new Date("2026-09-28T18:30:00Z"))).toBe("2026-09-29");
   });
 });

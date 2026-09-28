@@ -4,12 +4,12 @@ import type { ReactNode } from "react";
 import { ArrowLeft, History } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { getStatusConfig } from "@/lib/campaign-status";
-import { EVENT_STATUS_LABELS, eventFiscalPeriod } from "@/lib/event";
+import { EVENT_STATUS_LABELS, eventFiscalPeriod, eventNeedsUpdate, todayInJakarta } from "@/lib/event";
 import { auditFiltersQuery, formatAuditTimestamp } from "@/lib/posm";
 import { cn, formatIDR } from "@/lib/utils";
 import type { CampaignStatus } from "@/types/database";
 import { requirePosmViewer } from "../../monitoring-posm/viewer";
-import { EVENT_STATUS_VARIANT, formatEventDateRange } from "../event-display";
+import { EVENT_STATUS_VARIANT, formatEventDateRange, NeedsUpdateBadge } from "../event-display";
 import { loadEventFormOptions } from "../form-options";
 import { EventDetailActions } from "./event-detail-actions";
 
@@ -19,6 +19,7 @@ type Named = { name: string } | null;
 type CostEmbed = {
   planned_budget: number;
   planned_sample_budget: number;
+  actual_budget: number | null;
   vendor_id: string | null;
   vendor: Named;
 } | null;
@@ -50,7 +51,7 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
   const { data: event } = await supabase
     .from("events")
     .select(
-      "id, name, event_type, start_date, end_date, region_id, distributor_id, location, pic_name, target_participants, target_sales, status, notes, created_at, updated_at, region:regions(name), distributor:distributors(name), costs:event_costs(planned_budget, planned_sample_budget, vendor_id, vendor:vendors(name)), brands:event_brands(brand_id, deleted_at, brand:brands(name)), campaigns:event_campaigns(campaign_id, skp_number, campaign_name, deleted_at, created_at), creator:users!events_created_by_fkey(full_name), updater:users!events_updated_by_fkey(full_name)"
+      "id, name, event_type, start_date, end_date, region_id, distributor_id, location, pic_name, target_participants, target_sales, status, actual_participants, actual_sales, cancel_reason, notes, created_at, updated_at, region:regions(name), distributor:distributors(name), costs:event_costs(planned_budget, planned_sample_budget, actual_budget, vendor_id, vendor:vendors(name)), brands:event_brands(brand_id, deleted_at, brand:brands(name)), campaigns:event_campaigns(campaign_id, skp_number, campaign_name, deleted_at, created_at), creator:users!events_created_by_fkey(full_name), updater:users!events_updated_by_fkey(full_name)"
     )
     .eq("id", id)
     .is("deleted_at", null)
@@ -67,6 +68,9 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
   const creatorName = (creator as { full_name: string } | null)?.full_name;
   const updaterName = (updater as { full_name: string } | null)?.full_name;
   const { fiscalYear, quarter } = eventFiscalPeriod(e.start_date);
+  const today = todayInJakarta();
+  const actualBudget = cost?.actual_budget == null ? null : Number(cost.actual_budget);
+  const hasRealization = e.actual_participants !== null || e.actual_sales !== null || actualBudget !== null;
 
   const linkedBrands = (brands as BrandEmbed)
     .filter((b) => !b.deleted_at)
@@ -116,6 +120,7 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant={EVENT_STATUS_VARIANT[e.status]}>{EVENT_STATUS_LABELS[e.status]}</Badge>
+            {eventNeedsUpdate(e, today) && <NeedsUpdateBadge />}
             <Badge variant="outline">{e.event_type}</Badge>
             <span className="text-xs text-slate-500">
               FY {fiscalYear} Q{quarter}
@@ -140,6 +145,16 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
         {formOptions && cost && (
           <EventDetailActions
             options={formOptions}
+            today={today}
+            status={{
+              id: e.id,
+              status: e.status,
+              start_date: e.start_date,
+              actual_participants: e.actual_participants,
+              actual_sales: e.actual_sales === null ? null : Number(e.actual_sales),
+              actual_budget: actualBudget,
+              cancel_reason: e.cancel_reason,
+            }}
             event={{
               id: e.id,
               name: e.name,
@@ -166,27 +181,63 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
       </div>
 
       <section className="rounded-xl border border-white/8 bg-white/2 p-5">
-        <h2 className="mb-4 text-sm font-semibold text-slate-300">Rencana</h2>
-        <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-4">
+        <h2 className="mb-4 text-sm font-semibold text-slate-300">Detail</h2>
+        <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-5">
           <Field label="Jenis">{e.event_type}</Field>
           <Field label="Tanggal">{formatEventDateRange(e.start_date, e.end_date)}</Field>
           <Field label="Region">{regionName ?? "—"}</Field>
           <Field label="Lokasi / Outlet">{e.location}</Field>
           <Field label="PIC">{e.pic_name}</Field>
-          <Field label="Target Peserta">
-            <span className="tabular-nums">{e.target_participants.toLocaleString("id-ID")}</span>
-          </Field>
-          <Field label="Target Sales">
-            <span className="tabular-nums">{formatIDR(Number(e.target_sales))}</span>
-          </Field>
-          <Field label="Rencana Budget Event">
-            <span className="tabular-nums">{cost ? formatIDR(Number(cost.planned_budget)) : "—"}</span>
-          </Field>
-          <Field label="Rencana Budget Sample">
-            <span className="tabular-nums">{cost ? formatIDR(Number(cost.planned_sample_budget)) : "—"}</span>
-          </Field>
         </dl>
       </section>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <section className="rounded-xl border border-white/8 bg-white/2 p-5">
+          <h2 className="mb-4 text-sm font-semibold text-slate-300">Rencana</h2>
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-4">
+            <Field label="Target Peserta">
+              <span className="tabular-nums">{e.target_participants.toLocaleString("id-ID")}</span>
+            </Field>
+            <Field label="Target Sales">
+              <span className="tabular-nums">{formatIDR(Number(e.target_sales))}</span>
+            </Field>
+            <Field label="Rencana Budget Event">
+              <span className="tabular-nums">{cost ? formatIDR(Number(cost.planned_budget)) : "—"}</span>
+            </Field>
+            <Field label="Rencana Budget Sample">
+              <span className="tabular-nums">{cost ? formatIDR(Number(cost.planned_sample_budget)) : "—"}</span>
+            </Field>
+          </dl>
+        </section>
+
+        <section className="rounded-xl border border-white/8 bg-white/2 p-5">
+          <h2 className="mb-4 text-sm font-semibold text-slate-300">Realisasi</h2>
+          {/* Setelah koreksi ke Rencana, realisasi lama tetap tersimpan tetapi tidak dihitung. */}
+          {e.status === "rencana" && hasRealization && (
+            <p className="-mt-2 mb-4 text-xs text-slate-500">
+              Nilai di bawah tersimpan dari status sebelumnya dan tidak dihitung sebagai aktual.
+            </p>
+          )}
+          <dl className={cn("grid grid-cols-2 gap-x-6 gap-y-4", e.status === "rencana" && "opacity-60")}>
+            <Field label="Peserta Aktual">
+              <span className="tabular-nums">
+                {e.actual_participants === null ? "—" : e.actual_participants.toLocaleString("id-ID")}
+              </span>
+            </Field>
+            <Field label="Hasil Sales">
+              <span className="tabular-nums">{e.actual_sales === null ? "—" : formatIDR(Number(e.actual_sales))}</span>
+            </Field>
+            <Field label="Realisasi Budget Event">
+              <span className="tabular-nums">{actualBudget === null ? "—" : formatIDR(actualBudget)}</span>
+            </Field>
+            {(e.status === "batal" || e.cancel_reason) && (
+              <Field label="Alasan Batal" className="col-span-2">
+                {e.cancel_reason ? <span className="whitespace-pre-line">{e.cancel_reason}</span> : "—"}
+              </Field>
+            )}
+          </dl>
+        </section>
+      </div>
 
       <section className="rounded-xl border border-white/8 bg-white/2 p-5">
         <h2 className="mb-4 text-sm font-semibold text-slate-300">Tautan</h2>
