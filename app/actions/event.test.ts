@@ -8,6 +8,8 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 import {
   createEventAction,
   deleteEventAction,
+  deleteEventSamplingAction,
+  saveEventSamplingAction,
   searchEventCampaignsAction,
   updateEventAction,
   updateEventStatusAction,
@@ -34,7 +36,8 @@ function setupMocks({
   const rpc = vi.fn().mockResolvedValue({ data: rpcError ? null : NEW_ID, error: rpcError });
   const updateSelect = vi.fn().mockResolvedValue({ data: deletedRows, error: null });
   const updateIs = vi.fn().mockReturnValue({ select: updateSelect });
-  const updateEq = vi.fn().mockReturnValue({ is: updateIs });
+  const updateEq = vi.fn();
+  updateEq.mockReturnValue({ eq: updateEq, is: updateIs });
   const update = vi.fn().mockReturnValue({ eq: updateEq });
   const client = {
     auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: "user-1" } } }) },
@@ -56,11 +59,12 @@ function setupMocks({
           is: vi.fn().mockReturnThis(),
           maybeSingle: vi.fn().mockResolvedValue({ data: existingEvent, error: null }),
         };
+      if (table === "event_samplings") return { update };
       return {};
     }),
   };
   (createClient as ReturnType<typeof vi.fn>).mockResolvedValue(client);
-  return { rpc, update, updateEq, updateIs };
+  return { rpc, update, updateEq, updateIs, from: client.from };
 }
 
 function formDataOf(entries: Record<string, string | string[]>) {
@@ -367,5 +371,85 @@ describe("updateEventStatusAction", () => {
       error: "Anda tidak memiliki akses.",
     });
     expect(rpc).not.toHaveBeenCalled();
+  });
+});
+
+describe("saveEventSamplingAction", () => {
+  const row = { event_id: EVENT_ID, product_name: "Rice Cracker", quantity: "24", unit: "pcs", value: "360000" };
+
+  it("adds a sampling row with its value in one RPC", async () => {
+    const { rpc } = setupMocks();
+
+    expect(await saveEventSamplingAction({}, formDataOf(row))).toEqual({ success: true });
+    expect(rpc).toHaveBeenCalledWith("save_event_sampling", {
+      p_event_id: EVENT_ID,
+      p_id: null,
+      p_product_name: "Rice Cracker",
+      p_quantity: 24,
+      p_unit: "pcs",
+      p_value: 360000,
+    });
+  });
+
+  it("updates an existing row by id", async () => {
+    const { rpc } = setupMocks();
+    const SAMPLING_ID = "99999999-9999-4999-8999-999999999999";
+
+    expect(await saveEventSamplingAction({}, formDataOf({ ...row, id: SAMPLING_ID, quantity: "30" }))).toEqual({
+      success: true,
+    });
+    expect(rpc).toHaveBeenCalledWith("save_event_sampling", expect.objectContaining({ p_id: SAMPLING_ID, p_quantity: 30 }));
+  });
+
+  it("rejects a zero quantity before calling the database", async () => {
+    const { rpc } = setupMocks();
+    expect(await saveEventSamplingAction({}, formDataOf({ ...row, quantity: "0" }))).toEqual({
+      error: "Qty harus lebih dari 0",
+    });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["event_samplings_quantity_check", "Qty harus lebih dari 0"],
+    ["event_sampling_costs_value_check", "Nilai sampling tidak boleh negatif"],
+    ["SAMPLING_TIDAK_DITEMUKAN: baris sampling tidak ditemukan", "Baris sampling tidak ditemukan atau sudah dihapus."],
+    ["EVENT_TIDAK_DITEMUKAN: event tidak ditemukan", "Event tidak ditemukan atau sudah dihapus."],
+  ])("maps the database error %s", async (message, error) => {
+    setupMocks({ rpcError: { message } });
+    expect(await saveEventSamplingAction({}, formDataOf(row))).toEqual({ error });
+  });
+
+  it("rejects a user outside Marketing/TM without calling the database", async () => {
+    const { rpc } = setupMocks({ role: "finance", department: "Finance" });
+    expect(await saveEventSamplingAction({}, formDataOf(row))).toEqual({ error: "Anda tidak memiliki akses." });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+});
+
+describe("deleteEventSamplingAction", () => {
+  const SAMPLING_ID = "99999999-9999-4999-8999-999999999999";
+
+  it("soft deletes an active sampling row of the event", async () => {
+    const { from, update, updateEq, updateIs } = setupMocks({ deletedRows: [{ id: SAMPLING_ID }] });
+
+    expect(await deleteEventSamplingAction(EVENT_ID, SAMPLING_ID)).toEqual({});
+    expect(from).toHaveBeenCalledWith("event_samplings");
+    expect(update).toHaveBeenCalledWith({ deleted_at: expect.any(String) });
+    expect(updateEq).toHaveBeenCalledWith("id", SAMPLING_ID);
+    expect(updateEq).toHaveBeenCalledWith("event_id", EVENT_ID);
+    expect(updateIs).toHaveBeenCalledWith("deleted_at", null);
+  });
+
+  it("reports a row that is already deleted or blocked by RLS", async () => {
+    setupMocks({ deletedRows: [] });
+    expect(await deleteEventSamplingAction(EVENT_ID, SAMPLING_ID)).toEqual({
+      error: "Baris sampling tidak ditemukan atau sudah dihapus.",
+    });
+  });
+
+  it("rejects a user outside Marketing/TM without touching the table", async () => {
+    const { update } = setupMocks({ role: "manager", department: "Sales" });
+    expect(await deleteEventSamplingAction(EVENT_ID, SAMPLING_ID)).toEqual({ error: "Anda tidak memiliki akses." });
+    expect(update).not.toHaveBeenCalled();
   });
 });

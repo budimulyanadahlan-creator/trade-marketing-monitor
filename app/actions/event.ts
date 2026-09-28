@@ -5,16 +5,19 @@ import { requirePosmWriter } from "@/lib/posm-writer";
 import {
   EVENT_NOT_STARTED,
   parseEventPlan,
+  parseEventSampling,
   parseEventStatusUpdate,
   todayInJakarta,
   type EventPlan,
   type EventPlanInput,
+  type EventSamplingInput,
   type EventStatusUpdateInput,
 } from "@/lib/event";
 
 const PAGE_PATH = "/monitoring-event";
 const FORBIDDEN = "Anda tidak memiliki akses.";
 const NOT_FOUND = "Event tidak ditemukan atau sudah dihapus.";
+const SAMPLING_NOT_FOUND = "Baris sampling tidak ditemukan atau sudah dihapus.";
 
 const PLAN_FIELDS = [
   "name",
@@ -81,6 +84,10 @@ function eventErrorMessage(error: { message: string }): string {
   if (error.message.includes("events_batal_reason")) return "Alasan batal harus diisi";
   if (error.message.includes("EVENT_TIDAK_DITEMUKAN")) return NOT_FOUND;
   if (error.message.includes("SKP_TIDAK_DITEMUKAN")) return "SKP yang dipilih tidak ditemukan.";
+  // Rincian sampling (migrasi 058).
+  if (error.message.includes("event_samplings_quantity_check")) return "Qty harus lebih dari 0";
+  if (error.message.includes("event_sampling_costs_value_check")) return "Nilai sampling tidak boleh negatif";
+  if (error.message.includes("SAMPLING_TIDAK_DITEMUKAN")) return SAMPLING_NOT_FOUND;
   return error.message;
 }
 
@@ -210,6 +217,78 @@ export async function deleteEventAction(id: string): Promise<{ error?: string }>
     if (!data?.length) return { error: NOT_FOUND };
 
     revalidatePath(PAGE_PATH);
+    return {};
+  } catch {
+    return { error: FORBIDDEN };
+  }
+}
+
+const SAMPLING_FIELDS = [
+  "product_name",
+  "quantity",
+  "unit",
+  "value",
+] as const satisfies readonly (keyof EventSamplingInput)[];
+
+export type SaveEventSamplingState = { error?: string; success?: boolean };
+
+// Tambah (tanpa id) atau ubah baris sampling. Baris dan nilai Rp-nya
+// disimpan dalam satu transaksi lewat save_event_sampling (migrasi 058).
+export async function saveEventSamplingAction(
+  _prevState: SaveEventSamplingState,
+  formData: FormData
+): Promise<SaveEventSamplingState> {
+  try {
+    const { supabase } = await requirePosmWriter();
+
+    const eventId = formData.get("event_id");
+    if (typeof eventId !== "string" || !eventId) return { error: NOT_FOUND };
+    const id = formData.get("id");
+
+    const values: EventSamplingInput = {};
+    for (const field of SAMPLING_FIELDS) {
+      const v = formData.get(field);
+      if (typeof v === "string") values[field] = v;
+    }
+    const parsed = parseEventSampling(values);
+    if ("error" in parsed) return { error: parsed.error };
+
+    const { product_name, quantity, unit, value } = parsed.data;
+    const { error } = await supabase.rpc("save_event_sampling", {
+      p_event_id: eventId,
+      p_id: typeof id === "string" && id ? id : null,
+      p_product_name: product_name,
+      p_quantity: quantity,
+      p_unit: unit,
+      p_value: value,
+    });
+    if (error) return { error: eventErrorMessage(error) };
+
+    revalidatePath(`${PAGE_PATH}/${eventId}`);
+    return { success: true };
+  } catch {
+    return { error: FORBIDDEN };
+  }
+}
+
+// Hapus baris sampling = soft delete; nilai Rp-nya dibiarkan untuk audit.
+// Update yang ditolak RLS tidak mengembalikan error, jadi baris yang
+// ter-update dicek lewat select.
+export async function deleteEventSamplingAction(eventId: string, id: string): Promise<{ error?: string }> {
+  try {
+    const { supabase } = await requirePosmWriter();
+
+    const { data, error } = await supabase
+      .from("event_samplings")
+      .update({ deleted_at: new Date().toISOString() })
+      .eq("id", id)
+      .eq("event_id", eventId)
+      .is("deleted_at", null)
+      .select("id");
+    if (error) return { error: error.message };
+    if (!data?.length) return { error: SAMPLING_NOT_FOUND };
+
+    revalidatePath(`${PAGE_PATH}/${eventId}`);
     return {};
   } catch {
     return { error: FORBIDDEN };

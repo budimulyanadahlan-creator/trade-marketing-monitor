@@ -201,7 +201,7 @@ export default async function EventAuditPage({ searchParams }: { searchParams: S
             const changes = auditChanges(e.action, e.old_data, e.new_data).filter(
               // Kolom turunan/kunci yang tidak informatif di diff; SKP tampil
               // lewat snapshot skp_number/campaign_name.
-              (c) => !["fiscal_year", "quarter", "event_id", "campaign_id"].includes(c.field)
+              (c) => !["fiscal_year", "quarter", "event_id", "campaign_id", "sampling_id", "sort_order"].includes(c.field)
             );
             const label = names.get(e.record_id) ?? String((e.new_data ?? e.old_data)?.name ?? e.record_id);
             return (

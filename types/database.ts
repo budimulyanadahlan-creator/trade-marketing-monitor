@@ -542,6 +542,30 @@ export type EventCampaignRow = {
   deleted_at: string | null;
 };
 
+/** Baris rincian sampling event (tanpa nilai Rp); hapus = soft delete. */
+export type EventSamplingRow = {
+  id: string;
+  event_id: string;
+  product_name: string;
+  quantity: number;
+  unit: string;
+  sort_order: number;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+};
+
+/** Nilai Rp baris sampling (1:1) — tidak pernah boleh dibaca distributor. */
+export type EventSamplingCostRow = {
+  sampling_id: string;
+  event_id: string;
+  value: number;
+  created_at: string;
+  updated_at: string;
+};
+
 export type PosmAuditAction = "insert" | "update" | "soft_delete";
 
 export type PosmAuditLogRow = {
@@ -1414,6 +1438,34 @@ export type Database = {
           }
         ];
       };
+      event_samplings: {
+        Row: EventSamplingRow;
+        Insert: never;
+        Update: { deleted_at?: string | null };
+        Relationships: [
+          {
+            foreignKeyName: "event_samplings_event_id_fkey";
+            columns: ["event_id"];
+            isOneToOne: false;
+            referencedRelation: "events";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      event_sampling_costs: {
+        Row: EventSamplingCostRow;
+        Insert: never;
+        Update: never;
+        Relationships: [
+          {
+            foreignKeyName: "event_sampling_costs_sampling_fkey";
+            columns: ["sampling_id", "event_id"];
+            isOneToOne: true;
+            referencedRelation: "event_samplings";
+            referencedColumns: ["id", "event_id"];
+          }
+        ];
+      };
       posm_audit_log: {
         Row: PosmAuditLogRow;
         Insert: never;
@@ -1549,6 +1601,17 @@ export type Database = {
           p_cancel_reason: string | null;
         };
         Returns: undefined;
+      };
+      save_event_sampling: {
+        Args: {
+          p_event_id: string;
+          p_id: string | null;
+          p_product_name: string;
+          p_quantity: number;
+          p_unit: string;
+          p_value: number;
+        };
+        Returns: string;
       };
       increment_skp_counter: {
         Args: { p_year: number; p_month: number };

@@ -12,6 +12,7 @@ import { requirePosmViewer } from "../../monitoring-posm/viewer";
 import { EVENT_STATUS_VARIANT, formatEventDateRange, NeedsUpdateBadge } from "../event-display";
 import { loadEventFormOptions } from "../form-options";
 import { EventDetailActions } from "./event-detail-actions";
+import { EventSamplingSection, type EventSamplingItem } from "./event-sampling-section";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -30,6 +31,16 @@ type CampaignEmbed = {
   campaign_name: string | null;
   deleted_at: string | null;
   created_at: string;
+}[];
+type SamplingEmbed = {
+  id: string;
+  product_name: string;
+  quantity: number;
+  unit: string;
+  sort_order: number;
+  created_at: string;
+  deleted_at: string | null;
+  cost: { value: number } | null;
 }[];
 
 function Field({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
@@ -51,7 +62,7 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
   const { data: event } = await supabase
     .from("events")
     .select(
-      "id, name, event_type, start_date, end_date, region_id, distributor_id, location, pic_name, target_participants, target_sales, status, actual_participants, actual_sales, cancel_reason, notes, created_at, updated_at, region:regions(name), distributor:distributors(name), costs:event_costs(planned_budget, planned_sample_budget, actual_budget, vendor_id, vendor:vendors(name)), brands:event_brands(brand_id, deleted_at, brand:brands(name)), campaigns:event_campaigns(campaign_id, skp_number, campaign_name, deleted_at, created_at), creator:users!events_created_by_fkey(full_name), updater:users!events_updated_by_fkey(full_name)"
+      "id, name, event_type, start_date, end_date, region_id, distributor_id, location, pic_name, target_participants, target_sales, status, actual_participants, actual_sales, cancel_reason, notes, created_at, updated_at, region:regions(name), distributor:distributors(name), costs:event_costs(planned_budget, planned_sample_budget, actual_budget, vendor_id, vendor:vendors(name)), brands:event_brands(brand_id, deleted_at, brand:brands(name)), campaigns:event_campaigns(campaign_id, skp_number, campaign_name, deleted_at, created_at), samplings:event_samplings(id, product_name, quantity, unit, sort_order, created_at, deleted_at, cost:event_sampling_costs(value)), creator:users!events_created_by_fkey(full_name), updater:users!events_updated_by_fkey(full_name)"
     )
     .eq("id", id)
     .is("deleted_at", null)
@@ -60,7 +71,7 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
   // Event terhapus diperlakukan sama dengan id yang tidak ada.
   if (!event) notFound();
 
-  const { region, distributor, costs, brands, campaigns, creator, updater, ...e } = event;
+  const { region, distributor, costs, brands, campaigns, samplings, creator, updater, ...e } = event;
   const regionName = (region as Named)?.name ?? null;
   const distributorName = (distributor as Named)?.name ?? null;
   const cost = costs as CostEmbed;
@@ -76,6 +87,16 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
     .filter((b) => !b.deleted_at)
     .map((b) => ({ id: b.brand_id, name: b.brand?.name ?? b.brand_id }))
     .sort((a, b) => a.name.localeCompare(b.name));
+  const samplingItems: EventSamplingItem[] = (samplings as SamplingEmbed)
+    .filter((s) => !s.deleted_at)
+    .sort((a, b) => a.sort_order - b.sort_order || a.created_at.localeCompare(b.created_at))
+    .map((s) => ({
+      id: s.id,
+      product_name: s.product_name,
+      quantity: Number(s.quantity),
+      unit: s.unit,
+      value: Number(s.cost?.value ?? 0),
+    }));
   const linkedCampaigns = (campaigns as CampaignEmbed)
     .filter((c) => !c.deleted_at)
     .sort((a, b) => a.created_at.localeCompare(b.created_at));
@@ -238,6 +259,14 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
           </dl>
         </section>
       </div>
+
+      {/* Boleh kosong, termasuk pada event Terlaksana. */}
+      <EventSamplingSection
+        eventId={e.id}
+        samplings={samplingItems}
+        plannedSampleBudget={cost ? Number(cost.planned_sample_budget) : 0}
+        canManage={canManage}
+      />
 
       <section className="rounded-xl border border-white/8 bg-white/2 p-5">
         <h2 className="mb-4 text-sm font-semibold text-slate-300">Tautan</h2>

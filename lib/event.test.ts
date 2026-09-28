@@ -5,8 +5,10 @@ import {
   formatEventAuditValue,
   parseEventAuditFilters,
   parseEventListFilters,
+  parseEventSampling,
   parseEventPlan,
   parseEventStatusUpdate,
+  summarizeEventSampling,
   suggestFromCampaign,
   todayInJakarta,
 } from "./event";
@@ -154,6 +156,11 @@ describe("parseEventAuditFilters", () => {
     });
   });
 
+  it("accepts the sampling tables", () => {
+    expect(parseEventAuditFilters({ table: "event_samplings" })).toEqual({ table: "event_samplings", page: 1 });
+    expect(parseEventAuditFilters({ table: "event_sampling_costs" })).toEqual({ table: "event_sampling_costs", page: 1 });
+  });
+
   it("ignores tables outside the event module", () => {
     expect(parseEventAuditFilters({ table: "posm_items" })).toEqual({ page: 1 });
   });
@@ -168,6 +175,7 @@ describe("formatEventAuditValue", () => {
     ["actual_budget", 1500000],
     ["planned_sample_budget", 5000000],
     ["actual_sales", 0],
+    ["value", 360000],
   ])("formats %s as rupiah", (field, value) => {
     expect(formatEventAuditValue(field, value, names)).toMatch(/^Rp/);
   });
@@ -342,5 +350,68 @@ describe("todayInJakarta", () => {
   it("uses the Jakarta date, not UTC", () => {
     // 28 Sep 18:30 UTC = 29 Sep 01:30 WIB.
     expect(todayInJakarta(new Date("2026-09-28T18:30:00Z"))).toBe("2026-09-29");
+  });
+});
+
+describe("parseEventSampling", () => {
+  it("parses a sampling row with its Rupiah value", () => {
+    expect(
+      parseEventSampling({ product_name: " Want Want Rice Cracker ", quantity: "2.5", unit: " karton ", value: "750000" })
+    ).toEqual({ data: { product_name: "Want Want Rice Cracker", quantity: 2.5, unit: "karton", value: 750000 } });
+  });
+
+  const row = { product_name: "Rice Cracker", quantity: "10", unit: "pcs", value: "0" };
+
+  it("accepts a zero Rupiah value", () => {
+    expect(parseEventSampling(row)).toEqual({ data: { product_name: "Rice Cracker", quantity: 10, unit: "pcs", value: 0 } });
+  });
+
+  it.each([
+    [{ quantity: "0" }, "Qty harus lebih dari 0"],
+    [{ quantity: "-1" }, "Qty harus lebih dari 0"],
+    [{ quantity: "" }, "Qty harus diisi"],
+    [{ quantity: "abc" }, "Qty harus berupa angka"],
+    [{ value: "-1" }, "Nilai sampling tidak boleh negatif"],
+    [{ value: "" }, "Nilai sampling harus diisi"],
+    [{ product_name: "  " }, "Nama produk harus diisi"],
+    [{ unit: "" }, "Satuan harus diisi"],
+  ])("rejects %o", (override, error) => {
+    expect(parseEventSampling({ ...row, ...override })).toEqual({ error });
+  });
+});
+
+describe("summarizeEventSampling", () => {
+  it("totals sampling values and compares them with the planned sample budget", () => {
+    expect(summarizeEventSampling([{ value: 1_500_000 }, { value: 2_000_000 }], 5_000_000)).toEqual({
+      total: 3_500_000,
+      planned: 5_000_000,
+      remaining: 1_500_000,
+      percentOfPlan: 70,
+    });
+  });
+
+  it("reports a negative remainder when sampling exceeds the plan", () => {
+    expect(summarizeEventSampling([{ value: 6_000_000 }], 5_000_000)).toMatchObject({
+      remaining: -1_000_000,
+      percentOfPlan: 120,
+    });
+  });
+
+  it("has no percentage when the planned sample budget is zero", () => {
+    expect(summarizeEventSampling([{ value: 250_000 }], 0)).toEqual({
+      total: 250_000,
+      planned: 0,
+      remaining: -250_000,
+      percentOfPlan: null,
+    });
+  });
+
+  it("allows an event without sampling rows", () => {
+    expect(summarizeEventSampling([], 5_000_000)).toEqual({
+      total: 0,
+      planned: 5_000_000,
+      remaining: 5_000_000,
+      percentOfPlan: 0,
+    });
   });
 });

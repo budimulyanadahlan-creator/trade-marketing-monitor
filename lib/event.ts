@@ -236,6 +236,53 @@ export function eventNeedsUpdate(event: { status: EventStatus; end_date: string 
 }
 
 // ============================================================
+// RINCIAN SAMPLING
+// ============================================================
+
+// Aturan yang sama ditegakkan check constraint event_samplings dan
+// event_sampling_costs (migrasi 058).
+const eventSamplingSchema = z.object({
+  product_name: requiredText("Nama produk harus diisi"),
+  quantity: z
+    .string({ error: "Qty harus diisi" })
+    .trim()
+    .min(1, "Qty harus diisi")
+    .pipe(z.coerce.number<string>({ error: "Qty harus berupa angka" }).gt(0, "Qty harus lebih dari 0")),
+  unit: requiredText("Satuan harus diisi"),
+  value: requiredAmount("Nilai sampling"),
+});
+
+export type EventSamplingInput = Partial<Record<keyof z.input<typeof eventSamplingSchema>, string>>;
+export type EventSampling = z.output<typeof eventSamplingSchema>;
+
+/** Validasi satu baris sampling: nama produk (teks bebas), qty > 0, satuan, nilai Rp ≥ 0. */
+export function parseEventSampling(values: EventSamplingInput): { error: string } | { data: EventSampling } {
+  const parsed = eventSamplingSchema.safeParse(values);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Input tidak valid" };
+  return { data: parsed.data };
+}
+
+export type EventSamplingSummary = {
+  total: number;
+  planned: number;
+  /** Rencana − terpakai; negatif = melebihi rencana. */
+  remaining: number;
+  /** Terpakai sebagai persen rencana; null jika rencana 0. */
+  percentOfPlan: number | null;
+};
+
+/** Total nilai sampling dibandingkan rencana budget sample. */
+export function summarizeEventSampling(rows: { value: number }[], plannedSampleBudget: number): EventSamplingSummary {
+  const total = rows.reduce((sum, r) => sum + r.value, 0);
+  return {
+    total,
+    planned: plannedSampleBudget,
+    remaining: plannedSampleBudget - total,
+    percentOfPlan: plannedSampleBudget > 0 ? (total / plannedSampleBudget) * 100 : null,
+  };
+}
+
+// ============================================================
 // FILTER TABEL
 // ============================================================
 
@@ -314,9 +361,17 @@ export function suggestFromCampaign(
 // AUDIT LOG (posm_audit_log, trigger migrasi 055)
 // ============================================================
 
-// Baris event_costs dan tautan (migrasi 056) dicatat dengan record_id =
-// event_id, sehingga riwayat satu event mencakup biaya dan tautannya.
-export const EVENT_AUDIT_TABLES = ["events", "event_costs", "event_brands", "event_campaigns"] as const;
+// Baris event_costs, tautan (migrasi 056), dan sampling (migrasi 058)
+// dicatat dengan record_id = event_id, sehingga riwayat satu event mencakup
+// biaya, tautan, dan rincian samplingnya.
+export const EVENT_AUDIT_TABLES = [
+  "events",
+  "event_costs",
+  "event_brands",
+  "event_campaigns",
+  "event_samplings",
+  "event_sampling_costs",
+] as const;
 export type EventAuditTable = (typeof EVENT_AUDIT_TABLES)[number];
 
 export const EVENT_AUDIT_TABLE_LABELS: Record<EventAuditTable, string> = {
@@ -324,6 +379,8 @@ export const EVENT_AUDIT_TABLE_LABELS: Record<EventAuditTable, string> = {
   event_costs: "Biaya Event",
   event_brands: "Brand Event",
   event_campaigns: "SKP Event",
+  event_samplings: "Sampling Event",
+  event_sampling_costs: "Nilai Sampling",
 };
 
 export type EventAuditFilters = AuditFilters<EventAuditTable>;
@@ -360,6 +417,10 @@ export const EVENT_AUDIT_FIELD_LABELS: Record<string, string> = {
   campaign_id: "SKP",
   skp_number: "Nomor SKP",
   campaign_name: "Judul SKP",
+  product_name: "Produk",
+  quantity: "Qty",
+  unit: "Satuan",
+  value: "Nilai Sampling",
 };
 
 const EVENT_AUDIT_CURRENCY_FIELDS = new Set([
@@ -368,6 +429,7 @@ const EVENT_AUDIT_CURRENCY_FIELDS = new Set([
   "planned_budget",
   "actual_budget",
   "planned_sample_budget",
+  "value",
 ]);
 
 /** Nilai audit event yang mudah dibaca; id referensi (region, vendor, event) lewat `names`. */
