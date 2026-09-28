@@ -5,6 +5,10 @@ import {
   eventListSelect,
   publicEventKpis,
   eventFiscalPeriod,
+  eventLacksPhoto,
+  eventPhotoLimitError,
+  eventPhotoPath,
+  EVENT_PHOTO_MAX,
   eventNeedsUpdate,
   formatEventAuditValue,
   parseEventAuditFilters,
@@ -569,6 +573,10 @@ describe("eventListSelect / eventDetailSelect — kolom per viewer", () => {
     expect(eventDetailSelect({ showCosts: false })).toContain("samplings:event_samplings(id, product_name, quantity, unit");
   });
 
+  it.each([true, false])("requests photo rows for the \"Belum ada foto\" indicator (showCosts %s)", (showCosts) => {
+    expect(eventListSelect({ showCosts })).toContain("photos:event_photos(deleted_at)");
+  });
+
   it("requests the vendor only on the internal detail page", () => {
     expect(eventDetailSelect({ showCosts: true })).toContain("vendor:vendors(name)");
   });
@@ -592,5 +600,46 @@ describe("publicEventKpis", () => {
     const visible = publicEventKpis(kpis);
     expect(Object.keys(visible).sort()).toEqual(["counts", "participants", "sales"]);
     expect(visible.participants).toEqual({ target: 100, actual: 120 });
+  });
+});
+
+describe("eventLacksPhoto", () => {
+  it.each([
+    ["terlaksana", 0, true],
+    ["terlaksana", 1, false],
+    ["rencana", 0, false],
+    ["batal", 0, false],
+  ] as const)("status %s with %i photos → %s", (status, photoCount, expected) => {
+    expect(eventLacksPhoto({ status }, photoCount)).toBe(expected);
+  });
+});
+
+describe("eventPhotoLimitError", () => {
+  it("allows uploads while under the limit", () => {
+    expect(EVENT_PHOTO_MAX).toBe(10);
+    expect(eventPhotoLimitError(0, 1)).toBeNull();
+    expect(eventPhotoLimitError(9, 1)).toBeNull();
+    expect(eventPhotoLimitError(7, 3)).toBeNull();
+  });
+
+  it("rejects the 11th photo with a clear message", () => {
+    expect(eventPhotoLimitError(10, 1)).toBe("Maksimal 10 foto per event. Hapus foto lain terlebih dahulu.");
+  });
+
+  it("rejects a batch that would exceed the limit and says how many slots remain", () => {
+    expect(eventPhotoLimitError(8, 3)).toBe("Maksimal 10 foto per event. Sisa slot: 2 foto.");
+  });
+});
+
+describe("eventPhotoPath", () => {
+  it("puts the event id as the first folder, which the storage policy checks", () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    expect(eventPhotoPath(id, 1700000000000)).toBe(`${id}/1700000000000.jpg`);
+  });
+});
+
+describe("event photo audit", () => {
+  it("accepts event_photos as an audit table", () => {
+    expect(parseEventAuditFilters({ table: "event_photos" })).toEqual({ table: "event_photos", page: 1 });
   });
 });

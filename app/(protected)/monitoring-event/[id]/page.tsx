@@ -10,16 +10,20 @@ import {
   EVENT_STATUS_LABELS,
   eventDetailSelect,
   eventFiscalPeriod,
+  eventLacksPhoto,
   eventNeedsUpdate,
+  EVENT_PHOTO_BUCKET,
   todayInJakarta,
 } from "@/lib/event";
 import { auditFiltersQuery, formatAuditTimestamp } from "@/lib/posm";
 import { cn, formatIDR } from "@/lib/utils";
 import type { CampaignStatus, EventRow } from "@/types/database";
-import { EVENT_STATUS_VARIANT, formatEventDateRange, NeedsUpdateBadge } from "../event-display";
+import { EVENT_STATUS_VARIANT, formatEventDateRange, NeedsUpdateBadge, NoPhotoBadge } from "../event-display";
 import { loadEventFormOptions } from "../form-options";
+import { signPosmPhotos } from "../../monitoring-posm/photo-urls";
 import { requireEventViewer } from "../viewer";
 import { EventDetailActions } from "./event-detail-actions";
+import { EventPhotoGallery } from "./event-photo-gallery";
 import { EventSamplingSection, type EventSamplingItem } from "./event-sampling-section";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -149,7 +153,7 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
   // SKP yang dihapus permanen (campaign_id null) memakai snapshot.
   const campaignIds = linkedCampaigns.flatMap((c) => (c.campaign_id ? [c.campaign_id] : []));
   const isDistributor = viewer.role === "distributor";
-  const [{ data: refs }, { data: readableCampaigns }, formOptions] = await Promise.all([
+  const [{ data: refs }, { data: readableCampaigns }, formOptions, { data: photoRows }] = await Promise.all([
     campaignIds.length ? supabase.rpc("event_campaign_refs", { p_ids: campaignIds }) : Promise.resolve({ data: [] }),
     // Distributor hanya mendapat link ke SKP yang bisa dibukanya: terbaca
     // lewat RLS campaigns dan milik distributornya (atau belum ditetapkan).
@@ -164,7 +168,22 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
           brands: linkedBrands,
         })
       : null,
+    // RLS event_photos mengikuti events, termasuk untuk distributor.
+    supabase
+      .from("event_photos")
+      .select("id, path")
+      .eq("event_id", e.id)
+      .is("deleted_at", null)
+      .order("created_at"),
   ]);
+  // Signed URL dengan client milik user: storage policy event-photos
+  // (migrasi 060) memeriksa aturan baca event yang sama.
+  const photoUrls = await signPosmPhotos(
+    supabase,
+    (photoRows ?? []).map((p) => p.path),
+    EVENT_PHOTO_BUCKET
+  );
+  const photos = (photoRows ?? []).map((p) => ({ id: p.id, url: photoUrls.get(p.path) ?? null }));
   const refById = new Map((refs ?? []).map((r) => [r.id, r]));
   const openableIds = isDistributor
     ? new Set(
@@ -199,6 +218,7 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant={EVENT_STATUS_VARIANT[e.status]}>{EVENT_STATUS_LABELS[e.status]}</Badge>
             {eventNeedsUpdate(e, today) && <NeedsUpdateBadge />}
+            {eventLacksPhoto(e, photos.length) && <NoPhotoBadge />}
             <Badge variant="outline">{e.event_type}</Badge>
             <span className="text-xs text-slate-500">
               FY {fiscalYear} Q{quarter}
@@ -330,6 +350,8 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
         plannedSampleBudget={showCosts ? Number(cost?.planned_sample_budget ?? 0) : null}
         canManage={canManage}
       />
+
+      <EventPhotoGallery eventId={e.id} eventName={e.name} photos={photos} canManage={canManage} />
 
       <section className="rounded-xl border border-white/8 bg-white/2 p-5">
         <h2 className="mb-4 text-sm font-semibold text-slate-300">Tautan</h2>

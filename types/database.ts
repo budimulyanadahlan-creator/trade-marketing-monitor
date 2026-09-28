@@ -566,6 +566,16 @@ export type EventSamplingCostRow = {
   updated_at: string;
 };
 
+/** Foto dokumentasi event (maks. 10 aktif per event, migrasi 060). */
+export type EventPhotoRow = {
+  id: string;
+  event_id: string;
+  path: string;
+  uploaded_by: string | null;
+  created_at: string;
+  deleted_at: string | null;
+};
+
 export type PosmAuditAction = "insert" | "update" | "soft_delete";
 
 export type PosmAuditLogRow = {
@@ -1463,6 +1473,20 @@ export type Database = {
             isOneToOne: true;
             referencedRelation: "event_samplings";
             referencedColumns: ["id", "event_id"];
+          }
+        ];
+      };
+      event_photos: {
+        Row: EventPhotoRow;
+        Insert: { event_id: string; path: string };
+        Update: { deleted_at?: string | null };
+        Relationships: [
+          {
+            foreignKeyName: "event_photos_event_id_fkey";
+            columns: ["event_id"];
+            isOneToOne: false;
+            referencedRelation: "events";
+            referencedColumns: ["id"];
           }
         ];
       };

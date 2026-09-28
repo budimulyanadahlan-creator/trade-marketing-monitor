@@ -54,7 +54,7 @@ export function canViewEvent(
  */
 export function eventListSelect({ showCosts }: { showCosts: boolean }): string {
   const base =
-    "id, name, event_type, start_date, end_date, location, pic_name, target_participants, target_sales, status, actual_participants, actual_sales, region:regions(name), brands:event_brands(deleted_at, brand:brands(name))";
+    "id, name, event_type, start_date, end_date, location, pic_name, target_participants, target_sales, status, actual_participants, actual_sales, region:regions(name), brands:event_brands(deleted_at, brand:brands(name)), photos:event_photos(deleted_at)";
   return showCosts
     ? `${base}, costs:event_costs(planned_budget, planned_sample_budget, actual_budget), samplings:event_samplings(deleted_at, cost:event_sampling_costs(value))`
     : base;
@@ -279,6 +279,38 @@ export function eventNeedsUpdate(event: { status: EventStatus; end_date: string 
 }
 
 // ============================================================
+// FOTO DOKUMENTASI
+// ============================================================
+
+/** Indikator "Belum ada foto": event Terlaksana tanpa foto. Foto tidak wajib. */
+export function eventLacksPhoto(event: { status: EventStatus }, photoCount: number): boolean {
+  return event.status === "terlaksana" && photoCount === 0;
+}
+
+/** Bucket privat foto event (migrasi 060); baca mengikuti aturan baca events. */
+export const EVENT_PHOTO_BUCKET = "event-photos";
+
+/**
+ * Folder pertama = id event; storage policy event-photos membaca folder ini
+ * untuk mencocokkan aturan baca events. Foto selalu dikompres ulang ke JPEG.
+ */
+export function eventPhotoPath(eventId: string, now: number): string {
+  return `${eventId}/${now}.jpg`;
+}
+
+/** Batas foto per event; sama dengan trigger event_photos_limit (migrasi 060). */
+export const EVENT_PHOTO_MAX = 10;
+
+/** Pesan error jika menambah `adding` foto ke event yang sudah punya `current` foto melebihi batas. */
+export function eventPhotoLimitError(current: number, adding: number): string | null {
+  if (current + adding <= EVENT_PHOTO_MAX) return null;
+  const remaining = Math.max(EVENT_PHOTO_MAX - current, 0);
+  return remaining === 0
+    ? `Maksimal ${EVENT_PHOTO_MAX} foto per event. Hapus foto lain terlebih dahulu.`
+    : `Maksimal ${EVENT_PHOTO_MAX} foto per event. Sisa slot: ${remaining} foto.`;
+}
+
+// ============================================================
 // RINCIAN SAMPLING
 // ============================================================
 
@@ -476,9 +508,9 @@ export function suggestFromCampaign(
 // AUDIT LOG (posm_audit_log, trigger migrasi 055)
 // ============================================================
 
-// Baris event_costs, tautan (migrasi 056), dan sampling (migrasi 058)
-// dicatat dengan record_id = event_id, sehingga riwayat satu event mencakup
-// biaya, tautan, dan rincian samplingnya.
+// Baris event_costs, tautan (migrasi 056), sampling (migrasi 058), dan foto
+// (migrasi 060) dicatat dengan record_id = event_id, sehingga riwayat satu
+// event mencakup biaya, tautan, rincian sampling, dan fotonya.
 export const EVENT_AUDIT_TABLES = [
   "events",
   "event_costs",
@@ -486,6 +518,7 @@ export const EVENT_AUDIT_TABLES = [
   "event_campaigns",
   "event_samplings",
   "event_sampling_costs",
+  "event_photos",
 ] as const;
 export type EventAuditTable = (typeof EVENT_AUDIT_TABLES)[number];
 
@@ -496,6 +529,7 @@ export const EVENT_AUDIT_TABLE_LABELS: Record<EventAuditTable, string> = {
   event_campaigns: "SKP Event",
   event_samplings: "Sampling Event",
   event_sampling_costs: "Nilai Sampling",
+  event_photos: "Foto Event",
 };
 
 export type EventAuditFilters = AuditFilters<EventAuditTable>;
@@ -536,6 +570,7 @@ export const EVENT_AUDIT_FIELD_LABELS: Record<string, string> = {
   quantity: "Qty",
   unit: "Satuan",
   value: "Nilai Sampling",
+  path: "Foto",
 };
 
 const EVENT_AUDIT_CURRENCY_FIELDS = new Set([

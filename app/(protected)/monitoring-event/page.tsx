@@ -3,6 +3,7 @@ import { History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   eventListSelect,
+  eventLacksPhoto,
   eventNeedsUpdate,
   parseEventListFilters,
   publicEventKpis,
@@ -46,6 +47,7 @@ type EventListQueryRow = Pick<
   actual_sales: number | null;
   region: { name: string } | null;
   brands: BrandEmbed;
+  photos: { deleted_at: string | null }[];
   costs?: CostEmbed;
   samplings?: SamplingEmbed;
 };
@@ -102,7 +104,7 @@ export default async function MonitoringEventPage({
   const kpiSources: EventKpiSource[] = [];
 
   const rows: EventListRow[] = ((events ?? []) as unknown as EventListQueryRow[]).map(
-    ({ region, costs, brands, samplings, actual_participants, actual_sales, ...e }) => {
+    ({ region, costs, brands, samplings, photos, actual_participants, actual_sales, ...e }) => {
       const c = costs ?? null;
       const optional = (v: number | null | undefined) => (v == null ? null : Number(v));
       kpiSources.push({
@@ -131,6 +133,7 @@ export default async function MonitoringEventPage({
           planned_sample_budget: c?.planned_sample_budget ?? null,
         }),
         needs_update: eventNeedsUpdate(e, today),
+        lacks_photo: eventLacksPhoto(e, photos.filter((p) => !p.deleted_at).length),
       };
     }
   );
