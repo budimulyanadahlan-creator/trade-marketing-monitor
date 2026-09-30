@@ -84,6 +84,7 @@ export function EventFormDialog({
   const isEdit = Boolean(event);
   const [open, setOpen] = useState(false);
   const [startDate, setStartDate] = useState(event?.start_date ?? "");
+  const [endDate, setEndDate] = useState(event?.end_date ?? "");
   // Region, distributor, dan brand dikontrol karena bisa diisi dari SKP.
   const [links, setLinks] = useState<EventSuggestibleFields>(() => initialLinks(event));
   const [campaigns, setCampaigns] = useState<LinkedCampaign[]>(event?.campaigns ?? []);
@@ -130,6 +131,7 @@ export function EventFormDialog({
         setOpen(next);
         if (next) {
           setStartDate(event?.start_date ?? "");
+          setEndDate(event?.end_date ?? "");
           setLinks(initialLinks(event));
           setCampaigns(event?.campaigns ?? []);
           setPending(null);
@@ -191,11 +193,18 @@ export function EventFormDialog({
                 name="start_date"
                 type="date"
                 value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setStartDate(next);
+                  // Tanggal selesai ikut maju bila tanggal mulai digeser melewatinya.
+                  if (next && endDate && endDate < next) setEndDate(next);
+                }}
                 required
                 disabled={isPending}
               />
-              <p className="text-xs text-slate-500">Kuartal event mengikuti tanggal mulai.</p>
+              <p className="text-xs text-slate-500">
+                Kuartal event mengikuti tanggal mulai. Tanggal selesai ikut maju bila terlewati.
+              </p>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="evt-end">Tanggal Selesai</Label>
@@ -203,8 +212,8 @@ export function EventFormDialog({
                 id="evt-end"
                 name="end_date"
                 type="date"
-                min={startDate || undefined}
-                defaultValue={event?.end_date}
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
                 required
                 disabled={isPending}
               />
