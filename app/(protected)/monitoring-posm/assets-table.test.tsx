@@ -39,7 +39,7 @@ const assets: AssetListRow[] = [
   { ...base, id: "a3", code: "AST-0003", name: "Tenda Lama", asset_type_id: "type-tenda", asset_type_name: "Tenda/Booth", acquisition_value: 500_000, condition: "Dihapusbukukan", destination: "warehouse", can_delete: false },
 ];
 
-function renderTable(canManage: boolean) {
+function renderTable(canManage: boolean, initialView: "daftar" | "ringkasan" = "daftar") {
   return render(
     <AssetsTable
       assets={assets}
@@ -50,6 +50,7 @@ function renderTable(canManage: boolean) {
       storeNames={["Toko Maju Jaya"]}
       canManage={canManage}
       suggestedCode="AST-0003"
+      initialView={initialView}
     />
   );
 }
@@ -146,5 +147,48 @@ describe("AssetsTable", () => {
     fireEvent.click(thumbs[0]);
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByRole("img").getAttribute("src")).toBe("https://storage.test/a1.jpg");
+  });
+});
+
+describe("AssetsTable — Ringkasan Stok", () => {
+  afterEach(() => window.history.replaceState(null, "", "/"));
+
+  const summaryRow = (label: string) => screen.getByRole("button", { name: new RegExp(label) }).closest("tr")!;
+  const cells = (row: HTMLElement) => within(row).getAllByRole("cell").slice(1).map((c) => c.textContent);
+
+  it("switches to the summary and keeps view=ringkasan in the URL", () => {
+    window.history.replaceState(null, "", "/monitoring-posm?tab=asset");
+    renderTable(false);
+    fireEvent.click(screen.getByRole("button", { name: "Ringkasan Stok" }));
+    expect(window.location.search).toBe("?tab=asset&view=ringkasan");
+    expect(screen.queryByLabelText("Filter jenis")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Daftar Unit" }));
+    expect(window.location.search).toBe("?tab=asset");
+    expect(screen.getByText("Cooler Showcase")).toBeTruthy();
+  });
+
+  it("summarises per type with a total row, hiding written-off units by default", () => {
+    renderTable(false, "ringkasan");
+    expect(cells(summaryRow("Cooler/Chiller"))).toEqual(["1", "0", "1", "0", "0", expect.stringContaining("7.500.000")]);
+    expect(cells(summaryRow("Rak Display"))).toEqual(["1", "1", "0", "1", "0", expect.stringContaining("1.200.000")]);
+    expect(screen.queryByText(/Tenda\/Booth/)).toBeNull();
+    const totalRow = screen.getByText("Total", { selector: "td" }).closest("tr")!;
+    expect(cells(totalRow).slice(0, 4)).toEqual(["2", "1", "1", "1"]);
+  });
+
+  it("expands a type into rows per asset name", () => {
+    renderTable(false, "ringkasan");
+    expect(screen.queryByText("Cooler Showcase")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Cooler\/Chiller/ }));
+    expect(cells(screen.getByText("Cooler Showcase").closest("tr")!)[0]).toBe("1");
+  });
+
+  it("applies the region filter so only units placed there are counted", () => {
+    renderTable(false, "ringkasan");
+    fireEvent.change(screen.getByLabelText("Filter region"), { target: { value: "reg-1" } });
+    expect(screen.queryByText(/Rak Display/)).toBeNull();
+    const totalRow = screen.getByText("Total", { selector: "td" }).closest("tr")!;
+    expect(cells(totalRow).slice(0, 3)).toEqual(["1", "0", "1"]);
   });
 });

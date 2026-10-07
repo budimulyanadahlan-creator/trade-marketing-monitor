@@ -34,9 +34,18 @@ import {
 import { AlertCircle, ArrowRightLeft, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { filterBySearch } from "@/lib/search";
-import { ASSET_CONDITIONS, ASSET_DESTINATION_LABELS, ASSET_WRITTEN_OFF } from "@/lib/posm";
-import { formatIDR } from "@/lib/utils";
+import {
+  ASSET_CONDITION_FILTER_ALL,
+  ASSET_CONDITIONS,
+  ASSET_DESTINATION_LABELS,
+  ASSET_WRITTEN_OFF,
+  matchesAssetFilters,
+  summarizeAssetStock,
+  type AssetView,
+} from "@/lib/posm";
+import { cn, formatIDR } from "@/lib/utils";
 import type { AssetCondition, AssetDestination, MarketingAssetRow } from "@/types/database";
+import { AssetStockSummaryTable } from "./asset-stock-summary";
 import { PlacementDialog } from "./placement-dialog";
 import { PhotoField, PhotoThumb, usePhotoChange } from "./posm-photo";
 
@@ -440,12 +449,17 @@ export function AssetLocation({
 
 // ---- Main Table ----
 
-const ALL_CONDITIONS = "all";
+const ASSET_VIEW_LABELS: Record<AssetView, string> = {
+  daftar: "Daftar Unit",
+  ringkasan: "Ringkasan Stok",
+};
 
-/** Filter kondisi: default (kosong) menyembunyikan asset Dihapusbukukan. */
-function matchesCondition(condition: AssetCondition, filter: string) {
-  if (filter === "") return condition !== ASSET_WRITTEN_OFF;
-  return filter === ALL_CONDITIONS || condition === filter;
+/** Simpan tampilan di URL tanpa navigasi server (tidak memuat ulang data). */
+function writeViewToUrl(view: AssetView) {
+  const url = new URL(window.location.href);
+  if (view === "ringkasan") url.searchParams.set("view", view);
+  else url.searchParams.delete("view");
+  window.history.replaceState(window.history.state, "", url);
 }
 
 export function AssetsTable({
@@ -457,6 +471,7 @@ export function AssetsTable({
   storeNames,
   canManage,
   suggestedCode,
+  initialView = "daftar",
 }: {
   assets: AssetListRow[];
   assetTypes: Option[];
@@ -466,20 +481,24 @@ export function AssetsTable({
   storeNames: string[];
   canManage: boolean;
   suggestedCode: string;
+  initialView?: AssetView;
 }) {
+  const [view, setView] = useState<AssetView>(initialView);
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
   const [brandFilter, setBrandFilter] = useState("");
   const [conditionFilter, setConditionFilter] = useState("");
   const [regionFilter, setRegionFilter] = useState("");
 
+  // Brand, region, dan kondisi berlaku sama untuk Daftar Unit dan Ringkasan Stok.
+  const sharedFilters = useMemo(
+    () => ({ brandId: brandFilter, regionId: regionFilter, condition: conditionFilter }),
+    [brandFilter, regionFilter, conditionFilter]
+  );
+
   const filtered = useMemo(() => {
     const byFilters = assets.filter(
-      (a) =>
-        (!typeFilter || a.asset_type_id === typeFilter) &&
-        (!brandFilter || a.brand_id === brandFilter) &&
-        matchesCondition(a.condition, conditionFilter) &&
-        (!regionFilter || a.region_id === regionFilter)
+      (a) => (!typeFilter || a.asset_type_id === typeFilter) && matchesAssetFilters(a, sharedFilters)
     );
     return filterBySearch(byFilters, query, (a) => [
       a.code,
@@ -488,7 +507,14 @@ export function AssetsTable({
       a.serial_number,
       a.store_name,
     ]);
-  }, [assets, query, typeFilter, brandFilter, conditionFilter, regionFilter]);
+  }, [assets, query, typeFilter, sharedFilters]);
+
+  const stockSummary = useMemo(() => summarizeAssetStock(assets, sharedFilters), [assets, sharedFilters]);
+
+  function changeView(next: AssetView) {
+    setView(next);
+    writeViewToUrl(next);
+  }
 
   // Hanya brand/region yang dipakai asset yang relevan sebagai filter.
   const usedBrands = useMemo(() => {
@@ -505,36 +531,60 @@ export function AssetsTable({
   const hiddenWrittenOff =
     conditionFilter === "" ? assets.filter((a) => a.condition === ASSET_WRITTEN_OFF).length : 0;
   const colSpan = canManage ? 8 : 7;
+  const isSummary = view === "ringkasan";
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-sm text-slate-400">
-          {filtered.length} asset
+          {isSummary
+            ? `${stockSummary.groups.length} jenis • ${stockSummary.total.total} unit`
+            : `${filtered.length} asset`}
           {hiddenWrittenOff > 0 && (
             <span className="text-slate-600"> • {hiddenWrittenOff} {ASSET_WRITTEN_OFF.toLowerCase()} disembunyikan</span>
           )}
         </p>
         <div className="flex items-center gap-2 flex-wrap justify-end">
-          <SearchInput
-            value={query}
-            onChange={setQuery}
-            placeholder="Cari kode, nama, toko..."
-            className="w-64"
-          />
-          <Select
-            aria-label="Filter jenis"
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value)}
-            className="h-9 w-40"
-          >
-            <option value="">Semua jenis</option>
-            {assetTypes.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
+          <div role="group" aria-label="Tampilan" className="inline-flex rounded-md border border-white/10 bg-white/5 p-0.5">
+            {(Object.keys(ASSET_VIEW_LABELS) as AssetView[]).map((v) => (
+              <button
+                key={v}
+                type="button"
+                aria-pressed={view === v}
+                onClick={() => changeView(v)}
+                className={cn(
+                  "rounded-[5px] px-3 py-1 text-sm font-medium transition-colors",
+                  view === v ? "bg-emerald-500/20 text-emerald-300" : "text-slate-400 hover:text-slate-200"
+                )}
+              >
+                {ASSET_VIEW_LABELS[v]}
+              </button>
             ))}
-          </Select>
+          </div>
+          {/* Ringkasan sudah dikelompokkan per jenis; pencarian hanya untuk daftar unit. */}
+          {!isSummary && (
+            <>
+              <SearchInput
+                value={query}
+                onChange={setQuery}
+                placeholder="Cari kode, nama, toko..."
+                className="w-64"
+              />
+              <Select
+                aria-label="Filter jenis"
+                value={typeFilter}
+                onChange={(e) => setTypeFilter(e.target.value)}
+                className="h-9 w-40"
+              >
+                <option value="">Semua jenis</option>
+                {assetTypes.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </Select>
+            </>
+          )}
           <Select
             aria-label="Filter brand"
             value={brandFilter}
@@ -555,7 +605,7 @@ export function AssetsTable({
             className="h-9 w-48"
           >
             <option value="">Tanpa {ASSET_WRITTEN_OFF}</option>
-            <option value={ALL_CONDITIONS}>Semua kondisi</option>
+            <option value={ASSET_CONDITION_FILTER_ALL}>Semua kondisi</option>
             {ASSET_CONDITIONS.map((c) => (
               <option key={c} value={c}>
                 {c}
@@ -594,107 +644,111 @@ export function AssetsTable({
         </div>
       </div>
 
-      <div className="rounded-xl border border-white/8 bg-white/2 overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow className="border-white/8 hover:bg-transparent">
-              <TableHead>Kode</TableHead>
-              <TableHead>Nama Asset</TableHead>
-              <TableHead>Jenis</TableHead>
-              <TableHead>Brand</TableHead>
-              <TableHead>Kondisi</TableHead>
-              <TableHead>Lokasi Terkini</TableHead>
-              <TableHead className="text-right">Nilai Perolehan</TableHead>
-              {canManage && <TableHead className="text-right">Aksi</TableHead>}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.length > 0 ? (
-              filtered.map((asset) => (
-                <TableRow key={asset.id}>
-                  <TableCell>
-                    <code className="rounded bg-white/5 px-2 py-0.5 text-xs text-slate-300">{asset.code}</code>
-                  </TableCell>
-                  <TableCell className="font-medium">
-                    <div className="flex items-center gap-2">
-                      <PhotoThumb url={asset.photo_url} alt={`${asset.code} — ${asset.name}`} />
-                      <div>
-                        <Link
-                          href={`/monitoring-posm/assets/${asset.id}`}
-                          className="hover:text-emerald-400 hover:underline"
-                        >
-                          {asset.name}
-                        </Link>
-                        {asset.serial_number && <p className="text-xs text-slate-500">{asset.serial_number}</p>}
-                      </div>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-slate-300">{asset.asset_type_name}</TableCell>
-                  <TableCell className="text-slate-400">{asset.brand_name ?? "—"}</TableCell>
-                  <TableCell>
-                    <AssetConditionBadge condition={asset.condition} />
-                  </TableCell>
-                  <TableCell>
-                    <AssetLocation asset={asset} />
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums text-slate-100 whitespace-nowrap">
-                    {formatIDR(Number(asset.acquisition_value))}
-                  </TableCell>
-                  {canManage && (
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <AssetDialog
-                          asset={asset}
-                          assetTypes={assetTypes}
-                          brands={brands}
-                          regions={regions}
-                          distributors={distributors}
-                          suggestedCode={suggestedCode}
-                          trigger={
-                            <Button variant="outline" size="sm">
-                              <Pencil className="h-3 w-3" />
-                              Edit
-                            </Button>
-                          }
-                        />
-                        <PlacementDialog
-                          assetId={asset.id}
-                          assetLabel={`${asset.code} — ${asset.name}`}
-                          placement={null}
-                          defaultCondition={asset.condition}
-                          regions={regions}
-                          distributors={distributors}
-                          storeNames={storeNames}
-                          trigger={
-                            <Button variant="outline" size="sm">
-                              <ArrowRightLeft className="h-3 w-3" />
-                              Pindahkan
-                            </Button>
-                          }
-                        />
-                        {/* Asset dengan riwayat perpindahan tidak bisa dihapus. */}
-                        {asset.can_delete && (
-                          <DeleteAssetButton id={asset.id} label={`${asset.code} — ${asset.name}`} />
-                        )}
+      {isSummary ? (
+        <AssetStockSummaryTable summary={stockSummary} />
+      ) : (
+        <div className="rounded-xl border border-white/8 bg-white/2 overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow className="border-white/8 hover:bg-transparent">
+                <TableHead>Kode</TableHead>
+                <TableHead>Nama Asset</TableHead>
+                <TableHead>Jenis</TableHead>
+                <TableHead>Brand</TableHead>
+                <TableHead>Kondisi</TableHead>
+                <TableHead>Lokasi Terkini</TableHead>
+                <TableHead className="text-right">Nilai Perolehan</TableHead>
+                {canManage && <TableHead className="text-right">Aksi</TableHead>}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtered.length > 0 ? (
+                filtered.map((asset) => (
+                  <TableRow key={asset.id}>
+                    <TableCell>
+                      <code className="rounded bg-white/5 px-2 py-0.5 text-xs text-slate-300">{asset.code}</code>
+                    </TableCell>
+                    <TableCell className="font-medium">
+                      <div className="flex items-center gap-2">
+                        <PhotoThumb url={asset.photo_url} alt={`${asset.code} — ${asset.name}`} />
+                        <div>
+                          <Link
+                            href={`/monitoring-posm/assets/${asset.id}`}
+                            className="hover:text-emerald-400 hover:underline"
+                          >
+                            {asset.name}
+                          </Link>
+                          {asset.serial_number && <p className="text-xs text-slate-500">{asset.serial_number}</p>}
+                        </div>
                       </div>
                     </TableCell>
-                  )}
+                    <TableCell className="text-slate-300">{asset.asset_type_name}</TableCell>
+                    <TableCell className="text-slate-400">{asset.brand_name ?? "—"}</TableCell>
+                    <TableCell>
+                      <AssetConditionBadge condition={asset.condition} />
+                    </TableCell>
+                    <TableCell>
+                      <AssetLocation asset={asset} />
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-slate-100 whitespace-nowrap">
+                      {formatIDR(Number(asset.acquisition_value))}
+                    </TableCell>
+                    {canManage && (
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <AssetDialog
+                            asset={asset}
+                            assetTypes={assetTypes}
+                            brands={brands}
+                            regions={regions}
+                            distributors={distributors}
+                            suggestedCode={suggestedCode}
+                            trigger={
+                              <Button variant="outline" size="sm">
+                                <Pencil className="h-3 w-3" />
+                                Edit
+                              </Button>
+                            }
+                          />
+                          <PlacementDialog
+                            assetId={asset.id}
+                            assetLabel={`${asset.code} — ${asset.name}`}
+                            placement={null}
+                            defaultCondition={asset.condition}
+                            regions={regions}
+                            distributors={distributors}
+                            storeNames={storeNames}
+                            trigger={
+                              <Button variant="outline" size="sm">
+                                <ArrowRightLeft className="h-3 w-3" />
+                                Pindahkan
+                              </Button>
+                            }
+                          />
+                          {/* Asset dengan riwayat perpindahan tidak bisa dihapus. */}
+                          {asset.can_delete && (
+                            <DeleteAssetButton id={asset.id} label={`${asset.code} — ${asset.name}`} />
+                          )}
+                        </div>
+                      </TableCell>
+                    )}
+                  </TableRow>
+                ))
+              ) : (
+                <TableRow>
+                  <TableCell colSpan={colSpan} className="text-center py-12 text-slate-500">
+                    {hasFilter
+                      ? "Tidak ada asset yang cocok dengan filter."
+                      : canManage
+                        ? "Belum ada asset. Daftarkan asset pertama Anda."
+                        : "Belum ada asset."}
+                  </TableCell>
                 </TableRow>
-              ))
-            ) : (
-              <TableRow>
-                <TableCell colSpan={colSpan} className="text-center py-12 text-slate-500">
-                  {hasFilter
-                    ? "Tidak ada asset yang cocok dengan filter."
-                    : canManage
-                      ? "Belum ada asset. Daftarkan asset pertama Anda."
-                      : "Belum ada asset."}
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      )}
     </div>
   );
 }

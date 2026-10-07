@@ -9,8 +9,10 @@ import {
   nextCode,
   POSM_CODE_PREFIX,
   posmExportHref,
+  resolveAssetView,
   stockStatus,
   summarizeAssets,
+  type AssetView,
 } from "@/lib/posm";
 import {
   GIMMICK_CODE_PREFIX,
@@ -37,7 +39,8 @@ export default async function MonitoringPosmPage({
   const { canManage, isAdmin } = await requirePosmViewer();
 
   // Tab Gimmick hanya untuk pemegang can_manage_posm(); user lain ke tab POSM.
-  const tab = resolveMonitoringPosmTab((await searchParams).tab, canManage);
+  const params = await searchParams;
+  const tab = resolveMonitoringPosmTab(params.tab, canManage);
 
   return (
     <div className="space-y-6">
@@ -65,7 +68,7 @@ export default async function MonitoringPosmPage({
       </div>
 
       {tab === "posm" && <PosmTab canManage={canManage} />}
-      {tab === "asset" && <AssetTab canManage={canManage} />}
+      {tab === "asset" && <AssetTab canManage={canManage} view={resolveAssetView(params.view)} />}
       {tab === "gimmick" && <GimmickTab />}
     </div>
   );
@@ -136,7 +139,7 @@ async function PosmTab({ canManage }: { canManage: boolean }) {
   );
 }
 
-async function AssetTab({ canManage }: { canManage: boolean }) {
+async function AssetTab({ canManage, view }: { canManage: boolean; view: AssetView }) {
   const supabase = await createClient();
 
   const [
@@ -223,6 +226,7 @@ async function AssetTab({ canManage }: { canManage: boolean }) {
         storeNames={(storeNames ?? []).map((s) => s.store_name)}
         canManage={canManage}
         suggestedCode={nextCode(ASSET_CODE_PREFIX, rows.map((r) => r.code))}
+        initialView={view}
       />
     </div>
   );

@@ -20,6 +20,8 @@ import {
   placementDateViolation,
   withPreviousPlacement,
   summarizeAssets,
+  summarizeAssetStock,
+  resolveAssetView,
   parseMovementFilters,
   parseRekapFilters,
   parsePosmExportParams,
@@ -580,5 +582,115 @@ describe("posmExportHref / parsePosmExportParams", () => {
     const parsed = parsePosmExportParams({}, "2026-09-27");
     expect(parsed.movements).toEqual({ page: 1 });
     expect(parsed.rekap).toEqual({ from: "2026-04", to: "2026-09" });
+  });
+});
+
+describe("summarizeAssetStock", () => {
+  type Row = Parameters<typeof summarizeAssetStock>[0][number];
+  const unit = (over: Partial<Row>): Row => ({
+    asset_type_id: "type-seragam",
+    asset_type_name: "Seragam/Pakaian",
+    name: "T-Shirt SPG",
+    brand_id: null,
+    region_id: null,
+    acquisition_value: 100_000,
+    condition: "Baik",
+    destination: "warehouse",
+    ...over,
+  });
+  const noFilter = { brandId: "", regionId: "", condition: "" };
+
+  it("groups units by type then by name, counting location and value", () => {
+    const result = summarizeAssetStock(
+      [
+        unit({ name: "T-Shirt SPG Kuning" }),
+        unit({ name: "T-Shirt SPG Hitam", destination: "placed", region_id: "reg-1" }),
+        unit({ name: "T-Shirt SPG Putih", destination: "placed", region_id: "reg-1", acquisition_value: 150_000 }),
+      ],
+      noFilter
+    );
+    expect(result.groups).toHaveLength(1);
+    const [group] = result.groups;
+    expect(group).toMatchObject({
+      typeId: "type-seragam",
+      typeName: "Seragam/Pakaian",
+      counts: { total: 3, warehouse: 1, placed: 2, damaged: 0, lost: 0, value: 350_000 },
+    });
+    expect(group.names.map((n) => [n.name, n.counts.total])).toEqual([
+      ["T-Shirt SPG Hitam", 1],
+      ["T-Shirt SPG Kuning", 1],
+      ["T-Shirt SPG Putih", 1],
+    ]);
+  });
+
+  const mixed = [
+    unit({ condition: "Baik" }),
+    unit({ condition: "Rusak Ringan", destination: "placed", region_id: "reg-1" }),
+    unit({ condition: "Rusak Berat" }),
+    unit({ condition: "Hilang", destination: "placed", region_id: "reg-2" }),
+    unit({ condition: "Dihapusbukukan", acquisition_value: 999_000 }),
+  ];
+
+  it("excludes written-off units by default and counts damaged and lost", () => {
+    expect(summarizeAssetStock(mixed, noFilter).total).toEqual({
+      total: 4,
+      warehouse: 2,
+      placed: 2,
+      damaged: 2,
+      lost: 1,
+      value: 400_000,
+    });
+  });
+
+  it("includes every condition with the 'all' filter, or only the chosen one", () => {
+    expect(summarizeAssetStock(mixed, { ...noFilter, condition: "all" }).total.total).toBe(5);
+    expect(summarizeAssetStock(mixed, { ...noFilter, condition: "Dihapusbukukan" }).total).toMatchObject({
+      total: 1,
+      value: 999_000,
+    });
+  });
+
+  it("counts only units placed in the chosen region, so the warehouse column is zero", () => {
+    const total = summarizeAssetStock(mixed, { ...noFilter, regionId: "reg-1" }).total;
+    expect(total).toMatchObject({ total: 1, warehouse: 0, placed: 1, damaged: 1 });
+  });
+
+  it("filters by brand and drops types left without units", () => {
+    const result = summarizeAssetStock(
+      [
+        unit({ brand_id: "brand-1" }),
+        unit({ brand_id: "brand-2" }),
+        unit({ asset_type_id: "type-cooler", asset_type_name: "Cooler/Chiller", name: "Cooler", brand_id: "brand-2" }),
+      ],
+      { ...noFilter, brandId: "brand-1" }
+    );
+    expect(result.groups.map((g) => [g.typeName, g.counts.total])).toEqual([["Seragam/Pakaian", 1]]);
+  });
+
+  it("sorts types by name and makes the grand total equal the sum of the types", () => {
+    const result = summarizeAssetStock(
+      [
+        unit({}),
+        unit({ asset_type_id: "type-cooler", asset_type_name: "Cooler/Chiller", name: "Cooler", acquisition_value: 5_000_000 }),
+        unit({ asset_type_id: "type-cooler", asset_type_name: "Cooler/Chiller", name: "Cooler", destination: "placed" }),
+      ],
+      noFilter
+    );
+    expect(result.groups.map((g) => g.typeName)).toEqual(["Cooler/Chiller", "Seragam/Pakaian"]);
+    expect(result.groups[0].names).toEqual([
+      { name: "Cooler", counts: { total: 2, warehouse: 1, placed: 1, damaged: 0, lost: 0, value: 5_100_000 } },
+    ]);
+    const summed = result.groups.reduce((s, g) => s + g.counts.total, 0);
+    expect(result.total.total).toBe(summed);
+    expect(result.total.value).toBe(5_200_000);
+  });
+});
+
+describe("resolveAssetView", () => {
+  it("opens the stock summary only for view=ringkasan, defaulting to the unit list", () => {
+    expect(resolveAssetView("ringkasan")).toBe("ringkasan");
+    expect(resolveAssetView(undefined)).toBe("daftar");
+    expect(resolveAssetView("lain")).toBe("daftar");
+    expect(resolveAssetView(["ringkasan"])).toBe("ringkasan");
   });
 });

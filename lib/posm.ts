@@ -469,6 +469,123 @@ export function summarizeAssets(assets: AssetSummaryInput[]): AssetSummary {
 }
 
 // ============================================================
+// RINGKASAN STOK ASSET (Jenis → Nama)
+// ============================================================
+
+export type AssetStockInput = AssetSummaryInput & {
+  asset_type_id: string;
+  asset_type_name: string;
+  name: string;
+  brand_id: string | null;
+  region_id: string | null;
+};
+
+export type AssetStockCounts = {
+  total: number;
+  warehouse: number;
+  placed: number;
+  /** Rusak Ringan + Rusak Berat. */
+  damaged: number;
+  lost: number;
+  value: number;
+};
+
+export type AssetStockNameRow = { name: string; counts: AssetStockCounts };
+export type AssetStockGroup = {
+  typeId: string;
+  typeName: string;
+  counts: AssetStockCounts;
+  names: AssetStockNameRow[];
+};
+export type AssetStockSummary = { groups: AssetStockGroup[]; total: AssetStockCounts };
+
+const emptyStockCounts = (): AssetStockCounts => ({
+  total: 0,
+  warehouse: 0,
+  placed: 0,
+  damaged: 0,
+  lost: 0,
+  value: 0,
+});
+
+function addToStockCounts(c: AssetStockCounts, a: AssetSummaryInput) {
+  c.total += 1;
+  if (a.destination === "warehouse") c.warehouse += 1;
+  else c.placed += 1;
+  if (a.condition === "Rusak Ringan" || a.condition === "Rusak Berat") c.damaged += 1;
+  if (a.condition === "Hilang") c.lost += 1;
+  c.value += Number(a.acquisition_value);
+}
+
+const byName = (a: string, b: string) => a.localeCompare(b, "id-ID");
+
+/** Nilai filter kondisi yang menampilkan semua kondisi, termasuk Dihapusbukukan. */
+export const ASSET_CONDITION_FILTER_ALL = "all";
+
+/** Filter kondisi tab Asset: kosong (default) menyembunyikan asset Dihapusbukukan. */
+export function matchesAssetConditionFilter(condition: AssetCondition, filter: string) {
+  if (filter === "") return condition !== ASSET_WRITTEN_OFF;
+  return filter === ASSET_CONDITION_FILTER_ALL || condition === filter;
+}
+
+/** Filter bersama Daftar Unit dan Ringkasan Stok; string kosong = tidak difilter. */
+export type AssetStockFilters = { brandId: string; regionId: string; condition: string };
+
+/**
+ * Asset Gudang Pusat tidak punya region, jadi filter region hanya meloloskan
+ * unit yang ditempatkan di region tersebut.
+ */
+export function matchesAssetFilters(
+  a: Pick<AssetStockInput, "brand_id" | "region_id" | "condition">,
+  filters: AssetStockFilters
+) {
+  return (
+    (!filters.brandId || a.brand_id === filters.brandId) &&
+    (!filters.regionId || a.region_id === filters.regionId) &&
+    matchesAssetConditionFilter(a.condition, filters.condition)
+  );
+}
+
+/** Ringkasan stok tercatat tab Asset, per Jenis lalu per Nama. */
+export function summarizeAssetStock(assets: AssetStockInput[], filters: AssetStockFilters): AssetStockSummary {
+  const total = emptyStockCounts();
+  const groups = new Map<string, AssetStockGroup & { byName: Map<string, AssetStockNameRow> }>();
+
+  for (const a of assets) {
+    if (!matchesAssetFilters(a, filters)) continue;
+    let group = groups.get(a.asset_type_id);
+    if (!group) {
+      group = {
+        typeId: a.asset_type_id,
+        typeName: a.asset_type_name,
+        counts: emptyStockCounts(),
+        names: [],
+        byName: new Map(),
+      };
+      groups.set(a.asset_type_id, group);
+    }
+    let nameRow = group.byName.get(a.name);
+    if (!nameRow) {
+      nameRow = { name: a.name, counts: emptyStockCounts() };
+      group.byName.set(a.name, nameRow);
+    }
+    addToStockCounts(total, a);
+    addToStockCounts(group.counts, a);
+    addToStockCounts(nameRow.counts, a);
+  }
+
+  return {
+    total,
+    groups: [...groups.values()]
+      .sort((x, y) => byName(x.typeName, y.typeName))
+      .map(({ byName: names, ...g }) => ({
+        ...g,
+        names: [...names.values()].sort((x, y) => byName(x.name, y.name)),
+      })),
+  };
+}
+
+// ============================================================
 // RIWAYAT PENEMPATAN ASSET
 // ============================================================
 // Urutan harus sama dengan view asset_current_status (migrasi 047): tanggal,
@@ -748,4 +865,16 @@ export function auditRecordLabel(table: string, data: Record<string, unknown>, n
     default:
       return String(data.id ?? "—");
   }
+}
+
+// ============================================================
+// TAMPILAN TAB ASSET
+// ============================================================
+
+export type AssetView = "daftar" | "ringkasan";
+
+/** `?view=ringkasan` membuka Ringkasan Stok; selain itu Daftar Unit. */
+export function resolveAssetView(view: string | string[] | undefined): AssetView {
+  const value = Array.isArray(view) ? view[0] : view;
+  return value === "ringkasan" ? "ringkasan" : "daftar";
 }
