@@ -8,6 +8,7 @@ import {
   parseAuditFilters,
   POSM_AUDIT_FIELD_LABELS,
   POSM_AUDIT_TABLE_LABELS,
+  POSM_AUDIT_TABLES,
   availableFrom,
   balanceOf,
   canManagePosm,
@@ -549,6 +550,11 @@ describe("audit gimmick", () => {
     expect(
       auditRecordLabel("gimmick_movements", { item_id: "g1", type: "out", quantity: -24, destination: "event" }, names)
     ).toBe("Keluar -24 • GMK-0001 — Payung Wangzai");
+  });
+
+  it("melabeli record jenis asset dengan namanya", () => {
+    expect(auditRecordLabel("asset_types", { id: "t1", name: "Seragam/Pakaian" }, names)).toBe("Seragam/Pakaian");
+    expect(POSM_AUDIT_TABLES).toContain("asset_types");
   });
 });
 

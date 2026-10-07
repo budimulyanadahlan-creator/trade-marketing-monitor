@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 const tabs = [
   { href: "/admin/master-data/departments", label: "Departemen" },
   { href: "/admin/master-data/brands", label: "Brand" },
+  { href: "/admin/master-data/asset-types", label: "Jenis Asset" },
   { href: "/admin/master-data/regions", label: "Region" },
   { href: "/admin/master-data/channels", label: "Channel" },
   { href: "/admin/master-data/categories", label: "Kategori Promosi" },

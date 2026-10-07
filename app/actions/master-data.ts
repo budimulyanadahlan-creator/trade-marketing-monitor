@@ -191,6 +191,99 @@ export async function deleteBrandAction(
 }
 
 // ============================================================
+// ASSET TYPES (jenis asset Monitoring POSM)
+// ============================================================
+
+const assetTypeSchema = z.object({
+  id: z.string().uuid().optional(),
+  name: z.string().trim().min(1, "Nama jenis asset harus diisi"),
+});
+
+export type SaveAssetTypeState = { error?: string; success?: boolean };
+
+const ASSET_TYPE_DUPLICATE = "Jenis asset dengan nama ini sudah ada (termasuk yang nonaktif).";
+
+function revalidateAssetTypes() {
+  revalidatePath("/admin/master-data/asset-types");
+  revalidatePath("/monitoring-posm");
+}
+
+export async function saveAssetTypeAction(
+  _prevState: SaveAssetTypeState,
+  formData: FormData
+): Promise<SaveAssetTypeState> {
+  try {
+    const { supabase } = await requireAdmin();
+
+    const parsed = assetTypeSchema.safeParse({
+      id: formData.get("id") || undefined,
+      name: formData.get("name") ?? "",
+    });
+
+    if (!parsed.success) {
+      return { error: parsed.error.issues[0]?.message ?? "Input tidak valid" };
+    }
+
+    const { id, ...data } = parsed.data;
+    const { error } = id
+      ? await supabase.from("asset_types").update(data).eq("id", id)
+      : await supabase.from("asset_types").insert(data);
+    if (error) {
+      if (error.code === "23505") return { error: ASSET_TYPE_DUPLICATE };
+      return { error: error.message };
+    }
+
+    revalidateAssetTypes();
+    return { success: true };
+  } catch {
+    return { error: "Anda tidak memiliki akses." };
+  }
+}
+
+export async function toggleAssetTypeActiveAction(
+  id: string,
+  isActive: boolean
+): Promise<{ error?: string }> {
+  try {
+    const { supabase } = await requireAdmin();
+    const { error } = await supabase
+      .from("asset_types")
+      .update({ is_active: isActive })
+      .eq("id", id);
+    if (error) return { error: error.message };
+    revalidateAssetTypes();
+    return {};
+  } catch {
+    return { error: "Anda tidak memiliki akses." };
+  }
+}
+
+/** Soft delete; ditolak trigger asset_types_guard_delete jika jenis pernah dipakai. */
+export async function deleteAssetTypeAction(
+  id: string
+): Promise<{ error?: string }> {
+  try {
+    const { supabase } = await requireAdmin();
+    const { error } = await supabase
+      .from("asset_types")
+      .update({ deleted_at: new Date().toISOString() })
+      .eq("id", id);
+    if (error) {
+      if (error.message.includes("JENIS_ASSET_DIPAKAI"))
+        return {
+          error:
+            "Jenis asset ini sudah dipakai asset sehingga tidak bisa dihapus. Nonaktifkan saja agar tidak muncul di form.",
+        };
+      return { error: error.message };
+    }
+    revalidateAssetTypes();
+    return {};
+  } catch {
+    return { error: "Anda tidak memiliki akses." };
+  }
+}
+
+// ============================================================
 // REGIONS
 // ============================================================
 

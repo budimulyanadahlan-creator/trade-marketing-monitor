@@ -30,7 +30,7 @@ export default async function MasterDataLayout({
       <div>
         <h1 className="text-2xl font-bold text-slate-100">Master Data</h1>
         <p className="text-slate-400 text-sm mt-1">
-          Kelola data referensi: Brand, Region, Channel, Kategori Promosi, Vendor, Budget
+          Kelola data referensi: Brand, Jenis Asset, Region, Channel, Kategori Promosi, Vendor, Budget
         </p>
       </div>
       <MasterDataNav />

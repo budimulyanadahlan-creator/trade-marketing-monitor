@@ -553,6 +553,7 @@ export const POSM_AUDIT_TABLES = [
   "asset_placements",
   "gimmick_items",
   "gimmick_movements",
+  "asset_types",
 ] as const;
 export type PosmAuditTable = (typeof POSM_AUDIT_TABLES)[number];
 
@@ -563,6 +564,7 @@ export const POSM_AUDIT_TABLE_LABELS: Record<PosmAuditTable, string> = {
   asset_placements: "Penempatan Asset",
   gimmick_items: "Item Gimmick",
   gimmick_movements: "Mutasi Gimmick",
+  asset_types: "Jenis Asset",
 };
 
 export const POSM_AUDIT_ACTIONS: readonly PosmAuditAction[] = ["insert", "update", "soft_delete"];
@@ -741,6 +743,8 @@ export function auditRecordLabel(table: string, data: Record<string, unknown>, n
       const place = data.destination === "placed" && data.store_name ? `${destination}: ${data.store_name}` : destination;
       return `${place} • ${ref(data.asset_id)}`;
     }
+    case "asset_types":
+      return String(data.name ?? "—");
     default:
       return String(data.id ?? "—");
   }
