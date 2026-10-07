@@ -65,14 +65,21 @@ export default async function PosmAuditPage({ searchParams }: { searchParams: Se
   if (filters.to) query = query.lte("changed_at", `${filters.to}T23:59:59.999+07:00`);
 
   const offset = (filters.page - 1) * POSM_AUDIT_PAGE_SIZE;
-  const [{ data: logs, count }, { data: users }, { data: brands }, { data: regions }, { data: distributors }] =
-    await Promise.all([
-      query.order("changed_at", { ascending: false }).range(offset, offset + POSM_AUDIT_PAGE_SIZE - 1),
-      supabase.from("users").select("id, full_name, role").order("full_name"),
-      supabase.from("brands").select("id, name"),
-      supabase.from("regions").select("id, name"),
-      supabase.from("distributors").select("id, name"),
-    ]);
+  const [
+    { data: logs, count },
+    { data: users },
+    { data: brands },
+    { data: regions },
+    { data: distributors },
+    { data: assetTypes },
+  ] = await Promise.all([
+    query.order("changed_at", { ascending: false }).range(offset, offset + POSM_AUDIT_PAGE_SIZE - 1),
+    supabase.from("users").select("id, full_name, role").order("full_name"),
+    supabase.from("brands").select("id, name"),
+    supabase.from("regions").select("id, name"),
+    supabase.from("distributors").select("id, name"),
+    supabase.from("asset_types").select("id, name"),
+  ]);
 
   const entries = (logs ?? []) as PosmAuditLogRow[];
 
@@ -115,6 +122,7 @@ export default async function PosmAuditPage({ searchParams }: { searchParams: Se
     ...(brands ?? []).map((b) => [b.id, b.name] as const),
     ...(regions ?? []).map((r) => [r.id, r.name] as const),
     ...(distributors ?? []).map((d) => [d.id, d.name] as const),
+    ...(assetTypes ?? []).map((t) => [t.id, t.name] as const),
     ...(items ?? []).map((i) => [i.id, `${i.code} — ${i.name}`] as const),
     ...(gimmickItems ?? []).map((i) => [i.id, `${i.code} — ${i.name}`] as const),
     ...(assets ?? []).map((a) => [a.id, `${a.code} — ${a.name}`] as const),

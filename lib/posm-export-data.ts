@@ -9,7 +9,7 @@ import type { AssetExportRow, PosmExportData, PosmMovementExportRow } from "@/li
 import { loadPosmOutRekap } from "@/lib/posm-rekap-data";
 import { formatDate } from "@/lib/utils";
 import { withCampaignRefs } from "@/app/(protected)/monitoring-posm/campaign-refs";
-import type { AssetType, PosmMovementType } from "@/types/database";
+import type { PosmMovementType } from "@/types/database";
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
 
@@ -132,7 +132,7 @@ export async function loadPosmExportData(
     loadPosmOutRekap(supabase, filters.rekap),
     supabase
       .from("marketing_assets")
-      .select("id, code, name, asset_type, serial_number, acquisition_date, acquisition_value, brand:brands(name)")
+      .select("id, code, name, serial_number, acquisition_date, acquisition_value, brand:brands(name), asset_type:asset_types(name)")
       .is("deleted_at", null)
       .order("code"),
     supabase
@@ -174,7 +174,7 @@ export async function loadPosmExportData(
       {
         code: a.code,
         name: a.name,
-        asset_type: a.asset_type as AssetType,
+        asset_type: (a.asset_type as { name: string } | null)?.name ?? "—",
         brand_name: (a.brand as { name: string } | null)?.name ?? null,
         serial_number: a.serial_number,
         acquisition_date: a.acquisition_date,

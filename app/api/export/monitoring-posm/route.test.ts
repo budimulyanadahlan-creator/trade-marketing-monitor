@@ -63,7 +63,7 @@ const TABLES = {
       id: "ast-1",
       code: "AST-0001",
       name: "Cooler",
-      asset_type: "Cooler/Chiller",
+      asset_type: { name: "Cooler/Chiller" },
       serial_number: null,
       acquisition_date: "2026-01-15",
       acquisition_value: "5000000",

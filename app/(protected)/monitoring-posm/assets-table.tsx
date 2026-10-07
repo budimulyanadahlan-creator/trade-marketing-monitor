@@ -34,7 +34,7 @@ import {
 import { AlertCircle, ArrowRightLeft, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { filterBySearch } from "@/lib/search";
-import { ASSET_CONDITIONS, ASSET_DESTINATION_LABELS, ASSET_TYPES, ASSET_WRITTEN_OFF } from "@/lib/posm";
+import { ASSET_CONDITIONS, ASSET_DESTINATION_LABELS, ASSET_WRITTEN_OFF } from "@/lib/posm";
 import { formatIDR } from "@/lib/utils";
 import type { AssetCondition, AssetDestination, MarketingAssetRow } from "@/types/database";
 import { PlacementDialog } from "./placement-dialog";
@@ -45,12 +45,14 @@ export type AssetListRow = Pick<
   | "id"
   | "code"
   | "name"
-  | "asset_type"
+  | "asset_type_id"
   | "brand_id"
   | "serial_number"
   | "acquisition_date"
   | "acquisition_value"
 > & {
+  /** Nama dari master asset_types. */
+  asset_type_name: string;
   brand_name: string | null;
   // Dari catatan penempatan terakhir (view asset_current_status).
   condition: AssetCondition;
@@ -88,6 +90,7 @@ function todayIso() {
 
 function AssetDialog({
   asset,
+  assetTypes,
   brands,
   regions,
   distributors,
@@ -95,6 +98,7 @@ function AssetDialog({
   trigger,
 }: {
   asset: AssetListRow | null;
+  assetTypes: Option[];
   brands: Option[];
   regions: Option[];
   distributors: Option[];
@@ -119,6 +123,8 @@ function AssetDialog({
   );
 
   const brandOptions = brands.filter((b) => b.is_active || b.id === asset?.brand_id);
+  // Jenis nonaktif tetap bisa dipertahankan oleh asset yang sudah memakainya.
+  const typeOptions = assetTypes.filter((t) => t.is_active || t.id === asset?.asset_type_id);
 
   return (
     <Dialog
@@ -177,15 +183,15 @@ function AssetDialog({
               <Label htmlFor="asset-type">Jenis</Label>
               <Select
                 id="asset-type"
-                name="asset_type"
-                defaultValue={asset?.asset_type ?? ""}
+                name="asset_type_id"
+                defaultValue={asset?.asset_type_id ?? ""}
                 placeholder="Pilih jenis"
                 required
                 disabled={isPending}
               >
-                {ASSET_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
+                {typeOptions.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
                   </option>
                 ))}
               </Select>
@@ -444,6 +450,7 @@ function matchesCondition(condition: AssetCondition, filter: string) {
 
 export function AssetsTable({
   assets,
+  assetTypes,
   brands,
   regions,
   distributors,
@@ -452,6 +459,7 @@ export function AssetsTable({
   suggestedCode,
 }: {
   assets: AssetListRow[];
+  assetTypes: Option[];
   brands: Option[];
   regions: Option[];
   distributors: Option[];
@@ -468,7 +476,7 @@ export function AssetsTable({
   const filtered = useMemo(() => {
     const byFilters = assets.filter(
       (a) =>
-        (!typeFilter || a.asset_type === typeFilter) &&
+        (!typeFilter || a.asset_type_id === typeFilter) &&
         (!brandFilter || a.brand_id === brandFilter) &&
         matchesCondition(a.condition, conditionFilter) &&
         (!regionFilter || a.region_id === regionFilter)
@@ -521,9 +529,9 @@ export function AssetsTable({
             className="h-9 w-40"
           >
             <option value="">Semua jenis</option>
-            {ASSET_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {t}
+            {assetTypes.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
               </option>
             ))}
           </Select>
@@ -570,6 +578,7 @@ export function AssetsTable({
           {canManage && (
             <AssetDialog
               asset={null}
+              assetTypes={assetTypes}
               brands={brands}
               regions={regions}
               distributors={distributors}
@@ -620,7 +629,7 @@ export function AssetsTable({
                       </div>
                     </div>
                   </TableCell>
-                  <TableCell className="text-slate-300">{asset.asset_type}</TableCell>
+                  <TableCell className="text-slate-300">{asset.asset_type_name}</TableCell>
                   <TableCell className="text-slate-400">{asset.brand_name ?? "—"}</TableCell>
                   <TableCell>
                     <AssetConditionBadge condition={asset.condition} />
@@ -636,6 +645,7 @@ export function AssetsTable({
                       <div className="flex items-center justify-end gap-2">
                         <AssetDialog
                           asset={asset}
+                          assetTypes={assetTypes}
                           brands={brands}
                           regions={regions}
                           distributors={distributors}

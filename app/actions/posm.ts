@@ -6,7 +6,6 @@ import { z } from "zod";
 import { formatDate } from "@/lib/utils";
 import {
   ASSET_CONDITIONS,
-  ASSET_TYPES,
   availableFrom,
   findBalanceViolation,
   placementDateViolation,
@@ -19,7 +18,6 @@ import {
 import type {
   AssetCondition,
   AssetDestination,
-  AssetType,
   PosmCategory,
   PosmMovementType,
   PosmUnit,
@@ -369,7 +367,10 @@ const assetMasterSchema = z.object({
     .max(30, "Kode maksimal 30 karakter")
     .transform((v) => v.toUpperCase()),
   name: z.string({ error: "Nama asset harus diisi" }).trim().min(1, "Nama asset harus diisi"),
-  asset_type: z.enum(ASSET_TYPES as [AssetType, ...AssetType[]], { error: "Jenis asset tidak valid" }),
+  asset_type_id: z
+    .string({ error: "Jenis asset harus dipilih" })
+    .min(1, "Jenis asset harus dipilih")
+    .uuid("Jenis asset tidak valid"),
   brand_id: z.string().uuid("Brand tidak valid").optional(),
   serial_number: z.string().trim().optional(),
   acquisition_date: z
@@ -448,6 +449,35 @@ function assetErrorMessage(error: { message: string; code?: string }, code: stri
   return error.message;
 }
 
+const ASSET_TYPE_INACTIVE = "Jenis asset sudah tidak aktif. Pilih jenis lain.";
+
+/**
+ * Jenis harus ada di asset_types. Jenis nonaktif hanya boleh dipertahankan
+ * oleh asset yang sudah memakainya (saat edit), tidak untuk asset baru.
+ */
+async function assetTypeError(
+  supabase: Awaited<ReturnType<typeof requirePosmWriter>>["supabase"],
+  typeId: string,
+  assetId: string | undefined
+): Promise<string | undefined> {
+  const { data: type } = await supabase
+    .from("asset_types")
+    .select("id, is_active")
+    .eq("id", typeId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!type) return "Jenis asset tidak valid";
+  if (type.is_active) return undefined;
+  if (!assetId) return ASSET_TYPE_INACTIVE;
+
+  const { data: current } = await supabase
+    .from("marketing_assets")
+    .select("asset_type_id")
+    .eq("id", assetId)
+    .maybeSingle();
+  return current?.asset_type_id === typeId ? undefined : ASSET_TYPE_INACTIVE;
+}
+
 export async function saveMarketingAssetAction(
   _prevState: SaveMarketingAssetState,
   formData: FormData
@@ -459,7 +489,7 @@ export async function saveMarketingAssetAction(
       id: optionalText(formData.get("id")),
       code: formData.get("code") ?? undefined,
       name: formData.get("name") ?? undefined,
-      asset_type: formData.get("asset_type") ?? undefined,
+      asset_type_id: formData.get("asset_type_id") ?? undefined,
       brand_id: optionalText(formData.get("brand_id")),
       serial_number: optionalText(formData.get("serial_number")),
       acquisition_date: formData.get("acquisition_date") ?? undefined,
@@ -468,10 +498,14 @@ export async function saveMarketingAssetAction(
     if (!master.success) return { error: master.error.issues[0]?.message ?? "Input tidak valid" };
 
     const { id, ...a } = master.data;
+
+    const typeError = await assetTypeError(supabase, a.asset_type_id, id);
+    if (typeError) return { error: typeError };
+
     const assetData = {
       code: a.code,
       name: a.name,
-      asset_type: a.asset_type,
+      asset_type_id: a.asset_type_id,
       brand_id: a.brand_id ?? null,
       serial_number: a.serial_number ?? null,
       acquisition_date: a.acquisition_date,
@@ -499,7 +533,7 @@ export async function saveMarketingAssetAction(
     const { data: newId, error } = await supabase.rpc("create_marketing_asset", {
       p_code: assetData.code,
       p_name: assetData.name,
-      p_asset_type: assetData.asset_type,
+      p_asset_type_id: assetData.asset_type_id,
       p_brand_id: assetData.brand_id,
       p_serial_number: assetData.serial_number,
       p_acquisition_date: assetData.acquisition_date,

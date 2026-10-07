@@ -5,7 +5,6 @@
 import type {
   AssetCondition,
   AssetDestination,
-  AssetType,
   GimmickDestination,
   PosmAuditAction,
   PosmCategory,
@@ -409,16 +408,8 @@ export function parsePosmExportParams(
 // ASSET MARKETING
 // ============================================================
 
-// Daftar tetap — harus sama dengan check constraint marketing_assets dan
-// asset_placements (migrasi 046).
-export const ASSET_TYPES: readonly AssetType[] = [
-  "Cooler/Chiller",
-  "Rak Display",
-  "Gondola",
-  "Standing Banner",
-  "Tenda/Booth",
-  "Lainnya",
-];
+// Jenis asset ada di tabel asset_types (migrasi 061).
+// Daftar tetap — harus sama dengan check constraint asset_placements (migrasi 046).
 export const ASSET_CONDITIONS: readonly AssetCondition[] = [
   "Baik",
   "Rusak Ringan",
@@ -663,6 +654,7 @@ export const POSM_AUDIT_FIELD_LABELS: Record<string, string> = {
   campaign_id: "SKP",
   notes: "Keterangan",
   asset_type: "Jenis",
+  asset_type_id: "Jenis",
   serial_number: "Nomor Seri / Merk",
   acquisition_date: "Tanggal Perolehan",
   acquisition_value: "Nilai Perolehan",
@@ -693,6 +685,7 @@ export const POSM_AUDIT_REFERENCE_FIELDS = [
   "distributor_id",
   "campaign_id",
   "asset_id",
+  "asset_type_id",
 ] as const;
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;

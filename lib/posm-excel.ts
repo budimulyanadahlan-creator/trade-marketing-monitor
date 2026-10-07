@@ -10,7 +10,6 @@ import {
 import type {
   AssetCondition,
   AssetDestination,
-  AssetType,
   PosmCategory,
   PosmMovementType,
   PosmUnit,
@@ -78,7 +77,8 @@ export type PosmMovementExportRow = {
 export type AssetExportRow = {
   code: string;
   name: string;
-  asset_type: AssetType;
+  /** Nama jenis dari master asset_types. */
+  asset_type: string;
   brand_name: string | null;
   serial_number: string | null;
   acquisition_date: string;

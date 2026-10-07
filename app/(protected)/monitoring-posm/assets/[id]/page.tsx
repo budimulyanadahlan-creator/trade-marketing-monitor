@@ -24,7 +24,7 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
   ] = await Promise.all([
     supabase
       .from("marketing_assets")
-      .select("id, code, name, asset_type, serial_number, acquisition_date, acquisition_value, photo_path, brand:brands(name)")
+      .select("id, code, name, serial_number, acquisition_date, acquisition_value, photo_path, brand:brands(name), asset_type:asset_types(name)")
       .eq("id", id)
       .is("deleted_at", null)
       .maybeSingle(),
@@ -69,10 +69,11 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
 
   const canDelete = (placementCountAll ?? 0) <= 1;
   const brandName = (asset.brand as { name: string } | null)?.name;
+  const typeName = (asset.asset_type as { name: string } | null)?.name ?? "—";
   const label = `${asset.code} — ${asset.name}`;
 
   const details: [string, React.ReactNode][] = [
-    ["Jenis", asset.asset_type],
+    ["Jenis", typeName],
     ["Brand", brandName ?? "—"],
     ["Nomor Seri / Merk", asset.serial_number ?? "—"],
     ["Tanggal Perolehan", formatDate(asset.acquisition_date)],
@@ -95,7 +96,7 @@ export default async function AssetDetailPage({ params }: { params: Promise<{ id
           <div className="space-y-1">
             <code className="rounded bg-white/5 px-2 py-0.5 text-xs text-slate-300">{asset.code}</code>
             <h1 className="text-2xl font-bold text-slate-100">{asset.name}</h1>
-            <p className="text-sm text-slate-400">{asset.asset_type}</p>
+            <p className="text-sm text-slate-400">{typeName}</p>
             {isAdmin && <AuditHistoryLink recordId={asset.id} />}
           </div>
         </div>

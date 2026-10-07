@@ -8,6 +8,12 @@ const { AssetsTable } = await import("./assets-table");
 
 afterEach(() => cleanup());
 
+const assetTypes = [
+  { id: "type-cooler", name: "Cooler/Chiller", is_active: true },
+  { id: "type-rak", name: "Rak Display", is_active: true },
+  { id: "type-tenda", name: "Tenda/Booth", is_active: false },
+  { id: "type-seragam", name: "Seragam/Pakaian", is_active: true },
+];
 const brands = [{ id: "brand-1", name: "Produk A", is_active: true }];
 const regions = [
   { id: "reg-1", name: "Jawa Barat", is_active: true },
@@ -28,15 +34,16 @@ const base = {
 };
 
 const assets: AssetListRow[] = [
-  { ...base, id: "a1", code: "AST-0001", name: "Cooler Showcase", asset_type: "Cooler/Chiller", brand_id: "brand-1", brand_name: "Produk A", acquisition_value: 7_500_000, condition: "Baik", destination: "placed", region_id: "reg-1", region_name: "Jawa Barat", distributor_name: "PT Sumber Rejeki", store_name: "Toko Maju Jaya", can_delete: false, photo_url: "https://storage.test/a1.jpg" },
-  { ...base, id: "a2", code: "AST-0002", name: "Rak Display Besi", asset_type: "Rak Display", acquisition_value: 1_200_000, condition: "Rusak Ringan", destination: "warehouse", can_delete: true },
-  { ...base, id: "a3", code: "AST-0003", name: "Tenda Lama", asset_type: "Tenda/Booth", acquisition_value: 500_000, condition: "Dihapusbukukan", destination: "warehouse", can_delete: false },
+  { ...base, id: "a1", code: "AST-0001", name: "Cooler Showcase", asset_type_id: "type-cooler", asset_type_name: "Cooler/Chiller", brand_id: "brand-1", brand_name: "Produk A", acquisition_value: 7_500_000, condition: "Baik", destination: "placed", region_id: "reg-1", region_name: "Jawa Barat", distributor_name: "PT Sumber Rejeki", store_name: "Toko Maju Jaya", can_delete: false, photo_url: "https://storage.test/a1.jpg" },
+  { ...base, id: "a2", code: "AST-0002", name: "Rak Display Besi", asset_type_id: "type-rak", asset_type_name: "Rak Display", acquisition_value: 1_200_000, condition: "Rusak Ringan", destination: "warehouse", can_delete: true },
+  { ...base, id: "a3", code: "AST-0003", name: "Tenda Lama", asset_type_id: "type-tenda", asset_type_name: "Tenda/Booth", acquisition_value: 500_000, condition: "Dihapusbukukan", destination: "warehouse", can_delete: false },
 ];
 
 function renderTable(canManage: boolean) {
   return render(
     <AssetsTable
       assets={assets}
+      assetTypes={assetTypes}
       brands={brands}
       regions={regions}
       distributors={distributors}
@@ -48,6 +55,26 @@ function renderTable(canManage: boolean) {
 }
 
 describe("AssetsTable", () => {
+  it("shows the asset type name from the asset_types master", () => {
+    renderTable(false);
+    expect(within(screen.getByText("Cooler Showcase").closest("tr")!).getByText("Cooler/Chiller")).toBeTruthy();
+  });
+
+  it("filters by asset type id, listing every type including inactive ones", () => {
+    renderTable(false);
+    const filter = screen.getByLabelText("Filter jenis") as HTMLSelectElement;
+    expect([...filter.options].map((o) => o.text)).toEqual([
+      "Semua jenis",
+      "Cooler/Chiller",
+      "Rak Display",
+      "Tenda/Booth",
+      "Seragam/Pakaian",
+    ]);
+    fireEvent.change(filter, { target: { value: "type-rak" } });
+    expect(screen.getByText("Rak Display Besi")).toBeTruthy();
+    expect(screen.queryByText("Cooler Showcase")).toBeNull();
+  });
+
   it("shows current location and condition from the latest placement", () => {
     renderTable(false);
     const placedRow = screen.getByText("Cooler Showcase").closest("tr")!;

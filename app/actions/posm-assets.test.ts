@@ -12,6 +12,10 @@ type DbError = { message: string; code?: string } | null;
 
 const REGION_ID = "44444444-4444-4444-8444-444444444444";
 const DISTRIBUTOR_ID = "55555555-5555-4555-8555-555555555555";
+const COOLER_TYPE_ID = "11111111-1111-4111-8111-111111111111";
+const RAK_TYPE_ID = "22222222-2222-4222-8222-222222222222";
+
+type AssetTypeMock = { id: string; is_active: boolean } | null;
 
 function setupMocks({
   role = "user",
@@ -19,16 +23,30 @@ function setupMocks({
   rpcError = null,
   placementCount = 1,
   updateError = null,
+  assetType = { id: COOLER_TYPE_ID, is_active: true },
+  currentTypeId = COOLER_TYPE_ID,
 }: {
   role?: string;
   department?: string | null;
   rpcError?: DbError;
   placementCount?: number;
   updateError?: DbError;
+  assetType?: AssetTypeMock;
+  currentTypeId?: string;
 } = {}) {
   const assetsIs = vi.fn().mockResolvedValue({ error: updateError });
   const assetsEq = vi.fn().mockReturnValue({ is: assetsIs });
-  const assets = { update: vi.fn().mockReturnValue({ eq: assetsEq }), eq: assetsEq, is: assetsIs };
+  const currentAsset = vi.fn().mockResolvedValue({ data: { asset_type_id: currentTypeId } });
+  const assets = {
+    update: vi.fn().mockReturnValue({ eq: assetsEq }),
+    select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ maybeSingle: currentAsset }) }),
+    eq: assetsEq,
+    is: assetsIs,
+  };
+  const typeEq = vi.fn().mockReturnValue({
+    is: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: assetType }) }),
+  });
+  const assetTypes = { select: vi.fn().mockReturnValue({ eq: typeEq }), eq: typeEq };
   const placementsEq = vi.fn().mockResolvedValue({ count: placementCount, error: null });
   const placements = { select: vi.fn().mockReturnValue({ eq: placementsEq }), eq: placementsEq };
 
@@ -46,11 +64,12 @@ function setupMocks({
         };
       if (table === "marketing_assets") return assets;
       if (table === "asset_placements") return placements;
+      if (table === "asset_types") return assetTypes;
       return {};
     }),
   };
   (createClient as ReturnType<typeof vi.fn>).mockResolvedValue(client);
-  return { ...client, assets, placements };
+  return { ...client, assets, placements, assetTypes };
 }
 
 function formDataOf(entries: Record<string, string>) {
@@ -62,7 +81,7 @@ function formDataOf(entries: Record<string, string>) {
 const validAsset = {
   code: "ast-0001",
   name: "Cooler Showcase 2 Pintu",
-  asset_type: "Cooler/Chiller",
+  asset_type_id: COOLER_TYPE_ID,
   acquisition_date: "2026-01-15",
   acquisition_value: "7500000",
   event_date: "2026-02-01",
@@ -84,7 +103,7 @@ describe("saveMarketingAssetAction (new asset)", () => {
     expect(client.rpc).toHaveBeenCalledWith("create_marketing_asset", {
       p_code: "AST-0001",
       p_name: "Cooler Showcase 2 Pintu",
-      p_asset_type: "Cooler/Chiller",
+      p_asset_type_id: COOLER_TYPE_ID,
       p_brand_id: null,
       p_serial_number: null,
       p_acquisition_date: "2026-01-15",
@@ -170,6 +189,43 @@ describe("saveMarketingAssetAction initial placement", () => {
   });
 });
 
+describe("saveMarketingAssetAction asset type", () => {
+  it("looks up the chosen type among non-deleted asset types", async () => {
+    const client = setupMocks();
+
+    await saveMarketingAssetAction({}, formDataOf(validAsset));
+
+    expect(client.assetTypes.eq).toHaveBeenCalledWith("id", COOLER_TYPE_ID);
+  });
+
+  it("rejects a type that does not exist", async () => {
+    const client = setupMocks({ assetType: null });
+
+    const result = await saveMarketingAssetAction({}, formDataOf(validAsset));
+
+    expect(result.error).toBe("Jenis asset tidak valid");
+    expect(client.rpc).not.toHaveBeenCalled();
+  });
+
+  it("rejects an inactive type for a new asset", async () => {
+    const client = setupMocks({ assetType: { id: COOLER_TYPE_ID, is_active: false } });
+
+    const result = await saveMarketingAssetAction({}, formDataOf(validAsset));
+
+    expect(result.error).toBe("Jenis asset sudah tidak aktif. Pilih jenis lain.");
+    expect(client.rpc).not.toHaveBeenCalled();
+  });
+
+  it("rejects a missing type id", async () => {
+    const client = setupMocks();
+
+    const result = await saveMarketingAssetAction({}, formDataOf({ ...validAsset, asset_type_id: "" }));
+
+    expect(result.error).toBe("Jenis asset harus dipilih");
+    expect(client.rpc).not.toHaveBeenCalled();
+  });
+});
+
 describe("saveMarketingAssetAction access and errors", () => {
   it("rejects a reader from a non-writer department", async () => {
     const client = setupMocks({ role: "manager", department: "Sales" });
@@ -192,8 +248,17 @@ describe("saveMarketingAssetAction access and errors", () => {
 describe("saveMarketingAssetAction (edit)", () => {
   const ASSET_ID = "77777777-7777-4777-8777-777777777777";
 
+  const editForm = {
+    id: ASSET_ID,
+    code: "ast-0009",
+    name: "Rak Display Besi",
+    asset_type_id: RAK_TYPE_ID,
+    acquisition_date: "2025-12-01",
+    acquisition_value: "1200000",
+  };
+
   it("updates only the master data of a non-deleted asset", async () => {
-    const client = setupMocks();
+    const client = setupMocks({ assetType: { id: RAK_TYPE_ID, is_active: true } });
 
     const result = await saveMarketingAssetAction(
       {},
@@ -201,7 +266,7 @@ describe("saveMarketingAssetAction (edit)", () => {
         id: ASSET_ID,
         code: "ast-0009",
         name: "Rak Display Besi",
-        asset_type: "Rak Display",
+        asset_type_id: RAK_TYPE_ID,
         serial_number: "SN-123",
         acquisition_date: "2025-12-01",
         acquisition_value: "1200000",
@@ -213,7 +278,7 @@ describe("saveMarketingAssetAction (edit)", () => {
     expect(client.assets.update).toHaveBeenCalledWith({
       code: "AST-0009",
       name: "Rak Display Besi",
-      asset_type: "Rak Display",
+      asset_type_id: RAK_TYPE_ID,
       brand_id: null,
       serial_number: "SN-123",
       acquisition_date: "2025-12-01",
@@ -221,6 +286,24 @@ describe("saveMarketingAssetAction (edit)", () => {
     });
     expect(client.assets.eq).toHaveBeenCalledWith("id", ASSET_ID);
     expect(client.assets.is).toHaveBeenCalledWith("deleted_at", null);
+  });
+
+  it("keeps an inactive type the asset already uses", async () => {
+    const client = setupMocks({ assetType: { id: RAK_TYPE_ID, is_active: false }, currentTypeId: RAK_TYPE_ID });
+
+    const result = await saveMarketingAssetAction({}, formDataOf(editForm));
+
+    expect(result.success).toBe(true);
+    expect(client.assets.update).toHaveBeenCalled();
+  });
+
+  it("refuses switching an asset to an inactive type", async () => {
+    const client = setupMocks({ assetType: { id: RAK_TYPE_ID, is_active: false }, currentTypeId: COOLER_TYPE_ID });
+
+    const result = await saveMarketingAssetAction({}, formDataOf(editForm));
+
+    expect(result.error).toBe("Jenis asset sudah tidak aktif. Pilih jenis lain.");
+    expect(client.assets.update).not.toHaveBeenCalled();
   });
 });
 

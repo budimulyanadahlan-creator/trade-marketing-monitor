@@ -142,6 +142,7 @@ async function AssetTab({ canManage }: { canManage: boolean }) {
   const [
     { data: assets },
     { data: statuses },
+    { data: assetTypes },
     { data: brands },
     { data: regions },
     { data: distributors },
@@ -150,13 +151,14 @@ async function AssetTab({ canManage }: { canManage: boolean }) {
     supabase
       .from("marketing_assets")
       .select(
-        "id, code, name, asset_type, brand_id, serial_number, acquisition_date, acquisition_value, photo_path, brand:brands(name)"
+        "id, code, name, asset_type_id, brand_id, serial_number, acquisition_date, acquisition_value, photo_path, brand:brands(name), asset_type:asset_types(name)"
       )
       .is("deleted_at", null)
       .order("code"),
     supabase
       .from("asset_current_status")
       .select("asset_id, destination, region_id, distributor_id, store_name, condition, placement_count_all"),
+    supabase.from("asset_types").select("id, name, is_active").is("deleted_at", null).order("name"),
     supabase.from("brands").select("id, name, is_active").order("name"),
     supabase.from("regions").select("id, name, is_active").order("name"),
     supabase.from("distributors").select("id, name, is_active").order("name"),
@@ -170,13 +172,14 @@ async function AssetTab({ canManage }: { canManage: boolean }) {
 
   // Kondisi & lokasi dari catatan penempatan terakhir. Database menjamin
   // setiap asset punya penempatan; asset tanpa status dilewati.
-  const rows: AssetListRow[] = (assets ?? []).flatMap(({ brand, photo_path, ...asset }) => {
+  const rows: AssetListRow[] = (assets ?? []).flatMap(({ brand, asset_type, photo_path, ...asset }) => {
     const s = statusByAsset.get(asset.id);
     if (!s) return [];
     return [
       {
         ...asset,
         acquisition_value: Number(asset.acquisition_value),
+        asset_type_name: (asset_type as { name: string } | null)?.name ?? "—",
         brand_name: (brand as { name: string } | null)?.name ?? null,
         condition: s.condition,
         destination: s.destination,
@@ -213,6 +216,7 @@ async function AssetTab({ canManage }: { canManage: boolean }) {
 
       <AssetsTable
         assets={rows}
+        assetTypes={assetTypes ?? []}
         brands={brands ?? []}
         regions={regions ?? []}
         distributors={distributors ?? []}

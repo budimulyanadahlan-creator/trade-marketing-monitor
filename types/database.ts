@@ -405,13 +405,17 @@ export type PosmStockBalanceRow = {
   movement_count_all: number;
 };
 
-export type AssetType =
-  | "Cooler/Chiller"
-  | "Rak Display"
-  | "Gondola"
-  | "Standing Banner"
-  | "Tenda/Booth"
-  | "Lainnya";
+// Master jenis asset (migrasi 061), menggantikan daftar tetap.
+export type AssetTypeRow = {
+  id: string;
+  name: string;
+  is_active: boolean;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+};
 export type AssetCondition = "Baik" | "Rusak Ringan" | "Rusak Berat" | "Hilang" | "Dihapusbukukan";
 export type AssetDestination = "warehouse" | "placed";
 
@@ -419,7 +423,7 @@ export type MarketingAssetRow = {
   id: string;
   code: string;
   name: string;
-  asset_type: AssetType;
+  asset_type_id: string;
   brand_id: string | null;
   serial_number: string | null;
   acquisition_date: string;
@@ -1246,7 +1250,7 @@ export type Database = {
           id?: string;
           code: string;
           name: string;
-          asset_type: AssetType;
+          asset_type_id: string;
           brand_id?: string | null;
           serial_number?: string | null;
           acquisition_date: string;
@@ -1265,8 +1269,29 @@ export type Database = {
             isOneToOne: false;
             referencedRelation: "brands";
             referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "marketing_assets_asset_type_id_fkey";
+            columns: ["asset_type_id"];
+            isOneToOne: false;
+            referencedRelation: "asset_types";
+            referencedColumns: ["id"];
           }
         ];
+      };
+      asset_types: {
+        Row: AssetTypeRow;
+        Insert: {
+          id?: string;
+          name: string;
+          is_active?: boolean;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Update: Partial<Omit<AssetTypeRow, "id" | "created_at" | "created_by">>;
+        Relationships: [];
       };
       asset_placements: {
         Row: AssetPlacementRow;
@@ -1555,7 +1580,7 @@ export type Database = {
         Args: {
           p_code: string;
           p_name: string;
-          p_asset_type: AssetType;
+          p_asset_type_id: string;
           p_brand_id: string | null;
           p_serial_number: string | null;
           p_acquisition_date: string;
