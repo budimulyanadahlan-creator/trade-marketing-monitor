@@ -164,19 +164,21 @@ export function PhotoField({
 
 // ---- Simpan perubahan foto setelah data tersimpan ----
 
-async function applyPhotoChange(kind: PosmPhotoKind, id: string, change: PhotoChange): Promise<string | null> {
+// Beberapa id (asset yang didaftarkan sekaligus) memakai satu unggahan;
+// hapus foto hanya berlaku untuk satu record.
+async function applyPhotoChange(kind: PosmPhotoKind, ids: string[], change: PhotoChange): Promise<string | null> {
   let res: Response;
   if (change.file) {
     const body = new FormData();
     body.set("kind", kind);
-    body.set("id", id);
+    for (const id of ids) body.append("id", id);
     body.set("file", change.file);
     res = await fetch("/api/posm-photo", { method: "POST", body });
   } else if (change.remove) {
     res = await fetch("/api/posm-photo", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ kind, id }),
+      body: JSON.stringify({ kind, id: ids[0] }),
     });
   } else {
     return null;
@@ -194,9 +196,10 @@ export function usePhotoChange(kind: PosmPhotoKind) {
   const router = useRouter();
   const [change, setChange] = useState<PhotoChange>(NO_CHANGE);
 
-  async function save(id: string | undefined) {
-    if (!id || (!change.file && !change.remove)) return;
-    const error = await applyPhotoChange(kind, id, change);
+  async function save(id: string | string[] | undefined) {
+    const ids = id === undefined ? [] : Array.isArray(id) ? id : [id];
+    if (ids.length === 0 || (!change.file && !change.remove)) return;
+    const error = await applyPhotoChange(kind, ids, change);
     if (error) toast.error(`Data tersimpan, tetapi foto gagal disimpan: ${error}`);
     router.refresh();
   }

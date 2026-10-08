@@ -262,3 +262,36 @@ describe("AssetsTable — tautan Ringkasan Stok ke Daftar Unit", () => {
     expect(listedNames()).toEqual(["Tenda Lama"]);
   });
 });
+
+describe("AssetsTable register dialog", () => {
+  function openRegisterDialog() {
+    renderTable(true);
+    fireEvent.click(screen.getByText("Daftarkan Asset"));
+  }
+
+  it("registers one unit by default, with a serial number field", () => {
+    openRegisterDialog();
+    expect((screen.getByLabelText("Jumlah Unit") as HTMLInputElement).value).toBe("1");
+    expect(screen.getByLabelText("Nomor Seri / Merk (opsional)")).toBeTruthy();
+    expect(screen.queryByText(/s\/d/)).toBeNull();
+  });
+
+  it("previews the code range and hides the serial number for several units", () => {
+    openRegisterDialog();
+    fireEvent.change(screen.getByLabelText("Kode"), { target: { value: "ast-0004" } });
+    fireEvent.change(screen.getByLabelText("Jumlah Unit"), { target: { value: "20" } });
+
+    expect(screen.getByText("Kode AST-0004 s/d AST-0023")).toBeTruthy();
+    expect(screen.getByLabelText("Kode Awal")).toBeTruthy();
+    expect(screen.queryByLabelText("Nomor Seri / Merk (opsional)")).toBeNull();
+    expect(screen.getByLabelText("Nilai Perolehan per Unit (Rp)")).toBeTruthy();
+  });
+
+  it("warns when the start code cannot be counted up", () => {
+    openRegisterDialog();
+    fireEvent.change(screen.getByLabelText("Kode"), { target: { value: "COOLER-A" } });
+    fireEvent.change(screen.getByLabelText("Jumlah Unit"), { target: { value: "3" } });
+
+    expect(screen.getByText("Kode awal harus diakhiri angka agar bisa dibuat berurutan.")).toBeTruthy();
+  });
+});

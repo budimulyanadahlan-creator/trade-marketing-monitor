@@ -62,6 +62,27 @@ export function nextCode(prefix: string, existingCodes: string[]): string {
   return `${prefix}-${String(max + 1).padStart(4, "0")}`;
 }
 
+/** Batas "Jumlah unit" saat mendaftarkan asset (sama dengan RPC bulk, migrasi 063). */
+export const ASSET_BULK_MAX = 100;
+
+/**
+ * Kode berurutan untuk mendaftarkan beberapa unit sekaligus: angka di ujung
+ * kode awal dinaikkan, prefix dan lebar zero-padding dipertahankan
+ * (AST-0004 → AST-0005; AST-9999 → AST-10000). Null jika lebih dari satu
+ * kode diminta tetapi kode awal tidak diakhiri angka.
+ */
+export function sequentialCodes(startCode: string, count: number): string[] | null {
+  if (count <= 1) return [startCode];
+  const match = /^(.*?)(\d+)$/.exec(startCode);
+  if (!match) return null;
+  const [, prefix, digits] = match;
+  const start = Number(digits);
+  return Array.from(
+    { length: count },
+    (_, i) => `${prefix}${String(start + i).padStart(digits.length, "0")}`
+  );
+}
+
 // ============================================================
 // SALDO & STATUS STOK
 // ============================================================

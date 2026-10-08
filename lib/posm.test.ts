@@ -17,6 +17,7 @@ import {
   monthRange,
   movementFiltersQuery,
   nextCode,
+  sequentialCodes,
   placementDateViolation,
   withPreviousPlacement,
   summarizeAssets,
@@ -150,6 +151,29 @@ describe("nextCode", () => {
 
   it("keeps counting past 9999 without truncating", () => {
     expect(nextCode("AST", ["AST-9999"])).toBe("AST-10000");
+  });
+});
+
+describe("sequentialCodes", () => {
+  it("counts up from the start code, keeping its prefix and zero-padding", () => {
+    expect(sequentialCodes("AST-0004", 3)).toEqual(["AST-0004", "AST-0005", "AST-0006"]);
+  });
+
+  it("keeps counting past 9999 without truncating", () => {
+    expect(sequentialCodes("AST-9998", 3)).toEqual(["AST-9998", "AST-9999", "AST-10000"]);
+  });
+
+  it("works with any prefix, or none", () => {
+    expect(sequentialCodes("SRG-K-09", 2)).toEqual(["SRG-K-09", "SRG-K-10"]);
+    expect(sequentialCodes("007", 2)).toEqual(["007", "008"]);
+  });
+
+  it("returns only the start code for a single unit, even without a number", () => {
+    expect(sequentialCodes("COOLER-A", 1)).toEqual(["COOLER-A"]);
+  });
+
+  it("returns null when several codes are needed but the code does not end in a number", () => {
+    expect(sequentialCodes("COOLER-A", 2)).toBeNull();
   });
 });
 

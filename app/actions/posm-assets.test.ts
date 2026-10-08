@@ -21,6 +21,7 @@ function setupMocks({
   role = "user",
   department = "Trade Marketing",
   rpcError = null,
+  rpcData = "asset-1" as unknown,
   placementCount = 1,
   updateError = null,
   assetType = { id: COOLER_TYPE_ID, is_active: true },
@@ -29,6 +30,7 @@ function setupMocks({
   role?: string;
   department?: string | null;
   rpcError?: DbError;
+  rpcData?: unknown;
   placementCount?: number;
   updateError?: DbError;
   assetType?: AssetTypeMock;
@@ -51,7 +53,7 @@ function setupMocks({
   const placements = { select: vi.fn().mockReturnValue({ eq: placementsEq }), eq: placementsEq };
 
   const client = {
-    rpc: vi.fn().mockResolvedValue({ data: rpcError ? null : "asset-1", error: rpcError }),
+    rpc: vi.fn().mockResolvedValue({ data: rpcError ? null : rpcData, error: rpcError }),
     auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: "user-1" } } }) },
     from: vi.fn().mockImplementation((table: string) => {
       if (table === "users")
@@ -223,6 +225,77 @@ describe("saveMarketingAssetAction asset type", () => {
 
     expect(result.error).toBe("Jenis asset harus dipilih");
     expect(client.rpc).not.toHaveBeenCalled();
+  });
+});
+
+describe("saveMarketingAssetAction (several units)", () => {
+  it("registers every unit with sequential codes and the same data in one bulk RPC", async () => {
+    const client = setupMocks({ rpcData: ["a-1", "a-2", "a-3"] });
+
+    const result = await saveMarketingAssetAction(
+      {},
+      formDataOf({ ...validAsset, code: "ast-0004", quantity: "3", serial_number: "SN-1" })
+    );
+
+    expect(result).toEqual({ success: true, id: "a-1", ids: ["a-1", "a-2", "a-3"] });
+    expect(client.rpc).toHaveBeenCalledTimes(1);
+    expect(client.rpc).toHaveBeenCalledWith("create_marketing_assets_bulk", {
+      p_codes: ["AST-0004", "AST-0005", "AST-0006"],
+      p_name: "Cooler Showcase 2 Pintu",
+      p_asset_type_id: COOLER_TYPE_ID,
+      p_brand_id: null,
+      p_acquisition_date: "2026-01-15",
+      p_acquisition_value: 7500000,
+      p_event_date: "2026-02-01",
+      p_destination: "warehouse",
+      p_region_id: null,
+      p_distributor_id: null,
+      p_store_name: null,
+      p_store_address: null,
+      p_pic_name: null,
+      p_condition: "Baik",
+      p_notes: null,
+    });
+  });
+
+  it("keeps a single unit on the original RPC, including its serial number", async () => {
+    const client = setupMocks();
+
+    await saveMarketingAssetAction({}, formDataOf({ ...validAsset, quantity: "1", serial_number: "SN-1" }));
+
+    expect(client.rpc).toHaveBeenCalledWith(
+      "create_marketing_asset",
+      expect.objectContaining({ p_code: "AST-0001", p_serial_number: "SN-1" })
+    );
+  });
+
+  it("rejects a quantity outside 1 to 100", async () => {
+    const client = setupMocks();
+
+    for (const quantity of ["0", "101", "2.5"]) {
+      const result = await saveMarketingAssetAction({}, formDataOf({ ...validAsset, quantity }));
+      expect(result.error).toBe("Jumlah unit harus 1 sampai 100");
+    }
+    expect(client.rpc).not.toHaveBeenCalled();
+  });
+
+  it("needs a start code ending in a number to count up from", async () => {
+    const client = setupMocks();
+
+    const result = await saveMarketingAssetAction({}, formDataOf({ ...validAsset, code: "COOLER-A", quantity: "2" }));
+
+    expect(result.error).toBe("Kode awal harus diakhiri angka agar kode unit bisa dibuat berurutan.");
+    expect(client.rpc).not.toHaveBeenCalled();
+  });
+
+  it("names the codes that are already taken when the bulk RPC refuses them", async () => {
+    setupMocks({ rpcError: { message: "KODE_BENTROK: AST-0005, AST-0006", code: "P0001" } });
+
+    const result = await saveMarketingAssetAction({}, formDataOf({ ...validAsset, code: "AST-0004", quantity: "3" }));
+
+    expect(result.error).toBe(
+      "Kode AST-0005, AST-0006 sudah dipakai asset lain. Tidak ada unit yang didaftarkan; ubah kode awal."
+    );
   });
 });
 

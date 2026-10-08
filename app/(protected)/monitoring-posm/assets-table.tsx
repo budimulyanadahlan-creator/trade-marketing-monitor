@@ -37,6 +37,7 @@ import { AlertCircle, ArrowRightLeft, Loader2, Pencil, Plus, Trash2, X } from "l
 import { toast } from "sonner";
 import { filterBySearch } from "@/lib/search";
 import {
+  ASSET_BULK_MAX,
   ASSET_CONDITION_FILTER_ALL,
   ASSET_CONDITION_FILTER_DAMAGED,
   ASSET_CONDITIONS,
@@ -47,6 +48,7 @@ import {
   EMPTY_ASSET_LIST_FILTERS,
   matchesAssetListFilters,
   stockCellFilters,
+  sequentialCodes,
   summarizeAssetStock,
   type AssetListFilters,
   type AssetView,
@@ -248,19 +250,31 @@ function AssetDialog({
   const isEdit = asset !== null;
   const [open, setOpen] = useState(false);
   const [destination, setDestination] = useState<AssetDestination>("warehouse");
+  const [code, setCode] = useState(asset?.code ?? suggestedCode);
+  const [quantity, setQuantity] = useState("1");
   const photo = usePhotoChange("asset");
   const [state, formAction, isPending] = useActionState(
     async (prev: SaveMarketingAssetState, formData: FormData) => {
       const result = await saveMarketingAssetAction(prev, formData);
       if (result.success) {
-        await photo.save(result.id);
-        toast.success(isEdit ? "Asset diperbarui" : "Asset didaftarkan");
+        await photo.save(result.ids ?? result.id);
+        toast.success(
+          isEdit
+            ? "Asset diperbarui"
+            : result.ids
+              ? `${result.ids.length} unit asset didaftarkan`
+              : "Asset didaftarkan"
+        );
         setOpen(false);
       }
       return result;
     },
     {}
   );
+
+  const unitCount = Number(quantity);
+  const isBulk = !isEdit && Number.isInteger(unitCount) && unitCount > 1;
+  const bulkCodes = isBulk ? sequentialCodes(code.trim().toUpperCase(), unitCount) : null;
 
   const brandOptions = brands.filter((b) => b.is_active || b.id === asset?.brand_id);
 
@@ -271,6 +285,8 @@ function AssetDialog({
         setOpen(next);
         if (next) {
           setDestination("warehouse");
+          setCode(asset?.code ?? suggestedCode);
+          setQuantity("1");
           photo.reset();
         }
       }}
@@ -293,11 +309,12 @@ function AssetDialog({
 
           <div className="grid grid-cols-3 gap-3">
             <div className="space-y-1.5">
-              <Label htmlFor="asset-code">Kode</Label>
+              <Label htmlFor="asset-code">{isBulk ? "Kode Awal" : "Kode"}</Label>
               <Input
                 id="asset-code"
                 name="code"
-                defaultValue={asset?.code ?? suggestedCode}
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
                 required
                 disabled={isPending}
                 className="uppercase"
@@ -315,6 +332,38 @@ function AssetDialog({
               />
             </div>
           </div>
+
+          {/* Beberapa unit sejenis didaftarkan sekaligus dengan kode berurutan. */}
+          {!isEdit && (
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="asset-quantity">Jumlah Unit</Label>
+                <Input
+                  id="asset-quantity"
+                  name="quantity"
+                  type="number"
+                  min={1}
+                  max={ASSET_BULK_MAX}
+                  step={1}
+                  value={quantity}
+                  onChange={(e) => setQuantity(e.target.value)}
+                  required
+                  disabled={isPending}
+                />
+              </div>
+              {isBulk && (
+                <p className="col-span-2 self-end pb-2 text-xs text-slate-400">
+                  {bulkCodes ? (
+                    <>
+                      Kode {bulkCodes[0]} s/d {bulkCodes[bulkCodes.length - 1]}
+                    </>
+                  ) : (
+                    <span className="text-amber-400">Kode awal harus diakhiri angka agar bisa dibuat berurutan.</span>
+                  )}
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
@@ -338,15 +387,18 @@ function AssetDialog({
             </div>
           </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="asset-serial">Nomor Seri / Merk (opsional)</Label>
-            <Input
-              id="asset-serial"
-              name="serial_number"
-              defaultValue={asset?.serial_number ?? ""}
-              disabled={isPending}
-            />
-          </div>
+          {/* Nomor seri berbeda per unit; untuk beberapa unit diisi lewat Edit. */}
+          {!isBulk && (
+            <div className="space-y-1.5">
+              <Label htmlFor="asset-serial">Nomor Seri / Merk (opsional)</Label>
+              <Input
+                id="asset-serial"
+                name="serial_number"
+                defaultValue={asset?.serial_number ?? ""}
+                disabled={isPending}
+              />
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
@@ -358,7 +410,7 @@ function AssetDialog({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="asset-value">Nilai Perolehan (Rp)</Label>
+              <Label htmlFor="asset-value">{isBulk ? "Nilai Perolehan per Unit (Rp)" : "Nilai Perolehan (Rp)"}</Label>
               <Input
                 id="asset-value"
                 name="acquisition_value"

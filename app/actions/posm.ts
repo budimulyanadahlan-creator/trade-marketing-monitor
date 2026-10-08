@@ -9,6 +9,8 @@ import {
   availableFrom,
   findBalanceViolation,
   placementDateViolation,
+  ASSET_BULK_MAX,
+  sequentialCodes,
   type PlacementDateViolation,
   POSM_CATEGORIES,
   POSM_MOVEMENT_TYPES,
@@ -442,7 +444,23 @@ function placementColumns(p: z.infer<typeof placementFields>) {
   };
 }
 
-export type SaveMarketingAssetState = { error?: string; success?: boolean; id?: string };
+export type SaveMarketingAssetState = { error?: string; success?: boolean; id?: string; ids?: string[] };
+
+const assetQuantitySchema = z.coerce
+  .number({ error: "Jumlah unit harus 1 sampai 100" })
+  .int("Jumlah unit harus 1 sampai 100")
+  .min(1, "Jumlah unit harus 1 sampai 100")
+  .max(ASSET_BULK_MAX, "Jumlah unit harus 1 sampai 100");
+
+// RPC bulk menolak seluruh pendaftaran dengan "KODE_BENTROK: <kode, ...>".
+function bulkAssetErrorMessage(error: { message: string; code?: string }) {
+  const taken = /KODE_BENTROK: (.+)/.exec(error.message)?.[1];
+  if (taken) return `Kode ${taken} sudah dipakai asset lain. Tidak ada unit yang didaftarkan; ubah kode awal.`;
+  // Kode baru saja dipakai pendaftaran lain di antara pengecekan dan insert.
+  if (error.code === "23505")
+    return "Salah satu kode sudah dipakai asset lain. Tidak ada unit yang didaftarkan; ubah kode awal.";
+  return error.message;
+}
 
 function assetErrorMessage(error: { message: string; code?: string }, code: string) {
   if (error.code === "23505") return `Kode ${code} sudah dipakai asset lain. Gunakan kode lain.`;
@@ -582,10 +600,42 @@ export async function saveMarketingAssetAction(
       return { success: true, id };
     }
 
+    const quantity = assetQuantitySchema.safeParse(optionalText(formData.get("quantity")) ?? 1);
+    if (!quantity.success) return { error: quantity.error.issues[0]?.message ?? "Input tidak valid" };
+
     const placement = assetPlacementSchema.safeParse(placementFormValues(formData));
     if (!placement.success) return { error: placement.error.issues[0]?.message ?? "Input tidak valid" };
 
     const p = placementColumns(placement.data);
+
+    // Beberapa unit: kode berurutan, tanpa nomor seri (diisi per unit lewat
+    // Edit), semuanya dalam satu transaksi.
+    if (quantity.data > 1) {
+      const codes = sequentialCodes(a.code, quantity.data);
+      if (!codes) return { error: "Kode awal harus diakhiri angka agar kode unit bisa dibuat berurutan." };
+
+      const { data: ids, error } = await supabase.rpc("create_marketing_assets_bulk", {
+        p_codes: codes,
+        p_name: assetData.name,
+        p_asset_type_id: assetData.asset_type_id,
+        p_brand_id: assetData.brand_id,
+        p_acquisition_date: assetData.acquisition_date,
+        p_acquisition_value: assetData.acquisition_value,
+        p_event_date: p.event_date,
+        p_destination: p.destination,
+        p_region_id: p.region_id,
+        p_distributor_id: p.distributor_id,
+        p_store_name: p.store_name,
+        p_store_address: p.store_address,
+        p_pic_name: p.pic_name,
+        p_condition: p.condition,
+        p_notes: p.notes,
+      });
+      if (error) return { error: bulkAssetErrorMessage(error) };
+
+      revalidatePath(PAGE_PATH);
+      return { success: true, id: ids[0], ids };
+    }
 
     const { data: newId, error } = await supabase.rpc("create_marketing_asset", {
       p_code: assetData.code,

@@ -1597,6 +1597,26 @@ export type Database = {
         };
         Returns: string;
       };
+      create_marketing_assets_bulk: {
+        Args: {
+          p_codes: string[];
+          p_name: string;
+          p_asset_type_id: string;
+          p_brand_id: string | null;
+          p_acquisition_date: string;
+          p_acquisition_value: number;
+          p_event_date: string;
+          p_destination: AssetDestination;
+          p_region_id: string | null;
+          p_distributor_id: string | null;
+          p_store_name: string | null;
+          p_store_address: string | null;
+          p_pic_name: string | null;
+          p_condition: AssetCondition;
+          p_notes: string | null;
+        };
+        Returns: string[];
+      };
       create_event: {
         Args: {
           p_name: string;

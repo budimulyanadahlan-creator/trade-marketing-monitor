@@ -79,7 +79,16 @@ function makeFile({ type = "image/png", size = 2000 } = {}) {
 // Route hanya memanggil request.formData(), jadi cukup objek palsu minimal.
 function postRequest(entries: Record<string, unknown>) {
   return {
-    formData: async () => ({ get: (key: string) => entries[key] ?? null }),
+    formData: async () => ({
+      get: (key: string) => {
+        const v = entries[key];
+        return (Array.isArray(v) ? v[0] : v) ?? null;
+      },
+      getAll: (key: string) => {
+        const v = entries[key];
+        return v == null ? [] : Array.isArray(v) ? v : [v];
+      },
+    }),
   } as unknown as NextRequest;
 }
 
@@ -180,6 +189,20 @@ describe("POST /api/posm-photo", () => {
     expect(res.status).toBe(200);
     expect(supabase.from).toHaveBeenCalledWith("asset_placements");
     expect(remove).not.toHaveBeenCalled();
+  });
+
+  it("gives every asset registered together its own copy of the same photo, compressing once", async () => {
+    const OTHER_ID = "22222222-2222-4222-8222-222222222222";
+    const { table, upload } = setupMocks({ record: { id: RECORD_ID, photo_path: null } });
+
+    const res = await POST(postRequest({ kind: "asset", id: [RECORD_ID, OTHER_ID], file: makeFile() }));
+
+    expect(res.status).toBe(200);
+    expect(compressImageIfNeeded).toHaveBeenCalledTimes(1);
+    expect(upload).toHaveBeenCalledTimes(2);
+    expect(upload.mock.calls[0][0]).toMatch(new RegExp(`^asset/${RECORD_ID}/\\d+\\.jpg$`));
+    expect(upload.mock.calls[1][0]).toMatch(new RegExp(`^asset/${OTHER_ID}/\\d+\\.jpg$`));
+    expect(table.eq).toHaveBeenCalledWith("id", OTHER_ID);
   });
 
   it("stores gimmick item photos in the separate gimmick-photos bucket", async () => {

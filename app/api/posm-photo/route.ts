@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { compressImageIfNeeded } from "@/lib/image-compress";
-import { canManagePosm } from "@/lib/posm";
+import { ASSET_BULK_MAX, canManagePosm } from "@/lib/posm";
 import {
   parsePosmPhotoKind,
   POSM_PHOTO_MAX_LABEL,
@@ -71,21 +71,34 @@ export async function POST(request: NextRequest) {
 
   const formData = await request.formData();
   const kind = formData.get("kind");
-  const id = formData.get("id");
+  // Beberapa id = asset yang didaftarkan sekaligus memakai foto yang sama.
+  // Tiap record mendapat salinan sendiri, supaya mengganti/menghapus foto
+  // satu unit tidak menghapus file unit lain.
+  const ids = formData.getAll("id");
   const file = formData.get("file") as File | null;
 
   const target = parsePosmPhotoKind(kind);
-  if (!target || typeof id !== "string" || !id) return badRequest("Data foto tidak valid.");
+  if (
+    !target ||
+    ids.length === 0 ||
+    ids.length > ASSET_BULK_MAX ||
+    ids.some((id) => typeof id !== "string" || !id)
+  )
+    return badRequest("Data foto tidak valid.");
   const { table, bucket } = target;
   if (!file) return badRequest("Foto tidak ditemukan.");
 
   const invalid = validatePosmPhoto(file);
   if (invalid) return badRequest(invalid);
 
-  const record = await loadRecord(supabase, table, id);
-  if (!record) return badRequest("Data tidak ditemukan.", 404);
-  if (table === "gimmick_movements" && record.type !== "out")
-    return badRequest("Foto bukti serah terima hanya untuk transaksi Keluar.");
+  const records: { id: string; oldPath: string | null }[] = [];
+  for (const id of ids as string[]) {
+    const record = await loadRecord(supabase, table, id);
+    if (!record) return badRequest("Data tidak ditemukan.", 404);
+    if (table === "gimmick_movements" && record.type !== "out")
+      return badRequest("Foto bukti serah terima hanya untuk transaksi Keluar.");
+    records.push({ id, oldPath: record.photo_path });
+  }
 
   let processed;
   try {
@@ -96,29 +109,34 @@ export async function POST(request: NextRequest) {
   if (processed.buffer.length > POSM_PHOTO_MAX_SIZE) return badRequest(`Ukuran foto maksimal ${POSM_PHOTO_MAX_LABEL}.`);
 
   const storage = supabase.storage.from(bucket);
-  const path = posmPhotoPath(kind as PosmPhotoKind, id, Date.now());
+  const paths: string[] = [];
 
-  const { error: uploadError } = await storage.upload(path, processed.buffer, {
-    contentType: processed.contentType,
-    upsert: false,
-  });
-  if (uploadError) return badRequest(uploadError.message, 500);
+  for (const { id, oldPath } of records) {
+    const path = posmPhotoPath(kind as PosmPhotoKind, id, Date.now());
 
-  const { error: dbError } = await supabase
-    .from(table as "posm_items")
-    .update({ photo_path: path })
-    .eq("id", id)
-    .is("deleted_at", null);
-  if (dbError) {
-    await storage.remove([path]);
-    return badRequest(dbError.message, 500);
+    const { error: uploadError } = await storage.upload(path, processed.buffer, {
+      contentType: processed.contentType,
+      upsert: false,
+    });
+    if (uploadError) return badRequest(uploadError.message, 500);
+
+    const { error: dbError } = await supabase
+      .from(table as "posm_items")
+      .update({ photo_path: path })
+      .eq("id", id)
+      .is("deleted_at", null);
+    if (dbError) {
+      await storage.remove([path]);
+      return badRequest(dbError.message, 500);
+    }
+
+    // Foto lama tidak lagi dirujuk; best-effort, record sudah tersimpan.
+    if (oldPath) await storage.remove([oldPath]);
+    paths.push(path);
   }
 
-  // Foto lama tidak lagi dirujuk; best-effort, record sudah tersimpan.
-  if (record.photo_path) await storage.remove([record.photo_path]);
-
   revalidatePath("/monitoring-posm", "layout");
-  return NextResponse.json({ photo_path: path });
+  return NextResponse.json({ photo_path: paths[0] });
 }
 
 export async function DELETE(request: NextRequest) {
