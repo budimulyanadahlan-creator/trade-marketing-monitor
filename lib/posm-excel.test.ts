@@ -8,6 +8,7 @@ function data(overrides: Partial<PosmExportData> = {}): PosmExportData {
     movementFilterLabel: "Semua mutasi",
     rekap: { months: ["2026-08", "2026-09"], rows: [], monthTotals: [0, 0], grandTotal: 0 },
     assets: [],
+    assetStock: { groups: [], total: { total: 0, warehouse: 0, placed: 0, damaged: 0, lost: 0, value: 0 } },
     ...overrides,
   };
 }
@@ -211,5 +212,77 @@ describe("buildPosmWorkbook — sheet Daftar Asset", () => {
     const total = ws.getRow(4);
     expect(total.getCell(1).value).toBe("Total");
     expect(total.getCell(7).value).toBe(6_500_000);
+  });
+});
+
+describe("buildPosmWorkbook — sheet Ringkasan Stok Asset", () => {
+  const counts = (total: number, warehouse: number, damaged: number, lost: number, value: number) => ({
+    total,
+    warehouse,
+    placed: total - warehouse,
+    damaged,
+    lost,
+    value,
+  });
+
+  it("menulis subtotal per Jenis, baris Nama di bawahnya, lalu grand total", () => {
+    const ws = sheet(
+      data({
+        assetStock: {
+          groups: [
+            {
+              typeId: "t-1",
+              typeName: "Seragam/Pakaian",
+              counts: counts(3, 1, 1, 0, 300_000),
+              names: [
+                { name: "T-Shirt SPG Hitam", counts: counts(2, 1, 1, 0, 200_000) },
+                { name: "T-Shirt SPG Kuning", counts: counts(1, 0, 0, 0, 100_000) },
+              ],
+            },
+            {
+              typeId: "t-2",
+              typeName: "Tenda/Booth",
+              counts: counts(1, 0, 0, 1, 2_000_000),
+              names: [{ name: "Tenda 3x3", counts: counts(1, 0, 0, 1, 2_000_000) }],
+            },
+          ],
+          total: counts(4, 1, 1, 1, 2_300_000),
+        },
+      }),
+      "Ringkasan Stok Asset"
+    );
+
+    const values = (n: number) => (ws.getRow(n).values as unknown[]).slice(1);
+    expect(values(1)).toEqual([
+      "Jenis",
+      "Nama",
+      "Total",
+      "Di Gudang Pusat",
+      "Ditempatkan",
+      "Rusak",
+      "Hilang",
+      "Nilai Perolehan (Rp)",
+    ]);
+
+    expect(values(2)).toEqual(["Seragam/Pakaian", "Subtotal", 3, 1, 2, 1, 0, 300_000]);
+    expect(ws.getRow(2).font?.bold).toBe(true);
+    expect(ws.getRow(2).getCell(1).fill).toBeDefined();
+
+    expect(values(3)).toEqual(["Seragam/Pakaian", "T-Shirt SPG Hitam", 2, 1, 1, 1, 0, 200_000]);
+    expect(ws.getRow(3).font?.bold).toBeFalsy();
+    expect(ws.getRow(3).getCell(1).fill).toBeUndefined();
+    expect(ws.getRow(4).getCell(2).value).toBe("T-Shirt SPG Kuning");
+    expect(values(5).slice(0, 2)).toEqual(["Tenda/Booth", "Subtotal"]);
+    expect(ws.getRow(6).getCell(2).value).toBe("Tenda 3x3");
+
+    const total = ws.getRow(7);
+    expect(total.getCell(1).value).toBe("Total");
+    expect([3, 4, 5, 6, 7, 8].map((c) => total.getCell(c).value)).toEqual([4, 1, 3, 1, 1, 2_300_000]);
+    expect(total.font?.bold).toBe(true);
+  });
+
+  it("ditulis setelah sheet Daftar Asset", () => {
+    const names = buildPosmWorkbook(data()).worksheets.map((ws) => ws.name);
+    expect(names.slice(-2)).toEqual(["Daftar Asset", "Ringkasan Stok Asset"]);
   });
 });

@@ -63,10 +63,24 @@ const TABLES = {
       id: "ast-1",
       code: "AST-0001",
       name: "Cooler",
+      asset_type_id: "type-1",
+      brand_id: null,
       asset_type: { name: "Cooler/Chiller" },
       serial_number: null,
       acquisition_date: "2026-01-15",
       acquisition_value: "5000000",
+      brand: null,
+    },
+    {
+      id: "ast-2",
+      code: "AST-0002",
+      name: "Cooler",
+      asset_type_id: "type-1",
+      brand_id: null,
+      asset_type: { name: "Cooler/Chiller" },
+      serial_number: null,
+      acquisition_date: "2026-01-15",
+      acquisition_value: "4000000",
       brand: null,
     },
   ],
@@ -79,6 +93,15 @@ const TABLES = {
       distributor_id: null,
       store_name: "Toko Maju",
       condition: "Baik",
+    },
+    {
+      asset_id: "ast-2",
+      event_date: "2026-03-01",
+      destination: "warehouse",
+      region_id: null,
+      distributor_id: null,
+      store_name: null,
+      condition: "Dihapusbukukan",
     },
   ],
   gimmick_items: [
@@ -186,7 +209,7 @@ describe("GET /api/export/monitoring-posm — otorisasi", () => {
 });
 
 describe("GET /api/export/monitoring-posm — isi file", () => {
-  it("menghasilkan workbook 4 sheet dengan angka dari data", async () => {
+  it("menghasilkan workbook 5 sheet dengan angka dari data", async () => {
     setupMocks({ role: "finance" });
     const res = await GET(new NextRequest(URL_WITH_FILTERS));
     expect(res.headers.get("Content-Type")).toContain("spreadsheetml");
@@ -198,6 +221,7 @@ describe("GET /api/export/monitoring-posm — isi file", () => {
       "Mutasi",
       "Rekap Keluar per Region",
       "Daftar Asset",
+      "Ringkasan Stok Asset",
     ]);
 
     const saldo = wb.getWorksheet("Saldo POSM")!.getRow(2);
@@ -219,6 +243,14 @@ describe("GET /api/export/monitoring-posm — isi file", () => {
     expect(asset.getCell(7).value).toBe(5_000_000);
     expect(asset.getCell(9).value).toBe("Ditempatkan");
     expect(asset.getCell(10).value).toBe("Jawa Barat");
+
+    // Filter default ringkasan (Tanpa Dihapusbukukan): AST-0002 tidak dihitung.
+    const stok = wb.getWorksheet("Ringkasan Stok Asset")!;
+    const values = (n: number) => (stok.getRow(n).values as unknown[]).slice(1);
+    expect(values(2)).toEqual(["Cooler/Chiller", "Subtotal", 1, 0, 1, 0, 0, 5_000_000]);
+    expect(values(3)).toEqual(["Cooler/Chiller", "Cooler", 1, 0, 1, 0, 0, 5_000_000]);
+    expect(stok.getRow(4).getCell(1).value).toBe("Total");
+    expect(values(4).slice(2)).toEqual([1, 0, 1, 0, 0, 5_000_000]);
   });
 });
 
@@ -245,6 +277,7 @@ describe("GET /api/export/monitoring-posm — sheet gimmick", () => {
       "Mutasi",
       "Rekap Keluar per Region",
       "Daftar Asset",
+      "Ringkasan Stok Asset",
       ...GIMMICK_SHEETS,
     ]);
   });
@@ -287,6 +320,7 @@ describe("GET /api/export/monitoring-posm — sheet gimmick", () => {
       "Mutasi",
       "Rekap Keluar per Region",
       "Daftar Asset",
+      "Ringkasan Stok Asset",
     ]);
     expect(gimmickTablesQueried()).toEqual([]);
     expect(mockClient.rpc).not.toHaveBeenCalledWith("gimmick_campaign_refs", expect.anything());

@@ -4,6 +4,8 @@ import {
   monthLabel,
   POSM_MOVEMENT_LABELS,
   summarizeAssets,
+  type AssetStockCounts,
+  type AssetStockSummary,
   type OutRekap,
   type PosmStockStatus,
 } from "./posm";
@@ -99,6 +101,8 @@ export type PosmExportData = {
   /** Rekap Keluar sesuai rentang bulan aktif (`months` = `YYYY-MM`). */
   rekap: OutRekap & { months: string[] };
   assets: AssetExportRow[];
+  /** Ringkasan stok tab Asset (fungsi agregasi yang sama dengan tampilan Ringkasan Stok). */
+  assetStock: AssetStockSummary;
 };
 
 export type ColumnKind = "text" | "number" | "date" | "currency";
@@ -296,11 +300,50 @@ function addAssetSheet(wb: ExcelJS.Workbook, assets: AssetExportRow[]) {
   });
 }
 
+// Baris subtotal per Jenis diberi latar abu-abu muda agar terbedakan dari baris Nama.
+const SUBTOTAL_FILL: ExcelJS.Fill = {
+  type: "pattern",
+  pattern: "solid",
+  fgColor: { argb: "FFF2F2F2" },
+};
+
+function addAssetStockSheet(wb: ExcelJS.Workbook, summary: AssetStockSummary) {
+  const columns: Column[] = [
+    { header: "Jenis", width: 20 },
+    { header: "Nama", width: 28 },
+    { header: "Total", width: 10, kind: "number" },
+    { header: "Di Gudang Pusat", width: 16, kind: "number" },
+    { header: "Ditempatkan", width: 14, kind: "number" },
+    { header: "Rusak", width: 10, kind: "number" },
+    { header: "Hilang", width: 10, kind: "number" },
+    { header: "Nilai Perolehan (Rp)", width: 20, kind: "number" },
+  ];
+  const countValues = (c: AssetStockCounts) => [c.total, c.warehouse, c.placed, c.damaged, c.lost, c.value];
+  const ws = addTableSheet(wb, "Ringkasan Stok Asset", columns, []);
+
+  const addRow = (values: (string | number | null)[], fill?: ExcelJS.Fill) => {
+    const row = ws.addRow(values);
+    if (fill) row.font = { bold: true };
+    columns.forEach((c, i) => {
+      const cell = row.getCell(i + 1);
+      formatCell(cell, c.kind);
+      if (fill) cell.fill = fill;
+    });
+  };
+
+  for (const group of summary.groups) {
+    addRow([group.typeName, "Subtotal", ...countValues(group.counts)], SUBTOTAL_FILL);
+    for (const n of group.names) addRow([group.typeName, n.name, ...countValues(n.counts)]);
+  }
+  addRow(["Total", null, ...countValues(summary.total)], TOTAL_FILL);
+}
+
 export function buildPosmWorkbook(data: PosmExportData): ExcelJS.Workbook {
   const wb = new ExcelJS.Workbook();
   addBalanceSheet(wb, data.balances);
   addMovementSheet(wb, data.movements, data.movementFilterLabel);
   addRekapSheet(wb, data.rekap);
   addAssetSheet(wb, data.assets);
+  addAssetStockSheet(wb, data.assetStock);
   return wb;
 }

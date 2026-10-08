@@ -2,6 +2,8 @@ import type { createClient } from "@/lib/supabase/server";
 import {
   POSM_MOVEMENT_LABELS,
   stockStatus,
+  summarizeAssetStock,
+  type AssetStockInput,
   type PosmMovementFilters,
   type RekapFilters,
 } from "@/lib/posm";
@@ -132,7 +134,7 @@ export async function loadPosmExportData(
     loadPosmOutRekap(supabase, filters.rekap),
     supabase
       .from("marketing_assets")
-      .select("id, code, name, serial_number, acquisition_date, acquisition_value, brand:brands(name), asset_type:asset_types(name)")
+      .select("id, code, name, serial_number, acquisition_date, acquisition_value, asset_type_id, brand_id, brand:brands(name), asset_type:asset_types(name)")
       .is("deleted_at", null)
       .order("code"),
     supabase
@@ -189,6 +191,25 @@ export async function loadPosmExportData(
     ];
   });
 
+  // Ringkasan stok memakai filter default tab Asset (tanpa brand/region,
+  // Tanpa Dihapusbukukan) atas himpunan asset yang sama dengan sheet Daftar Asset.
+  const stockRows: AssetStockInput[] = (assets ?? []).flatMap((a) => {
+    const s = statusByAsset.get(a.id);
+    if (!s) return [];
+    return [
+      {
+        asset_type_id: a.asset_type_id,
+        asset_type_name: (a.asset_type as { name: string } | null)?.name ?? "—",
+        name: a.name,
+        brand_id: a.brand_id,
+        region_id: s.region_id,
+        acquisition_value: Number(a.acquisition_value),
+        condition: s.condition,
+        destination: s.destination,
+      },
+    ];
+  });
+
   return {
     balances: balanceRows,
     movements,
@@ -201,5 +222,6 @@ export async function loadPosmExportData(
     ),
     rekap,
     assets: assetRows,
+    assetStock: summarizeAssetStock(stockRows, { brandId: "", regionId: "", condition: "" }),
   };
 }
