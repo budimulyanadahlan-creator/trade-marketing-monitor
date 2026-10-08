@@ -65,6 +65,9 @@ export function nextCode(prefix: string, existingCodes: string[]): string {
 /** Batas "Jumlah unit" saat mendaftarkan asset (sama dengan RPC bulk, migrasi 063). */
 export const ASSET_BULK_MAX = 100;
 
+/** Pilihan kondisi di Pindahkan massal: tiap unit mempertahankan kondisi terakhirnya. */
+export const ASSET_KEEP_CONDITION = "keep";
+
 /**
  * Kode berurutan untuk mendaftarkan beberapa unit sekaligus: angka di ujung
  * kode awal dinaikkan, prefix dan lebar zero-padding dipertahankan

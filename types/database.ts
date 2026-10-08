@@ -1617,6 +1617,22 @@ export type Database = {
         };
         Returns: string[];
       };
+      move_marketing_assets_bulk: {
+        Args: {
+          p_asset_ids: string[];
+          p_event_date: string;
+          p_destination: AssetDestination;
+          p_region_id: string | null;
+          p_distributor_id: string | null;
+          p_store_name: string | null;
+          p_store_address: string | null;
+          p_pic_name: string | null;
+          /** Null = tiap unit mempertahankan kondisi terakhirnya. */
+          p_condition: AssetCondition | null;
+          p_notes: string | null;
+        };
+        Returns: string[];
+      };
       create_event: {
         Args: {
           p_name: string;

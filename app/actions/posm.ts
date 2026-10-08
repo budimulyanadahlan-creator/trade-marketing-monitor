@@ -10,6 +10,8 @@ import {
   findBalanceViolation,
   placementDateViolation,
   ASSET_BULK_MAX,
+  ASSET_KEEP_CONDITION,
+  ASSET_WRITTEN_OFF,
   sequentialCodes,
   type PlacementDateViolation,
   POSM_CATEGORIES,
@@ -783,6 +785,78 @@ export async function saveAssetPlacementAction(
   } catch {
     return { error: FORBIDDEN };
   }
+}
+
+const bulkPlacementSchema = placementFields
+  .extend({
+    asset_ids: z
+      .array(z.string().uuid("Asset tidak valid"))
+      .min(1, "Pilih minimal satu asset")
+      .max(ASSET_BULK_MAX, `Maksimal ${ASSET_BULK_MAX} asset sekali pindah`),
+    // "keep" = tiap unit mempertahankan kondisi terakhirnya.
+    condition: z.union([z.literal(ASSET_KEEP_CONDITION), placementFields.shape.condition], {
+      error: "Kondisi tidak valid",
+    }),
+  })
+  .superRefine(requireStoreLocation);
+
+export type MoveMarketingAssetsBulkState = { error?: string; success?: boolean; ids?: string[] };
+
+/**
+ * Pindahkan beberapa asset sekaligus ke tujuan yang sama. Semua catatan
+ * penempatan dibuat dalam satu transaksi (RPC move_marketing_assets_bulk,
+ * migrasi 064): satu unit gagal, semuanya batal.
+ */
+export async function moveMarketingAssetsBulkAction(
+  _prevState: MoveMarketingAssetsBulkState,
+  formData: FormData
+): Promise<MoveMarketingAssetsBulkState> {
+  try {
+    const { supabase } = await requirePosmWriter();
+
+    const parsed = bulkPlacementSchema.safeParse({
+      ...placementFormValues(formData),
+      asset_ids: [...new Set(formData.getAll("asset_id"))],
+    });
+    if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Input tidak valid" };
+
+    const { asset_ids, condition } = parsed.data;
+    const p = placementColumns({ ...parsed.data, condition: "Baik" });
+
+    const { data: ids, error } = await supabase.rpc("move_marketing_assets_bulk", {
+      p_asset_ids: asset_ids,
+      p_event_date: p.event_date,
+      p_destination: p.destination,
+      p_region_id: p.region_id,
+      p_distributor_id: p.distributor_id,
+      p_store_name: p.store_name,
+      p_store_address: p.store_address,
+      p_pic_name: p.pic_name,
+      p_condition: condition === ASSET_KEEP_CONDITION ? null : condition,
+      p_notes: p.notes,
+    });
+    if (error) return { error: bulkMoveErrorMessage(error) };
+
+    revalidatePath(PAGE_PATH);
+    for (const id of asset_ids) revalidatePath(`${PAGE_PATH}/assets/${id}`);
+    return { success: true, ids };
+  } catch {
+    return { error: FORBIDDEN };
+  }
+}
+
+const BULK_MOVE_CANCELLED = "Tidak ada asset yang dipindahkan.";
+
+// RPC menolak seluruh perpindahan dengan "PINDAH_<ALASAN>: <kode, ...>".
+function bulkMoveErrorMessage(error: { message: string }) {
+  const reason = /PINDAH_([A-Z_]+): (.+)/.exec(error.message);
+  if (reason?.[1] === "DIHAPUSBUKUKAN")
+    return `Asset ${reason[2]} sudah ${ASSET_WRITTEN_OFF} dan tidak bisa dipindahkan. ${BULK_MOVE_CANCELLED}`;
+  if (reason?.[1] === "TANGGAL_SEBELUM_PENDAFTARAN")
+    return `Tanggal perpindahan sebelum tanggal pendaftaran asset ${reason[2]}. ${BULK_MOVE_CANCELLED}`;
+  if (reason?.[1] === "ASSET_TIDAK_DITEMUKAN")
+    return "Sebagian asset sudah dihapus atau tidak ditemukan. Muat ulang halaman lalu coba lagi.";
+  return placementErrorMessage(error);
 }
 
 // Hapus = soft delete. Catatan pendaftaran tidak bisa dihapus selama asset

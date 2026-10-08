@@ -295,3 +295,61 @@ describe("AssetsTable register dialog", () => {
     expect(screen.getByText("Kode awal harus diakhiri angka agar bisa dibuat berurutan.")).toBeTruthy();
   });
 });
+
+describe("AssetsTable bulk move", () => {
+  it("shows no checkboxes or bulk move button to readers", () => {
+    renderTable(false);
+    expect(screen.queryByLabelText("Pilih semua asset yang terlihat")).toBeNull();
+    expect(screen.queryByLabelText("Pilih AST-0001")).toBeNull();
+    expect(screen.queryByText(/Pindahkan \(/)).toBeNull();
+  });
+
+  it("offers Pindahkan (N) for the checked units", () => {
+    renderTable(true);
+    expect(screen.queryByText(/Pindahkan \(/)).toBeNull();
+
+    fireEvent.click(screen.getByLabelText("Pilih AST-0001"));
+    expect(screen.getByText("Pindahkan (1)")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Pilih AST-0002"));
+    expect(screen.getByText("Pindahkan (2)")).toBeTruthy();
+  });
+
+  it("selects every visible unit except written-off ones", () => {
+    renderTable(true);
+    fireEvent.change(screen.getByLabelText("Filter kondisi"), { target: { value: "all" } });
+
+    const writtenOff = screen.getByLabelText("Pilih AST-0003") as HTMLInputElement;
+    expect(writtenOff.disabled).toBe(true);
+
+    fireEvent.click(screen.getByLabelText("Pilih semua asset yang terlihat"));
+    expect(screen.getByText("Pindahkan (2)")).toBeTruthy();
+    expect(writtenOff.checked).toBe(false);
+
+    fireEvent.click(screen.getByLabelText("Pilih semua asset yang terlihat"));
+    expect(screen.queryByText(/Pindahkan \(/)).toBeNull();
+  });
+
+  it("only counts checked units that are still visible after filtering", () => {
+    renderTable(true);
+    fireEvent.click(screen.getByLabelText("Pilih semua asset yang terlihat"));
+    expect(screen.getByText("Pindahkan (2)")).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Filter jenis"), { target: { value: "type-rak" } });
+    expect(screen.getByText("Pindahkan (1)")).toBeTruthy();
+  });
+
+  it("opens one move form for all checked units, keeping each condition by default", () => {
+    renderTable(true);
+    fireEvent.click(screen.getByLabelText("Pilih AST-0001"));
+    fireEvent.click(screen.getByLabelText("Pilih AST-0002"));
+    fireEvent.click(screen.getByText("Pindahkan (2)"));
+
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("Pindahkan 2 Asset")).toBeTruthy();
+    expect(within(dialog).getByText("AST-0001, AST-0002")).toBeTruthy();
+    const condition = within(dialog).getByLabelText("Kondisi") as HTMLSelectElement;
+    expect(condition.value).toBe("keep");
+    expect(condition.options[condition.selectedIndex].text).toBe("Pertahankan kondisi masing-masing");
+    expect(within(dialog).getByLabelText("Nama Toko")).toBeTruthy();
+  });
+});

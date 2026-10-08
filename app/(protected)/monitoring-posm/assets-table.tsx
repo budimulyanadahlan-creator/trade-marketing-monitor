@@ -56,7 +56,7 @@ import {
 import { cn, formatIDR } from "@/lib/utils";
 import type { AssetCondition, AssetDestination, MarketingAssetRow } from "@/types/database";
 import { AssetStockSummaryTable, type AssetStockLinks } from "./asset-stock-summary";
-import { PlacementDialog } from "./placement-dialog";
+import { BulkPlacementDialog, PlacementDialog } from "./placement-dialog";
 import { PhotoField, PhotoThumb, usePhotoChange } from "./posm-photo";
 
 export type AssetListRow = Pick<
@@ -685,6 +685,26 @@ export function AssetsTable({
 
   const stockSummary = useMemo(() => summarizeAssetStock(assets, sharedFilters), [assets, sharedFilters]);
 
+  // Pindahkan massal: hanya unit yang terlihat dan belum Dihapusbukukan.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const selectable = useMemo(() => filtered.filter((a) => a.condition !== ASSET_WRITTEN_OFF), [filtered]);
+  const selected = selectable.filter((a) => selectedIds.has(a.id));
+  const allSelected = selectable.length > 0 && selected.length === selectable.length;
+  const tooManySelected = selected.length > ASSET_BULK_MAX;
+
+  function toggleSelected(id: string, checked: boolean) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+
+  function toggleAllSelected(checked: boolean) {
+    setSelectedIds(checked ? new Set(selectable.map((a) => a.id)) : new Set());
+  }
+
   function navigate(nextView: AssetView, nextFilters: AssetListFilters) {
     setView(nextView);
     setFilters(nextFilters);
@@ -719,7 +739,7 @@ export function AssetsTable({
 
   const hasFilter = query.trim() !== "" || Object.values(filters).some((v) => v !== "");
   const hiddenWrittenOff = condition === "" ? assets.filter((a) => a.condition === ASSET_WRITTEN_OFF).length : 0;
-  const colSpan = canManage ? 8 : 7;
+  const colSpan = canManage ? 9 : 7;
   const isSummary = view === "ringkasan";
 
   return (
@@ -828,6 +848,26 @@ export function AssetsTable({
               </option>
             ))}
           </Select>
+          {canManage && !isSummary && selected.length > 0 && (
+            <BulkPlacementDialog
+              assets={selected}
+              regions={regions}
+              distributors={distributors}
+              storeNames={storeNames}
+              onMoved={() => setSelectedIds(new Set())}
+              trigger={
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={tooManySelected}
+                  title={tooManySelected ? `Maksimal ${ASSET_BULK_MAX} asset sekali pindah` : undefined}
+                >
+                  <ArrowRightLeft className="h-4 w-4" />
+                  Pindahkan ({selected.length})
+                </Button>
+              }
+            />
+          )}
           {canManage && (
             <AssetDialog
               asset={null}
@@ -871,6 +911,18 @@ export function AssetsTable({
           <Table>
             <TableHeader>
               <TableRow className="border-white/8 hover:bg-transparent">
+                {canManage && (
+                  <TableHead className="w-10">
+                    <input
+                      type="checkbox"
+                      aria-label="Pilih semua asset yang terlihat"
+                      checked={allSelected}
+                      onChange={(e) => toggleAllSelected(e.target.checked)}
+                      disabled={selectable.length === 0}
+                      className="h-4 w-4 accent-emerald-500"
+                    />
+                  </TableHead>
+                )}
                 <TableHead>Kode</TableHead>
                 <TableHead>Nama Asset</TableHead>
                 <TableHead>Jenis</TableHead>
@@ -885,6 +937,19 @@ export function AssetsTable({
               {filtered.length > 0 ? (
                 filtered.map((asset) => (
                   <TableRow key={asset.id}>
+                    {canManage && (
+                      <TableCell>
+                        <input
+                          type="checkbox"
+                          aria-label={`Pilih ${asset.code}`}
+                          checked={selectedIds.has(asset.id) && asset.condition !== ASSET_WRITTEN_OFF}
+                          onChange={(e) => toggleSelected(asset.id, e.target.checked)}
+                          disabled={asset.condition === ASSET_WRITTEN_OFF}
+                          title={asset.condition === ASSET_WRITTEN_OFF ? `Asset ${ASSET_WRITTEN_OFF} tidak bisa dipindahkan` : undefined}
+                          className="h-4 w-4 accent-emerald-500 disabled:opacity-30"
+                        />
+                      </TableCell>
+                    )}
                     <TableCell>
                       <code className="rounded bg-white/5 px-2 py-0.5 text-xs text-slate-300">{asset.code}</code>
                     </TableCell>
