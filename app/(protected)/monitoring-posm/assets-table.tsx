@@ -4,7 +4,9 @@ import Link from "next/link";
 import { useActionState, useMemo, useState, useTransition } from "react";
 import {
   deleteMarketingAssetAction,
+  quickAddAssetTypeAction,
   saveMarketingAssetAction,
+  type QuickAddAssetTypeResult,
   type SaveMarketingAssetState,
 } from "@/app/actions/posm";
 import {
@@ -101,6 +103,129 @@ function todayIso() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+// ---- Jenis (dengan "+ Jenis baru") ----
+
+const NEW_TYPE_VALUE = "__new__";
+
+function AssetTypeField({
+  assetTypes,
+  currentTypeId,
+  disabled,
+}: {
+  assetTypes: Option[];
+  currentTypeId: string | null;
+  disabled: boolean;
+}) {
+  const [typeId, setTypeId] = useState(currentTypeId ?? "");
+  // Jenis yang baru ditambah, sebelum props dari server ikut ter-refresh.
+  const [added, setAdded] = useState<Option[]>([]);
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [result, setResult] = useState<QuickAddAssetTypeResult>({});
+  const [isSaving, startSaving] = useTransition();
+
+  // Jenis nonaktif tetap bisa dipertahankan oleh asset yang sudah memakainya.
+  const options = [...assetTypes, ...added.filter((a) => !assetTypes.some((t) => t.id === a.id))]
+    .filter((t) => t.is_active || t.id === currentTypeId)
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  function closeAdd() {
+    setAdding(false);
+    setNewName("");
+    setResult({});
+  }
+
+  function submitNewType() {
+    startSaving(async () => {
+      const res = await quickAddAssetTypeAction(newName);
+      if (res.type) {
+        const created = res.type;
+        setAdded((prev) => [...prev, created]);
+        setTypeId(created.id);
+        closeAdd();
+        toast.success(`Jenis "${created.name}" ditambahkan`);
+      } else {
+        setResult(res);
+      }
+    });
+  }
+
+  return (
+    <div className="space-y-2">
+      <Select
+        id="asset-type"
+        name="asset_type_id"
+        value={typeId}
+        onChange={(e) => {
+          if (e.target.value === NEW_TYPE_VALUE) setAdding(true);
+          else setTypeId(e.target.value);
+        }}
+        placeholder="Pilih jenis"
+        required
+        disabled={disabled}
+      >
+        {options.map((t) => (
+          <option key={t.id} value={t.id}>
+            {t.name}
+          </option>
+        ))}
+        <option value={NEW_TYPE_VALUE}>+ Jenis baru</option>
+      </Select>
+
+      {adding && (
+        <div className="space-y-2 rounded-md border border-white/10 bg-white/5 p-2">
+          <Input
+            aria-label="Nama jenis baru"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => {
+              // Enter jangan sampai submit form asset.
+              if (e.key === "Enter") {
+                e.preventDefault();
+                if (newName.trim()) submitNewType();
+              }
+            }}
+            placeholder="Nama jenis baru"
+            autoFocus
+            disabled={isSaving}
+          />
+          {result.error && (
+            <p className="text-xs text-rose-400">
+              {result.error}
+              {result.existing && (
+                <button
+                  type="button"
+                  className="ml-1 underline hover:text-rose-300"
+                  onClick={() => {
+                    setTypeId(result.existing!.id);
+                    closeAdd();
+                  }}
+                >
+                  Pakai jenis ini
+                </button>
+              )}
+            </p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="ghost" size="sm" onClick={closeAdd} disabled={isSaving}>
+              Batal
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={submitNewType}
+              disabled={isSaving || !newName.trim()}
+            >
+              {isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              Tambah
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---- Add / Edit Dialog ----
 
 function AssetDialog({
@@ -138,8 +263,6 @@ function AssetDialog({
   );
 
   const brandOptions = brands.filter((b) => b.is_active || b.id === asset?.brand_id);
-  // Jenis nonaktif tetap bisa dipertahankan oleh asset yang sudah memakainya.
-  const typeOptions = assetTypes.filter((t) => t.is_active || t.id === asset?.asset_type_id);
 
   return (
     <Dialog
@@ -196,20 +319,11 @@ function AssetDialog({
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="asset-type">Jenis</Label>
-              <Select
-                id="asset-type"
-                name="asset_type_id"
-                defaultValue={asset?.asset_type_id ?? ""}
-                placeholder="Pilih jenis"
-                required
+              <AssetTypeField
+                assetTypes={assetTypes}
+                currentTypeId={asset?.asset_type_id ?? null}
                 disabled={isPending}
-              >
-                {typeOptions.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </Select>
+              />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="asset-brand">Brand (opsional)</Label>

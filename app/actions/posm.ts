@@ -478,6 +478,63 @@ async function assetTypeError(
   return current?.asset_type_id === typeId ? undefined : ASSET_TYPE_INACTIVE;
 }
 
+export type AssetTypeOption = { id: string; name: string; is_active: boolean };
+
+export type QuickAddAssetTypeResult = {
+  type?: AssetTypeOption;
+  error?: string;
+  /** Jenis aktif dengan nama sama, disarankan untuk dipilih. */
+  existing?: AssetTypeOption;
+};
+
+/**
+ * "+ Jenis baru" dari form asset (Marketing/TM). Hanya insert; ubah nama,
+ * aktif/nonaktif, dan hapus tetap hak admin (RLS asset_types_update_admin).
+ */
+export async function quickAddAssetTypeAction(rawName: string): Promise<QuickAddAssetTypeResult> {
+  try {
+    const { supabase } = await requirePosmWriter();
+
+    const name = rawName.trim();
+    if (!name) return { error: "Nama jenis asset harus diisi" };
+
+    // Cek duplikat terhadap semua jenis yang belum dihapus, termasuk nonaktif.
+    const { data: types, error: listError } = await supabase
+      .from("asset_types")
+      .select("id, name, is_active")
+      .is("deleted_at", null);
+    if (listError) return { error: listError.message };
+
+    const key = name.toLowerCase();
+    const match = (types ?? []).find((t) => t.name.trim().toLowerCase() === key);
+    if (match?.is_active)
+      return {
+        error: `Jenis "${match.name}" sudah ada. Pilih jenis tersebut.`,
+        existing: match,
+      };
+    if (match)
+      return {
+        error: `Jenis "${match.name}" sudah ada tetapi nonaktif. Hubungi admin untuk mengaktifkannya.`,
+      };
+
+    const { data: created, error } = await supabase
+      .from("asset_types")
+      .insert({ name })
+      .select("id, name, is_active")
+      .single();
+    if (error) {
+      if (error.code === "23505") return { error: `Jenis "${name}" sudah ada.` };
+      return { error: error.message };
+    }
+
+    revalidatePath(PAGE_PATH);
+    revalidatePath("/admin/master-data/asset-types");
+    return { type: created };
+  } catch {
+    return { error: FORBIDDEN };
+  }
+}
+
 export async function saveMarketingAssetAction(
   _prevState: SaveMarketingAssetState,
   formData: FormData
