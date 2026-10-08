@@ -7,11 +7,13 @@ import {
   ASSET_CONDITIONS,
   monthDateBounds,
   nextCode,
+  parseAssetListFilters,
   POSM_CODE_PREFIX,
   posmExportHref,
   resolveAssetView,
   stockStatus,
   summarizeAssets,
+  type AssetListFilters,
   type AssetView,
 } from "@/lib/posm";
 import {
@@ -68,7 +70,13 @@ export default async function MonitoringPosmPage({
       </div>
 
       {tab === "posm" && <PosmTab canManage={canManage} />}
-      {tab === "asset" && <AssetTab canManage={canManage} view={resolveAssetView(params.view)} />}
+      {tab === "asset" && (
+        <AssetTab
+          canManage={canManage}
+          view={resolveAssetView(params.view)}
+          filters={parseAssetListFilters(params)}
+        />
+      )}
       {tab === "gimmick" && <GimmickTab />}
     </div>
   );
@@ -139,7 +147,15 @@ async function PosmTab({ canManage }: { canManage: boolean }) {
   );
 }
 
-async function AssetTab({ canManage, view }: { canManage: boolean; view: AssetView }) {
+async function AssetTab({
+  canManage,
+  view,
+  filters,
+}: {
+  canManage: boolean;
+  view: AssetView;
+  filters: AssetListFilters;
+}) {
   const supabase = await createClient();
 
   const [
@@ -227,6 +243,7 @@ async function AssetTab({ canManage, view }: { canManage: boolean; view: AssetVi
         canManage={canManage}
         suggestedCode={nextCode(ASSET_CODE_PREFIX, rows.map((r) => r.code))}
         initialView={view}
+        initialFilters={filters}
       />
     </div>
   );

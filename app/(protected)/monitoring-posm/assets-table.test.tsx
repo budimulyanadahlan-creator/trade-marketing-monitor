@@ -192,3 +192,73 @@ describe("AssetsTable — Ringkasan Stok", () => {
     expect(cells(totalRow).slice(0, 3)).toEqual(["1", "0", "1"]);
   });
 });
+
+describe("AssetsTable — tautan Ringkasan Stok ke Daftar Unit", () => {
+  afterEach(() => window.history.replaceState(null, "", "/"));
+
+  const summaryRow = (label: string) => screen.getByRole("button", { name: new RegExp(label) }).closest("tr")!;
+  const countCell = (row: HTMLElement, index: number) => within(row).getAllByRole("cell")[index + 1];
+  const listedNames = () =>
+    screen
+      .getAllByRole("link")
+      .filter((a) => a.getAttribute("href")?.startsWith("/monitoring-posm/assets/"))
+      .map((a) => a.textContent);
+
+  it("opens the unit list filtered by type and location when a number is clicked", () => {
+    window.history.replaceState(null, "", "/monitoring-posm?tab=asset&view=ringkasan");
+    renderTable(false, "ringkasan");
+    const link = within(countCell(summaryRow("Cooler/Chiller"), 2)).getByRole("link");
+    expect(link.getAttribute("href")).toBe("/monitoring-posm?tab=asset&jenis=type-cooler&lokasi=placed");
+
+    fireEvent.click(link);
+    expect(listedNames()).toEqual(["Cooler Showcase"]);
+    expect((screen.getByLabelText("Filter jenis") as HTMLSelectElement).value).toBe("type-cooler");
+    expect((screen.getByLabelText("Filter lokasi") as HTMLSelectElement).value).toBe("placed");
+    expect(window.location.search).toBe("?tab=asset&jenis=type-cooler&lokasi=placed");
+  });
+
+  it("does not link zero counts", () => {
+    renderTable(false, "ringkasan");
+    expect(within(countCell(summaryRow("Cooler/Chiller"), 1)).queryByRole("link")).toBeNull();
+  });
+
+  it("adds a removable exact-name chip when a name row number is clicked", () => {
+    window.history.replaceState(null, "", "/monitoring-posm?tab=asset&view=ringkasan");
+    renderTable(false, "ringkasan");
+    fireEvent.click(screen.getByRole("button", { name: /Rak Display/ }));
+    fireEvent.click(within(countCell(screen.getByText("Rak Display Besi").closest("tr")!, 0)).getByRole("link"));
+    expect(screen.getByText("Nama: Rak Display Besi")).toBeTruthy();
+    expect(listedNames()).toEqual(["Rak Display Besi"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Hapus filter nama" }));
+    expect(screen.queryByText(/Nama: /)).toBeNull();
+    expect(window.location.search).toBe("?tab=asset&jenis=type-rak");
+    expect(listedNames()).toEqual(["Rak Display Besi"]);
+  });
+
+  it("shows both damaged conditions when the Rusak number is clicked", () => {
+    renderTable(false, "ringkasan");
+    const totalRow = screen.getByText("Total", { selector: "td" }).closest("tr")!;
+    fireEvent.click(within(countCell(totalRow, 3)).getByRole("link"));
+    expect((screen.getByLabelText("Filter kondisi") as HTMLSelectElement).value).toBe("rusak");
+    expect(listedNames()).toEqual(["Rak Display Besi"]);
+  });
+
+  it("starts from filters read from the URL", () => {
+    render(
+      <AssetsTable
+        assets={assets}
+        assetTypes={assetTypes}
+        brands={brands}
+        regions={regions}
+        distributors={distributors}
+        storeNames={[]}
+        canManage={false}
+        suggestedCode="AST-0004"
+        initialFilters={{ typeId: "", name: "Tenda Lama", brandId: "", regionId: "", condition: "all", location: "warehouse" }}
+      />
+    );
+    expect(screen.getByText("Nama: Tenda Lama")).toBeTruthy();
+    expect(listedNames()).toEqual(["Tenda Lama"]);
+  });
+});

@@ -11,29 +11,70 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { AssetStockCounts, AssetStockSummary } from "@/lib/posm";
+import type { AssetStockColumn, AssetStockCounts, AssetStockSummary } from "@/lib/posm";
 import { cn, formatIDR } from "@/lib/utils";
 
-function CountCells({ counts }: { counts: AssetStockCounts }) {
-  const n = (v: number) => v.toLocaleString("id-ID");
+/** Baris ringkasan yang diklik: kosong = total, jenis saja, atau jenis + nama. */
+export type AssetStockCell = { typeId?: string; name?: string };
+
+/** Tautan angka ringkasan ke Daftar Unit yang sudah tersaring. */
+export type AssetStockLinks = {
+  href: (cell: AssetStockCell, column: AssetStockColumn) => string;
+  open: (cell: AssetStockCell, column: AssetStockColumn) => void;
+};
+
+const COUNT_COLUMNS: { column: AssetStockColumn; label: string; tone?: string }[] = [
+  { column: "total", label: "Total" },
+  { column: "warehouse", label: "Di Gudang Pusat" },
+  { column: "placed", label: "Ditempatkan" },
+  { column: "damaged", label: "Rusak", tone: "text-amber-400" },
+  { column: "lost", label: "Hilang", tone: "text-rose-400" },
+];
+
+function CountCells({
+  counts,
+  cell,
+  links,
+}: {
+  counts: AssetStockCounts;
+  cell: AssetStockCell;
+  links: AssetStockLinks;
+}) {
   return (
     <>
-      <TableCell className="text-right tabular-nums">{n(counts.total)}</TableCell>
-      <TableCell className="text-right tabular-nums">{n(counts.warehouse)}</TableCell>
-      <TableCell className="text-right tabular-nums">{n(counts.placed)}</TableCell>
-      <TableCell className={cn("text-right tabular-nums", counts.damaged > 0 && "text-amber-400")}>
-        {n(counts.damaged)}
-      </TableCell>
-      <TableCell className={cn("text-right tabular-nums", counts.lost > 0 && "text-rose-400")}>
-        {n(counts.lost)}
-      </TableCell>
+      {COUNT_COLUMNS.map(({ column, label, tone }) => {
+        const value = counts[column];
+        const text = value.toLocaleString("id-ID");
+        return (
+          <TableCell key={column} className={cn("text-right tabular-nums", value > 0 && tone)}>
+            {/* Angka 0 tidak ditautkan: daftarnya pasti kosong. */}
+            {value > 0 ? (
+              <a
+                href={links.href(cell, column)}
+                onClick={(e) => {
+                  // Tetap tautan biasa untuk buka di tab baru; klik biasa pindah tampilan di tempat.
+                  if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                  e.preventDefault();
+                  links.open(cell, column);
+                }}
+                title={`Lihat unit: ${label}`}
+                className="hover:text-emerald-400 hover:underline"
+              >
+                {text}
+              </a>
+            ) : (
+              text
+            )}
+          </TableCell>
+        );
+      })}
       <TableCell className="text-right tabular-nums whitespace-nowrap">{formatIDR(counts.value)}</TableCell>
     </>
   );
 }
 
 /** Tabel Ringkasan Stok: baris Jenis yang bisa dibuka menjadi baris per Nama. */
-export function AssetStockSummaryTable({ summary }: { summary: AssetStockSummary }) {
+export function AssetStockSummaryTable({ summary, links }: { summary: AssetStockSummary; links: AssetStockLinks }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   function toggle(typeId: string) {
@@ -51,11 +92,11 @@ export function AssetStockSummaryTable({ summary }: { summary: AssetStockSummary
         <TableHeader>
           <TableRow className="border-white/8 hover:bg-transparent">
             <TableHead>Jenis / Nama Asset</TableHead>
-            <TableHead className="text-right">Total</TableHead>
-            <TableHead className="text-right">Di Gudang Pusat</TableHead>
-            <TableHead className="text-right">Ditempatkan</TableHead>
-            <TableHead className="text-right">Rusak</TableHead>
-            <TableHead className="text-right">Hilang</TableHead>
+            {COUNT_COLUMNS.map(({ column, label }) => (
+              <TableHead key={column} className="text-right">
+                {label}
+              </TableHead>
+            ))}
             <TableHead className="text-right">Nilai Perolehan</TableHead>
           </TableRow>
         </TableHeader>
@@ -78,13 +119,13 @@ export function AssetStockSummaryTable({ summary }: { summary: AssetStockSummary
                         <span className="text-xs font-normal text-slate-500">({group.names.length} nama)</span>
                       </button>
                     </TableCell>
-                    <CountCells counts={group.counts} />
+                    <CountCells counts={group.counts} cell={{ typeId: group.typeId }} links={links} />
                   </TableRow>
                   {isOpen &&
                     group.names.map((row) => (
                       <TableRow key={row.name} className="text-slate-400">
                         <TableCell className="pl-11">{row.name}</TableCell>
-                        <CountCells counts={row.counts} />
+                        <CountCells counts={row.counts} cell={{ typeId: group.typeId, name: row.name }} links={links} />
                       </TableRow>
                     ))}
                 </Fragment>
@@ -102,7 +143,7 @@ export function AssetStockSummaryTable({ summary }: { summary: AssetStockSummary
           <TableFooter>
             <TableRow className="font-semibold text-slate-100">
               <TableCell>Total</TableCell>
-              <CountCells counts={summary.total} />
+              <CountCells counts={summary.total} cell={{}} links={links} />
             </TableRow>
           </TableFooter>
         )}

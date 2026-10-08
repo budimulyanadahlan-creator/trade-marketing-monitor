@@ -31,21 +31,27 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { AlertCircle, ArrowRightLeft, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { AlertCircle, ArrowRightLeft, Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { filterBySearch } from "@/lib/search";
 import {
   ASSET_CONDITION_FILTER_ALL,
+  ASSET_CONDITION_FILTER_DAMAGED,
   ASSET_CONDITIONS,
   ASSET_DESTINATION_LABELS,
+  ASSET_LIST_FILTER_PARAM_NAMES,
   ASSET_WRITTEN_OFF,
-  matchesAssetFilters,
+  assetListFiltersQuery,
+  EMPTY_ASSET_LIST_FILTERS,
+  matchesAssetListFilters,
+  stockCellFilters,
   summarizeAssetStock,
+  type AssetListFilters,
   type AssetView,
 } from "@/lib/posm";
 import { cn, formatIDR } from "@/lib/utils";
 import type { AssetCondition, AssetDestination, MarketingAssetRow } from "@/types/database";
-import { AssetStockSummaryTable } from "./asset-stock-summary";
+import { AssetStockSummaryTable, type AssetStockLinks } from "./asset-stock-summary";
 import { PlacementDialog } from "./placement-dialog";
 import { PhotoField, PhotoThumb, usePhotoChange } from "./posm-photo";
 
@@ -454,12 +460,19 @@ const ASSET_VIEW_LABELS: Record<AssetView, string> = {
   ringkasan: "Ringkasan Stok",
 };
 
-/** Simpan tampilan di URL tanpa navigasi server (tidak memuat ulang data). */
-function writeViewToUrl(view: AssetView) {
-  const url = new URL(window.location.href);
+/** URL tab Asset untuk tampilan + filter; parameter lain (mis. tab) dipertahankan. */
+function assetTabUrl(base: string, view: AssetView, filters: AssetListFilters) {
+  const url = new URL(base);
+  for (const param of ASSET_LIST_FILTER_PARAM_NAMES) url.searchParams.delete(param);
+  url.searchParams.delete("view");
   if (view === "ringkasan") url.searchParams.set("view", view);
-  else url.searchParams.delete("view");
-  window.history.replaceState(window.history.state, "", url);
+  for (const [param, value] of new URLSearchParams(assetListFiltersQuery(filters))) url.searchParams.set(param, value);
+  return url;
+}
+
+/** Simpan tampilan & filter di URL tanpa navigasi server (tidak memuat ulang data). */
+function writeAssetUrl(view: AssetView, filters: AssetListFilters) {
+  window.history.replaceState(window.history.state, "", assetTabUrl(window.location.href, view, filters));
 }
 
 export function AssetsTable({
@@ -472,6 +485,7 @@ export function AssetsTable({
   canManage,
   suggestedCode,
   initialView = "daftar",
+  initialFilters = EMPTY_ASSET_LIST_FILTERS,
 }: {
   assets: AssetListRow[];
   assetTypes: Option[];
@@ -482,24 +496,18 @@ export function AssetsTable({
   canManage: boolean;
   suggestedCode: string;
   initialView?: AssetView;
+  initialFilters?: AssetListFilters;
 }) {
   const [view, setView] = useState<AssetView>(initialView);
   const [query, setQuery] = useState("");
-  const [typeFilter, setTypeFilter] = useState("");
-  const [brandFilter, setBrandFilter] = useState("");
-  const [conditionFilter, setConditionFilter] = useState("");
-  const [regionFilter, setRegionFilter] = useState("");
+  const [filters, setFilters] = useState<AssetListFilters>(initialFilters);
 
   // Brand, region, dan kondisi berlaku sama untuk Daftar Unit dan Ringkasan Stok.
-  const sharedFilters = useMemo(
-    () => ({ brandId: brandFilter, regionId: regionFilter, condition: conditionFilter }),
-    [brandFilter, regionFilter, conditionFilter]
-  );
+  const { brandId, regionId, condition } = filters;
+  const sharedFilters = useMemo(() => ({ brandId, regionId, condition }), [brandId, regionId, condition]);
 
   const filtered = useMemo(() => {
-    const byFilters = assets.filter(
-      (a) => (!typeFilter || a.asset_type_id === typeFilter) && matchesAssetFilters(a, sharedFilters)
-    );
+    const byFilters = assets.filter((a) => matchesAssetListFilters(a, filters));
     return filterBySearch(byFilters, query, (a) => [
       a.code,
       a.name,
@@ -507,14 +515,31 @@ export function AssetsTable({
       a.serial_number,
       a.store_name,
     ]);
-  }, [assets, query, typeFilter, sharedFilters]);
+  }, [assets, query, filters]);
 
   const stockSummary = useMemo(() => summarizeAssetStock(assets, sharedFilters), [assets, sharedFilters]);
 
-  function changeView(next: AssetView) {
-    setView(next);
-    writeViewToUrl(next);
+  function navigate(nextView: AssetView, nextFilters: AssetListFilters) {
+    setView(nextView);
+    setFilters(nextFilters);
+    writeAssetUrl(nextView, nextFilters);
   }
+
+  function setFilter<K extends keyof AssetListFilters>(key: K, value: AssetListFilters[K]) {
+    navigate(view, { ...filters, [key]: value });
+  }
+
+  // Angka ringkasan membuka Daftar Unit dengan filter yang hasilnya sama dengan angka itu.
+  const stockLinks: AssetStockLinks = {
+    href: (cell, column) => {
+      const q = assetListFiltersQuery(stockCellFilters(sharedFilters, cell, column));
+      return `/monitoring-posm?tab=asset${q ? `&${q}` : ""}`;
+    },
+    open: (cell, column) => {
+      setQuery("");
+      navigate("daftar", stockCellFilters(sharedFilters, cell, column));
+    },
+  };
 
   // Hanya brand/region yang dipakai asset yang relevan sebagai filter.
   const usedBrands = useMemo(() => {
@@ -526,10 +551,8 @@ export function AssetsTable({
     return regions.filter((r) => used.has(r.id));
   }, [assets, regions]);
 
-  const hasFilter =
-    query.trim() !== "" || typeFilter !== "" || brandFilter !== "" || conditionFilter !== "" || regionFilter !== "";
-  const hiddenWrittenOff =
-    conditionFilter === "" ? assets.filter((a) => a.condition === ASSET_WRITTEN_OFF).length : 0;
+  const hasFilter = query.trim() !== "" || Object.values(filters).some((v) => v !== "");
+  const hiddenWrittenOff = condition === "" ? assets.filter((a) => a.condition === ASSET_WRITTEN_OFF).length : 0;
   const colSpan = canManage ? 8 : 7;
   const isSummary = view === "ringkasan";
 
@@ -551,7 +574,7 @@ export function AssetsTable({
                 key={v}
                 type="button"
                 aria-pressed={view === v}
-                onClick={() => changeView(v)}
+                onClick={() => navigate(v, filters)}
                 className={cn(
                   "rounded-[5px] px-3 py-1 text-sm font-medium transition-colors",
                   view === v ? "bg-emerald-500/20 text-emerald-300" : "text-slate-400 hover:text-slate-200"
@@ -572,8 +595,8 @@ export function AssetsTable({
               />
               <Select
                 aria-label="Filter jenis"
-                value={typeFilter}
-                onChange={(e) => setTypeFilter(e.target.value)}
+                value={filters.typeId}
+                onChange={(e) => setFilter("typeId", e.target.value)}
                 className="h-9 w-40"
               >
                 <option value="">Semua jenis</option>
@@ -583,12 +606,25 @@ export function AssetsTable({
                   </option>
                 ))}
               </Select>
+              <Select
+                aria-label="Filter lokasi"
+                value={filters.location}
+                onChange={(e) => setFilter("location", e.target.value as AssetListFilters["location"])}
+                className="h-9 w-36"
+              >
+                <option value="">Semua lokasi</option>
+                {(Object.keys(ASSET_DESTINATION_LABELS) as AssetDestination[]).map((d) => (
+                  <option key={d} value={d}>
+                    {ASSET_DESTINATION_LABELS[d]}
+                  </option>
+                ))}
+              </Select>
             </>
           )}
           <Select
             aria-label="Filter brand"
-            value={brandFilter}
-            onChange={(e) => setBrandFilter(e.target.value)}
+            value={brandId}
+            onChange={(e) => setFilter("brandId", e.target.value)}
             className="h-9 w-36"
           >
             <option value="">Semua brand</option>
@@ -600,12 +636,13 @@ export function AssetsTable({
           </Select>
           <Select
             aria-label="Filter kondisi"
-            value={conditionFilter}
-            onChange={(e) => setConditionFilter(e.target.value)}
+            value={condition}
+            onChange={(e) => setFilter("condition", e.target.value)}
             className="h-9 w-48"
           >
             <option value="">Tanpa {ASSET_WRITTEN_OFF}</option>
             <option value={ASSET_CONDITION_FILTER_ALL}>Semua kondisi</option>
+            <option value={ASSET_CONDITION_FILTER_DAMAGED}>Rusak (Ringan + Berat)</option>
             {ASSET_CONDITIONS.map((c) => (
               <option key={c} value={c}>
                 {c}
@@ -614,8 +651,8 @@ export function AssetsTable({
           </Select>
           <Select
             aria-label="Filter region"
-            value={regionFilter}
-            onChange={(e) => setRegionFilter(e.target.value)}
+            value={regionId}
+            onChange={(e) => setFilter("regionId", e.target.value)}
             className="h-9 w-36"
           >
             <option value="">Semua region</option>
@@ -644,8 +681,25 @@ export function AssetsTable({
         </div>
       </div>
 
+      {/* Filter nama persis hanya datang dari tautan ringkasan, jadi tampil sebagai chip. */}
+      {!isSummary && filters.name && (
+        <div className="flex items-center gap-2 text-sm">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 py-0.5 pl-3 pr-1 text-emerald-300">
+            Nama: {filters.name}
+            <button
+              type="button"
+              aria-label="Hapus filter nama"
+              onClick={() => setFilter("name", "")}
+              className="rounded-full p-0.5 hover:bg-emerald-500/20"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </span>
+        </div>
+      )}
+
       {isSummary ? (
-        <AssetStockSummaryTable summary={stockSummary} />
+        <AssetStockSummaryTable summary={stockSummary} links={stockLinks} />
       ) : (
         <div className="rounded-xl border border-white/8 bg-white/2 overflow-hidden">
           <Table>

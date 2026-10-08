@@ -508,11 +508,13 @@ const emptyStockCounts = (): AssetStockCounts => ({
   value: 0,
 });
 
+const isDamaged = (condition: AssetCondition) => condition === "Rusak Ringan" || condition === "Rusak Berat";
+
 function addToStockCounts(c: AssetStockCounts, a: AssetSummaryInput) {
   c.total += 1;
   if (a.destination === "warehouse") c.warehouse += 1;
   else c.placed += 1;
-  if (a.condition === "Rusak Ringan" || a.condition === "Rusak Berat") c.damaged += 1;
+  if (isDamaged(a.condition)) c.damaged += 1;
   if (a.condition === "Hilang") c.lost += 1;
   c.value += Number(a.acquisition_value);
 }
@@ -521,10 +523,13 @@ const byName = (a: string, b: string) => a.localeCompare(b, "id-ID");
 
 /** Nilai filter kondisi yang menampilkan semua kondisi, termasuk Dihapusbukukan. */
 export const ASSET_CONDITION_FILTER_ALL = "all";
+/** Nilai filter kondisi untuk Rusak Ringan + Rusak Berat (kolom Rusak di ringkasan). */
+export const ASSET_CONDITION_FILTER_DAMAGED = "rusak";
 
 /** Filter kondisi tab Asset: kosong (default) menyembunyikan asset Dihapusbukukan. */
 export function matchesAssetConditionFilter(condition: AssetCondition, filter: string) {
   if (filter === "") return condition !== ASSET_WRITTEN_OFF;
+  if (filter === ASSET_CONDITION_FILTER_DAMAGED) return isDamaged(condition);
   return filter === ASSET_CONDITION_FILTER_ALL || condition === filter;
 }
 
@@ -583,6 +588,107 @@ export function summarizeAssetStock(assets: AssetStockInput[], filters: AssetSto
         names: [...names.values()].sort((x, y) => byName(x.name, y.name)),
       })),
   };
+}
+
+// ============================================================
+// FILTER DAFTAR UNIT DI URL
+// ============================================================
+
+/** Filter Daftar Unit; string kosong = tidak difilter. */
+export type AssetListFilters = AssetStockFilters & {
+  typeId: string;
+  /** Nama asset persis (dari tautan ringkasan). */
+  name: string;
+  location: AssetDestination | "";
+};
+
+export const EMPTY_ASSET_LIST_FILTERS: AssetListFilters = {
+  typeId: "",
+  name: "",
+  brandId: "",
+  regionId: "",
+  condition: "",
+  location: "",
+};
+
+// Urutan kunci menentukan urutan di query string.
+const ASSET_LIST_FILTER_PARAMS: [keyof AssetListFilters, string][] = [
+  ["typeId", "jenis"],
+  ["name", "nama"],
+  ["brandId", "brand"],
+  ["regionId", "region"],
+  ["condition", "kondisi"],
+  ["location", "lokasi"],
+];
+
+/** Nama parameter URL filter Daftar Unit (untuk diganti tanpa menyentuh tab/view). */
+export const ASSET_LIST_FILTER_PARAM_NAMES = ASSET_LIST_FILTER_PARAMS.map(([, param]) => param);
+
+const ASSET_CONDITION_FILTER_VALUES: readonly string[] = [
+  ASSET_CONDITION_FILTER_ALL,
+  ASSET_CONDITION_FILTER_DAMAGED,
+  ...ASSET_CONDITIONS,
+];
+
+/** Filter Daftar Unit dari URL; nilai kondisi/lokasi yang tidak dikenal diabaikan. */
+export function parseAssetListFilters(params: Record<string, string | string[] | undefined>): AssetListFilters {
+  const filters = { ...EMPTY_ASSET_LIST_FILTERS };
+  for (const [key, param] of ASSET_LIST_FILTER_PARAMS) {
+    const raw = params[param];
+    const value = (Array.isArray(raw) ? raw[0] : raw) ?? "";
+    if (key === "condition" && !ASSET_CONDITION_FILTER_VALUES.includes(value)) continue;
+    if (key === "location" && !Object.hasOwn(ASSET_DESTINATION_LABELS, value)) continue;
+    filters[key] = value as never;
+  }
+  return filters;
+}
+
+/** Query string filter Daftar Unit (nilai kosong dihilangkan). */
+export function assetListFiltersQuery(filters: AssetListFilters): string {
+  const params = new URLSearchParams();
+  for (const [key, param] of ASSET_LIST_FILTER_PARAMS) {
+    if (filters[key]) params.set(param, filters[key]);
+  }
+  return params.toString();
+}
+
+/** Filter lengkap Daftar Unit (filter bersama + jenis, nama persis, lokasi). */
+export function matchesAssetListFilters(
+  a: Pick<AssetStockInput, "asset_type_id" | "name" | "brand_id" | "region_id" | "condition" | "destination">,
+  filters: AssetListFilters
+) {
+  return (
+    (!filters.typeId || a.asset_type_id === filters.typeId) &&
+    (!filters.name || a.name === filters.name) &&
+    (!filters.location || a.destination === filters.location) &&
+    matchesAssetFilters(a, filters)
+  );
+}
+
+export type AssetStockColumn = "total" | "warehouse" | "placed" | "damaged" | "lost";
+
+/**
+ * Filter Daftar Unit untuk angka yang diklik di ringkasan, sehingga jumlah
+ * unit yang tampil sama dengan angka itu. `cell` kosong = baris total.
+ */
+export function stockCellFilters(
+  shared: AssetStockFilters,
+  cell: { typeId?: string; name?: string },
+  column: AssetStockColumn
+): AssetListFilters {
+  const filters: AssetListFilters = {
+    ...EMPTY_ASSET_LIST_FILTERS,
+    ...shared,
+    typeId: cell.typeId ?? "",
+    name: cell.name ?? "",
+  };
+  if (column === "warehouse" || column === "placed") filters.location = column;
+  // Filter Rusak Ringan/Berat yang sedang aktif sudah termasuk kolom Rusak.
+  if (column === "damaged" && !isDamaged(shared.condition as AssetCondition)) {
+    filters.condition = ASSET_CONDITION_FILTER_DAMAGED;
+  }
+  if (column === "lost") filters.condition = "Hilang";
+  return filters;
 }
 
 // ============================================================

@@ -22,6 +22,11 @@ import {
   summarizeAssets,
   summarizeAssetStock,
   resolveAssetView,
+  parseAssetListFilters,
+  assetListFiltersQuery,
+  EMPTY_ASSET_LIST_FILTERS,
+  matchesAssetListFilters,
+  stockCellFilters,
   parseMovementFilters,
   parseRekapFilters,
   parsePosmExportParams,
@@ -650,6 +655,10 @@ describe("summarizeAssetStock", () => {
     });
   });
 
+  it("matches both damaged conditions with the 'rusak' filter", () => {
+    expect(summarizeAssetStock(mixed, { ...noFilter, condition: "rusak" }).total).toMatchObject({ total: 2, damaged: 2 });
+  });
+
   it("counts only units placed in the chosen region, so the warehouse column is zero", () => {
     const total = summarizeAssetStock(mixed, { ...noFilter, regionId: "reg-1" }).total;
     expect(total).toMatchObject({ total: 1, warehouse: 0, placed: 1, damaged: 1 });
@@ -683,6 +692,109 @@ describe("summarizeAssetStock", () => {
     const summed = result.groups.reduce((s, g) => s + g.counts.total, 0);
     expect(result.total.total).toBe(summed);
     expect(result.total.value).toBe(5_200_000);
+  });
+});
+
+describe("parseAssetListFilters / assetListFiltersQuery", () => {
+  it("reads type, exact name, brand, region, condition, and location from the URL", () => {
+    const filters = parseAssetListFilters({
+      tab: "asset",
+      jenis: "type-seragam",
+      nama: "T-Shirt SPG Hitam",
+      brand: "brand-1",
+      region: "reg-1",
+      kondisi: "rusak",
+      lokasi: "placed",
+    });
+    expect(filters).toEqual({
+      typeId: "type-seragam",
+      name: "T-Shirt SPG Hitam",
+      brandId: "brand-1",
+      regionId: "reg-1",
+      condition: "rusak",
+      location: "placed",
+    });
+    expect(parseAssetListFilters(Object.fromEntries(new URLSearchParams(assetListFiltersQuery(filters))))).toEqual(
+      filters
+    );
+  });
+
+  it("ignores unknown condition and location values and drops empty filters from the query", () => {
+    expect(parseAssetListFilters({ kondisi: "Rusak", lokasi: "gudang", nama: ["A", "B"] })).toEqual({
+      ...EMPTY_ASSET_LIST_FILTERS,
+      name: "A",
+    });
+    expect(parseAssetListFilters({ kondisi: "Hilang" }).condition).toBe("Hilang");
+    expect(assetListFiltersQuery(EMPTY_ASSET_LIST_FILTERS)).toBe("");
+    expect(assetListFiltersQuery({ ...EMPTY_ASSET_LIST_FILTERS, name: "Kaos & Topi" })).toBe("nama=Kaos+%26+Topi");
+  });
+});
+
+describe("stockCellFilters", () => {
+  type Row = Parameters<typeof summarizeAssetStock>[0][number];
+  const unit = (over: Partial<Row>): Row => ({
+    asset_type_id: "type-seragam",
+    asset_type_name: "Seragam/Pakaian",
+    name: "T-Shirt SPG Hitam",
+    brand_id: "brand-1",
+    region_id: null,
+    acquisition_value: 100_000,
+    condition: "Baik",
+    destination: "warehouse",
+    ...over,
+  });
+  const units = [
+    unit({}),
+    unit({ destination: "placed", region_id: "reg-1" }),
+    unit({ name: "T-Shirt SPG Kuning", condition: "Rusak Ringan", destination: "placed", region_id: "reg-1" }),
+    unit({ name: "T-Shirt SPG Kuning", condition: "Rusak Berat", brand_id: "brand-2" }),
+    unit({ name: "T-Shirt SPG Kuning", condition: "Hilang", destination: "placed", region_id: "reg-2" }),
+    unit({ name: "T-Shirt SPG Kuning", condition: "Dihapusbukukan" }),
+    unit({ asset_type_id: "type-cooler", asset_type_name: "Cooler/Chiller", name: "T-Shirt SPG Hitam" }),
+  ];
+  const columns = ["total", "warehouse", "placed", "damaged", "lost"] as const;
+  const shared = [
+    { brandId: "", regionId: "", condition: "" },
+    { brandId: "", regionId: "", condition: "all" },
+    { brandId: "", regionId: "", condition: "Rusak Ringan" },
+    { brandId: "", regionId: "reg-1", condition: "" },
+    { brandId: "brand-1", regionId: "", condition: "rusak" },
+  ];
+
+  // Angka 0 tidak ditautkan, jadi hanya angka > 0 yang harus cocok.
+  it("lists exactly as many units as the clicked number, for every non-zero cell and filter", () => {
+    for (const filters of shared) {
+      const summary = summarizeAssetStock(units, filters);
+      const cells = [
+        { cell: {}, counts: summary.total },
+        ...summary.groups.flatMap((g) => [
+          { cell: { typeId: g.typeId }, counts: g.counts },
+          ...g.names.map((n) => ({ cell: { typeId: g.typeId, name: n.name }, counts: n.counts })),
+        ]),
+      ];
+      for (const { cell, counts } of cells) {
+        for (const column of columns) {
+          if (counts[column] === 0) continue;
+          const listed = units.filter((u) => matchesAssetListFilters(u, stockCellFilters(filters, cell, column)));
+          expect(listed.length, `${JSON.stringify({ filters, cell, column })}`).toBe(counts[column]);
+        }
+      }
+    }
+  });
+
+  it("carries type, exact name, brand, and region, and maps columns to location or condition", () => {
+    const base = { brandId: "brand-1", regionId: "reg-1", condition: "" };
+    const cell = { typeId: "type-seragam", name: "T-Shirt SPG Hitam" };
+    expect(stockCellFilters(base, cell, "placed")).toEqual({
+      typeId: "type-seragam",
+      name: "T-Shirt SPG Hitam",
+      brandId: "brand-1",
+      regionId: "reg-1",
+      condition: "",
+      location: "placed",
+    });
+    expect(stockCellFilters(base, {}, "damaged")).toMatchObject({ typeId: "", name: "", condition: "rusak", location: "" });
+    expect(stockCellFilters(base, {}, "lost").condition).toBe("Hilang");
   });
 });
 
