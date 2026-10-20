@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { DISTRIBUTOR_VISIBLE_CAMPAIGN_STATUSES } from "@/lib/campaign-status";
 import * as XLSX from "xlsx";
 import type { UserRole, CampaignStatus } from "@/types/database";
 
@@ -124,7 +125,7 @@ export async function GET(request: NextRequest) {
   let receiptedSet = new Set<string>();
 
   if (isDistributor) {
-    query = query.eq("status", "approved");
+    query = query.in("status", DISTRIBUTOR_VISIBLE_CAMPAIGN_STATUSES);
     if (profile.region_id) query = query.eq("region_id", profile.region_id);
 
     const { data: allDepts } = await supabase.from("departments").select("id, name");

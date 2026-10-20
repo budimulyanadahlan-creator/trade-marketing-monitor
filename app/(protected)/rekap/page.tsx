@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { DISTRIBUTOR_VISIBLE_CAMPAIGN_STATUSES } from "@/lib/campaign-status";
 import type { UserRole, CampaignStatus } from "@/types/database";
 import { RekapClient } from "./rekap-client";
 
@@ -95,7 +96,7 @@ export default async function RekapPage({
   let receiptedCampaignIds: string[] = [];
 
   if (isDistributor) {
-    query = query.eq("status", "approved");
+    query = query.in("status", DISTRIBUTOR_VISIBLE_CAMPAIGN_STATUSES);
 
     // Restrict to Sales and Trade Marketing departments
     const { data: allDepts } = await supabase.from("departments").select("id, name");

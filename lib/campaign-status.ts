@@ -17,6 +17,20 @@ export const COMMITTED_CAMPAIGN_STATUSES: readonly CampaignStatus[] = [
   "completed",
 ];
 
+// Status SKP yang tampil di daftar SKP, Rekap, dan export Excel distributor:
+// sejak disetujui sampai selesai, agar distributor tetap bisa membuka SKP-nya
+// untuk Submit Klaim, revisi, dan memantau pembayaran. Sama dengan RLS
+// campaigns_select_distributor (migrasi 038).
+export const DISTRIBUTOR_VISIBLE_CAMPAIGN_STATUSES: readonly CampaignStatus[] = [
+  "approved",
+  "ongoing",
+  "claim_submitted",
+  "claim_verified",
+  "ready_to_pay",
+  "paid",
+  "completed",
+];
+
 export function isCommittedStatus(status: CampaignStatus): boolean {
   return COMMITTED_CAMPAIGN_STATUSES.includes(status);
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   COMMITTED_CAMPAIGN_STATUSES,
+  DISTRIBUTOR_VISIBLE_CAMPAIGN_STATUSES,
   computeAARemainingBudget,
   groupCampaignsByCommitment,
   isCommittedStatus,
@@ -38,6 +39,20 @@ describe("COMMITTED_CAMPAIGN_STATUSES", () => {
   it("draft, submitted, rejected, cancelled bukan status komitmen", () => {
     for (const status of ["draft", "submitted", "rejected", "cancelled"] as const) {
       expect(isCommittedStatus(status)).toBe(false);
+    }
+  });
+});
+
+describe("DISTRIBUTOR_VISIBLE_CAMPAIGN_STATUSES", () => {
+  it("memuat status sejak disetujui sampai selesai, termasuk seluruh alur klaim", () => {
+    expect([...DISTRIBUTOR_VISIBLE_CAMPAIGN_STATUSES].sort()).toEqual(
+      ["approved", "ongoing", "claim_submitted", "claim_verified", "ready_to_pay", "paid", "completed"].sort()
+    );
+  });
+
+  it("tidak memuat status sebelum disetujui maupun yang ditolak/dibatalkan", () => {
+    for (const status of ["draft", "submitted", "approved_l1", "approved_l4", "rejected", "cancelled"] as const) {
+      expect(DISTRIBUTOR_VISIBLE_CAMPAIGN_STATUSES).not.toContain(status);
     }
   });
 });

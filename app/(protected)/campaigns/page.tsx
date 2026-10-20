@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { DISTRIBUTOR_VISIBLE_CAMPAIGN_STATUSES } from "@/lib/campaign-status";
 import { computeChecklistReadinessByCampaignId } from "@/lib/claim-checklist-status";
 import { computeClaimVerificationProgressByCampaignId } from "@/lib/claim-verification-progress";
 import { CampaignsClient } from "./campaigns-client";
@@ -102,7 +103,7 @@ export default async function CampaignsPage() {
     .order("created_at", { ascending: false });
 
   if (isDistributor) {
-    campaignQuery = campaignQuery.eq("status", "approved");
+    campaignQuery = campaignQuery.in("status", DISTRIBUTOR_VISIBLE_CAMPAIGN_STATUSES);
     if (visibleDeptIds.length > 0) {
       campaignQuery = campaignQuery.in("department_id", visibleDeptIds);
     }
@@ -113,8 +114,8 @@ export default async function CampaignsPage() {
   // Checklist readiness (approved SKP only) — tells admin/finance/manager which
   // approved SKP already has 100% of its distributor claim-document checklist
   // filled in, so they know it's ready for "Tambah" (realisasi) to move it to
-  // ongoing. Not relevant for the distributor's own list (already filtered to
-  // approved, and it's their own checklist they're filling in).
+  // ongoing. Not relevant for the distributor's own list (it's their own
+  // checklist they're filling in).
   //
   // Claim verification progress (claim_submitted only) — the finance queue's
   // "N/M item ✓" / "menunggu revisi distributor" badge.
