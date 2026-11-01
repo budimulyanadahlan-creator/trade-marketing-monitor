@@ -15,6 +15,42 @@ const roleRank: Record<UserRole, number> = {
   superadmin: 4,
 };
 
+type DistributorScope = "cabang" | "pusat";
+
+/**
+ * Aturan kolom akun distributor (Fase 2 multi-user distributor): role
+ * distributor wajib punya Perusahaan dan Cakupan; Cakupan Cabang wajib punya
+ * Region. Mengembalikan pesan error, atau null jika sah.
+ */
+function distributorFieldsError(fields: {
+  role: UserRole;
+  distributor_id?: string;
+  distributor_scope?: string;
+  region_id?: string;
+}): string | null {
+  if (fields.role !== "distributor") return null;
+  if (!fields.distributor_id) return "Perusahaan wajib diisi untuk Distributor.";
+  if (!fields.distributor_scope) {
+    return "Cakupan (Cabang/Pusat) wajib diisi untuk Distributor.";
+  }
+  if (fields.distributor_scope === "cabang" && !fields.region_id) {
+    return "Region wajib diisi untuk Distributor Cabang.";
+  }
+  return null;
+}
+
+function distributorColumns(fields: {
+  role: UserRole;
+  distributor_id?: string;
+  distributor_scope?: string;
+}): { distributor_id: string | null; distributor_scope: DistributorScope | null } {
+  if (fields.role !== "distributor") return { distributor_id: null, distributor_scope: null };
+  return {
+    distributor_id: fields.distributor_id || null,
+    distributor_scope: (fields.distributor_scope as DistributorScope) || null,
+  };
+}
+
 const createUserSchema = z.object({
   email: z.string().email("Email tidak valid"),
   password: z.string().min(8, "Password minimal 8 karakter"),
@@ -34,6 +70,7 @@ const createUserSchema = z.object({
     .uuid("Distributor tidak valid")
     .optional()
     .or(z.literal("")),
+  distributor_scope: z.enum(["cabang", "pusat"]).optional().or(z.literal("")),
   role: z.enum(["user", "manager", "finance", "admin", "superadmin", "distributor"]),
 });
 
@@ -86,6 +123,7 @@ export async function createUserAction(
     department_id: formData.get("department_id") || undefined,
     region_id: formData.get("region_id") || undefined,
     distributor_id: formData.get("distributor_id") || undefined,
+    distributor_scope: formData.get("distributor_scope") || undefined,
     role: formData.get("role"),
   };
 
@@ -102,10 +140,9 @@ export async function createUserAction(
     };
   }
 
-  // Region required for distributor role and Sales department
-  if (parsed.data.role === "distributor" && !parsed.data.region_id) {
-    return { error: "Region wajib diisi untuk Distributor." };
-  }
+  // Perusahaan + Cakupan wajib untuk distributor; Region wajib untuk Cabang (dan Sales).
+  const distributorError = distributorFieldsError(parsed.data);
+  if (distributorError) return { error: distributorError };
   if (parsed.data.department_id) {
     const supabase = await createClient();
     const { data: dept } = await supabase
@@ -143,8 +180,7 @@ export async function createUserAction(
     full_name: parsed.data.full_name,
     department_id: parsed.data.department_id || null,
     region_id: parsed.data.region_id || null,
-    distributor_id:
-      parsed.data.role === "distributor" ? parsed.data.distributor_id || null : null,
+    ...distributorColumns(parsed.data),
     role: parsed.data.role as UserRole,
     is_active: true,
   });
@@ -165,6 +201,7 @@ const updateUserSchema = z.object({
   department_id: z.string().uuid().optional().or(z.literal("")),
   region_id: z.string().uuid().optional().or(z.literal("")),
   distributor_id: z.string().uuid().optional().or(z.literal("")),
+  distributor_scope: z.enum(["cabang", "pusat"]).optional().or(z.literal("")),
 });
 
 export type UpdateUserState = { error?: string; success?: boolean };
@@ -188,6 +225,7 @@ export async function updateUserAction(
     department_id: formData.get("department_id") || undefined,
     region_id: formData.get("region_id") || undefined,
     distributor_id: formData.get("distributor_id") || undefined,
+    distributor_scope: formData.get("distributor_scope") || undefined,
   };
 
   const parsed = updateUserSchema.safeParse(raw);
@@ -199,10 +237,9 @@ export async function updateUserAction(
     return { error: `Anda tidak bisa mengubah ke role ${parsed.data.role}.` };
   }
 
-  // Region required for distributor role and Sales department
-  if (parsed.data.role === "distributor" && !parsed.data.region_id) {
-    return { error: "Region wajib diisi untuk Distributor." };
-  }
+  // Perusahaan + Cakupan wajib untuk distributor; Region wajib untuk Cabang (dan Sales).
+  const distributorError = distributorFieldsError(parsed.data);
+  if (distributorError) return { error: distributorError };
 
   const supabase = await createClient();
 
@@ -235,8 +272,7 @@ export async function updateUserAction(
       role: parsed.data.role as UserRole,
       department_id: parsed.data.department_id || null,
       region_id: parsed.data.region_id || null,
-      distributor_id:
-        parsed.data.role === "distributor" ? parsed.data.distributor_id || null : null,
+      ...distributorColumns(parsed.data),
     })
     .eq("id", parsed.data.id);
 
@@ -390,7 +426,7 @@ export async function toggleUserActiveAction(
   // Fetch target user's role
   const { data: targetProfile } = await supabase
     .from("users")
-    .select("role")
+    .select("role, distributor_id")
     .eq("id", userId)
     .single();
 
@@ -402,6 +438,14 @@ export async function toggleUserActiveAction(
   if (roleRank[targetProfile.role as UserRole] >= roleRank[actorRole]) {
     return {
       error: `Anda tidak memiliki izin untuk menonaktifkan user dengan role ${targetProfile.role}.`,
+    };
+  }
+
+  // Akun distributor yatim (tanpa perusahaan) tidak boleh hidup lagi (Fase 2).
+  if (isActive && targetProfile.role === "distributor" && !targetProfile.distributor_id) {
+    return {
+      error:
+        "Akun distributor ini belum terhubung ke perusahaan. Isi Perusahaan dan Cakupan lewat Edit sebelum mengaktifkan.",
     };
   }
 

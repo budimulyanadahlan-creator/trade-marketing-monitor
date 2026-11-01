@@ -19,6 +19,9 @@ export type CampaignStatus =
 
 export type PromotionType = "TP" | "CP";
 
+/** Cakupan akun distributor: Cabang (region akun) atau Pusat (semua region). */
+export type DistributorScope = "cabang" | "pusat";
+
 // -------------------------------------------------------
 // Row shapes (match database columns exactly — no joins)
 // -------------------------------------------------------
@@ -34,6 +37,7 @@ export type UserRow = {
   department_id: string | null;
   region_id: string | null;
   distributor_id: string | null;
+  distributor_scope: DistributorScope | null;
   role: UserRole;
   is_active: boolean;
   created_at: string;
@@ -83,6 +87,7 @@ export type DistributorRow = {
   id: string;
   name: string;
   contact: string | null;
+  parent_distributor_id: string | null;
   is_active: boolean;
   created_at: string;
 };
@@ -617,6 +622,7 @@ export type Database = {
           department_id?: string | null;
           region_id?: string | null;
           distributor_id?: string | null;
+          distributor_scope?: DistributorScope | null;
           role?: UserRole;
           is_active?: boolean;
           created_at?: string;
@@ -627,6 +633,7 @@ export type Database = {
           department_id?: string | null;
           region_id?: string | null;
           distributor_id?: string | null;
+          distributor_scope?: DistributorScope | null;
           role?: UserRole;
           is_active?: boolean;
           updated_at?: string;
@@ -680,7 +687,14 @@ export type Database = {
       };
       distributors: {
         Row: DistributorRow;
-        Insert: { id?: string; name: string; contact?: string | null; is_active?: boolean; created_at?: string };
+        Insert: {
+          id?: string;
+          name: string;
+          contact?: string | null;
+          parent_distributor_id?: string | null;
+          is_active?: boolean;
+          created_at?: string;
+        };
         Update: Partial<Omit<DistributorRow, "id" | "created_at">>;
         Relationships: [];
       };
@@ -1707,6 +1721,7 @@ export type Database = {
       user_role: UserRole;
       promotion_type: PromotionType;
       campaign_status: CampaignStatus;
+      distributor_scope: DistributorScope;
     };
     CompositeTypes: Record<string, never>;
   };

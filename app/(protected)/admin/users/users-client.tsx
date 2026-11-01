@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { SearchInput } from "@/components/ui/search-input";
+import { Select } from "@/components/ui/select";
 import { CreateUserDialog } from "./create-user-dialog";
 import { EditUserDialog } from "./edit-user-dialog";
 import { DeleteUserButton } from "./delete-user-button";
@@ -25,6 +26,7 @@ import type {
   DepartmentRow,
   RegionRow,
   DistributorRow,
+  DistributorScope,
 } from "@/types/database";
 
 type UserWithDepartment = UserRow & {
@@ -63,6 +65,11 @@ const roleLabel: Record<UserRole, string> = {
   distributor: "Distributor",
 };
 
+const scopeLabel: Record<DistributorScope, string> = {
+  cabang: "Cabang",
+  pusat: "Pusat",
+};
+
 interface UsersClientProps {
   users: UserWithDepartment[];
   currentUserId: string;
@@ -81,16 +88,27 @@ export function UsersClient({
   distributors,
 }: UsersClientProps) {
   const [query, setQuery] = useState("");
+  // Filter Perusahaan: "" = semua, "none" = akun distributor tanpa perusahaan, lainnya = id perusahaan.
+  const [companyFilter, setCompanyFilter] = useState("");
+  const [scopeFilter, setScopeFilter] = useState<DistributorScope | "">("");
 
-  const filteredUsers = useMemo(
-    () =>
-      filterBySearch(users, query, (u) => [
-        u.full_name,
-        u.departments?.name,
-        u.regions?.name,
-      ]),
-    [users, query]
-  );
+  const filteredUsers = useMemo(() => {
+    const byFilters = users.filter((u) => {
+      if (companyFilter === "none") {
+        if (u.role !== "distributor" || u.distributor_id) return false;
+      } else if (companyFilter && u.distributor_id !== companyFilter) {
+        return false;
+      }
+      if (scopeFilter && u.distributor_scope !== scopeFilter) return false;
+      return true;
+    });
+    return filterBySearch(byFilters, query, (u) => [
+      u.full_name,
+      u.departments?.name,
+      u.regions?.name,
+      u.distributors?.name,
+    ]);
+  }, [users, query, companyFilter, scopeFilter]);
 
   return (
     <div className="space-y-6">
@@ -102,10 +120,34 @@ export function UsersClient({
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
+          <Select
+            aria-label="Filter perusahaan"
+            value={companyFilter}
+            onChange={(e) => setCompanyFilter(e.target.value)}
+            className="w-52"
+          >
+            <option value="">Semua Perusahaan</option>
+            {distributors.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+              </option>
+            ))}
+            <option value="none">Distributor tanpa perusahaan</option>
+          </Select>
+          <Select
+            aria-label="Filter cakupan"
+            value={scopeFilter}
+            onChange={(e) => setScopeFilter(e.target.value as DistributorScope | "")}
+            className="w-40"
+          >
+            <option value="">Semua Cakupan</option>
+            <option value="cabang">Cabang</option>
+            <option value="pusat">Pusat</option>
+          </Select>
           <SearchInput
             value={query}
             onChange={setQuery}
-            placeholder="Cari nama, departemen, atau region..."
+            placeholder="Cari nama, departemen, region, atau perusahaan..."
             className="w-72"
           />
           <CreateUserDialog
@@ -124,6 +166,8 @@ export function UsersClient({
               <TableHead>Nama</TableHead>
               <TableHead>Departemen</TableHead>
               <TableHead>Region</TableHead>
+              <TableHead>Perusahaan</TableHead>
+              <TableHead>Cakupan</TableHead>
               <TableHead>Role</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Dibuat</TableHead>
@@ -137,12 +181,18 @@ export function UsersClient({
                 const targetRank = roleRank[u.role];
                 const actorRank = roleRank[actorRole];
                 const canManage = !isSelf && actorRank > targetRank;
+                const isOrphanDistributor = u.role === "distributor" && !u.distributor_id;
 
                 const disabledReason = isSelf
                   ? "Tidak bisa menonaktifkan akun sendiri"
                   : !canManage
                   ? `Role ${roleLabel[actorRole]} tidak bisa mengelola ${roleLabel[u.role]}`
                   : undefined;
+                // Akun distributor tanpa perusahaan tidak boleh diaktifkan lagi (Fase 2).
+                const toggleBlockedByOrphan = !u.is_active && isOrphanDistributor;
+                const toggleDisabledReason = toggleBlockedByOrphan
+                  ? "Akun distributor belum punya perusahaan. Isi Perusahaan dan Cakupan lewat Edit dulu."
+                  : disabledReason;
 
                 return (
                   <TableRow key={u.id}>
@@ -152,6 +202,23 @@ export function UsersClient({
                     </TableCell>
                     <TableCell className="text-slate-400">
                       {u.regions?.name ?? "—"}
+                    </TableCell>
+                    <TableCell className="text-slate-400">
+                      {u.distributors?.name ??
+                        (isOrphanDistributor ? (
+                          <span className="text-amber-400">Belum ada</span>
+                        ) : (
+                          "—"
+                        ))}
+                    </TableCell>
+                    <TableCell>
+                      {u.distributor_scope ? (
+                        <Badge variant={u.distributor_scope === "pusat" ? "default" : "secondary"}>
+                          {scopeLabel[u.distributor_scope]}
+                        </Badge>
+                      ) : (
+                        <span className="text-slate-500">—</span>
+                      )}
                     </TableCell>
                     <TableCell>
                       <Badge variant={roleBadgeVariant[u.role]}>
@@ -177,6 +244,7 @@ export function UsersClient({
                               department_id: u.department_id ?? null,
                               region_id: u.region_id ?? null,
                               distributor_id: u.distributor_id ?? null,
+                              distributor_scope: u.distributor_scope ?? null,
                             }}
                             departments={departments}
                             regions={regions}
@@ -187,8 +255,8 @@ export function UsersClient({
                         <ToggleActiveButton
                           userId={u.id}
                           isActive={u.is_active}
-                          disabled={!canManage}
-                          disabledReason={disabledReason}
+                          disabled={!canManage || toggleBlockedByOrphan}
+                          disabledReason={toggleDisabledReason}
                         />
                         <ResetPasswordDialog
                           userId={u.id}
@@ -210,7 +278,7 @@ export function UsersClient({
             ) : (
               <TableRow>
                 <TableCell
-                  colSpan={7}
+                  colSpan={9}
                   className="text-center py-12 text-slate-500"
                 >
                   {query.trim() ? (

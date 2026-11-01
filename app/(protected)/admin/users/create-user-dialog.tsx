@@ -17,7 +17,13 @@ import {
 } from "@/components/ui/dialog";
 import { AlertCircle, Loader2, UserPlus } from "lucide-react";
 import { toast } from "sonner";
-import type { Department, UserRole, RegionRow, DistributorRow } from "@/types/database";
+import type {
+  Department,
+  UserRole,
+  RegionRow,
+  DistributorRow,
+  DistributorScope,
+} from "@/types/database";
 
 const roleRank: Record<UserRole, number> = {
   distributor: 0,
@@ -53,12 +59,14 @@ export function CreateUserDialog({ departments, regions, distributors, actorRole
     assignableRoles[0]?.value ?? "user"
   );
   const [selectedDepartmentId, setSelectedDepartmentId] = useState("");
+  const [selectedScope, setSelectedScope] = useState<DistributorScope | "">("");
   const [state, formAction, isPending] = useActionState(createUserAction, {});
 
   const isDistributor = selectedRole === "distributor";
   const selectedDept = departments.find((d) => d.id === selectedDepartmentId);
   const isSalesDept = selectedDept?.name?.toLowerCase() === "sales";
-  const needsRegion = isDistributor || isSalesDept;
+  // Distributor Cabang wajib punya region; Pusat melihat semua region.
+  const needsRegion = (isDistributor && selectedScope === "cabang") || isSalesDept;
 
   const DISTRIBUTOR_DEPT_NAMES = ["Sales", "Finance", "Operational"];
   const distributorDepts = departments.filter((d) =>
@@ -77,6 +85,7 @@ export function CreateUserDialog({ departments, regions, distributors, actorRole
     if (!value) {
       setSelectedRole(assignableRoles[0]?.value ?? "user");
       setSelectedDepartmentId("");
+      setSelectedScope("");
     }
   }
 
@@ -179,7 +188,7 @@ export function CreateUserDialog({ departments, regions, distributors, actorRole
             </div>
           </div>
 
-          {needsRegion ? (
+          {isDistributor ? (
             <div className="space-y-1.5">
               <Label htmlFor="department_id">
                 Departemen <span className="text-rose-400">*</span>
@@ -219,16 +228,37 @@ export function CreateUserDialog({ departments, regions, distributors, actorRole
           )}
 
           {isDistributor && (
-            <div className="space-y-1.5">
-              <Label htmlFor="distributor_id">Perusahaan Distributor</Label>
-              <Select id="distributor_id" name="distributor_id" disabled={isPending}>
-                <option value="">— Pilih Distributor (opsional) —</option>
-                {distributors.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name}
-                  </option>
-                ))}
-              </Select>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="distributor_id">
+                  Perusahaan <span className="text-rose-400">*</span>
+                </Label>
+                <Select id="distributor_id" name="distributor_id" required disabled={isPending}>
+                  <option value="">— Pilih Perusahaan —</option>
+                  {distributors.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="distributor_scope">
+                  Cakupan <span className="text-rose-400">*</span>
+                </Label>
+                <Select
+                  id="distributor_scope"
+                  name="distributor_scope"
+                  value={selectedScope}
+                  onChange={(e) => setSelectedScope(e.target.value as DistributorScope | "")}
+                  required
+                  disabled={isPending}
+                >
+                  <option value="">— Pilih Cakupan —</option>
+                  <option value="cabang">Cabang (region akun)</option>
+                  <option value="pusat">Pusat (semua region)</option>
+                </Select>
+              </div>
             </div>
           )}
 

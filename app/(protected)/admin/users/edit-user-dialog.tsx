@@ -16,7 +16,13 @@ import {
 } from "@/components/ui/dialog";
 import { AlertCircle, Loader2, Pencil } from "lucide-react";
 import { toast } from "sonner";
-import type { UserRole, RegionRow, Department, DistributorRow } from "@/types/database";
+import type {
+  UserRole,
+  RegionRow,
+  Department,
+  DistributorRow,
+  DistributorScope,
+} from "@/types/database";
 
 const roleRank: Record<UserRole, number> = {
   distributor: 0,
@@ -44,6 +50,7 @@ interface Props {
     department_id: string | null;
     region_id: string | null;
     distributor_id: string | null;
+    distributor_scope: DistributorScope | null;
   };
   departments: Department[];
   regions: RegionRow[];
@@ -55,6 +62,9 @@ export function EditUserDialog({ user, departments, regions, distributors, actor
   const [open, setOpen] = useState(false);
   const [selectedRole, setSelectedRole] = useState<UserRole>(user.role);
   const [selectedDepartmentId, setSelectedDepartmentId] = useState(user.department_id ?? "");
+  const [selectedScope, setSelectedScope] = useState<DistributorScope | "">(
+    user.distributor_scope ?? ""
+  );
   const [state, formAction, isPending] = useActionState(updateUserAction, {});
 
   const assignableRoles = allRoles.filter((r) => roleRank[r.value] < roleRank[actorRole]);
@@ -67,7 +77,8 @@ export function EditUserDialog({ user, departments, regions, distributors, actor
   const isDistributor = selectedRole === "distributor";
   const selectedDept = departments.find((d) => d.id === selectedDepartmentId);
   const isSalesDept = selectedDept?.name?.toLowerCase() === "sales";
-  const needsRegion = isDistributor || isSalesDept;
+  // Distributor Cabang wajib punya region; Pusat melihat semua region.
+  const needsRegion = (isDistributor && selectedScope === "cabang") || isSalesDept;
 
   useEffect(() => {
     if (state.success) {
@@ -81,6 +92,7 @@ export function EditUserDialog({ user, departments, regions, distributors, actor
     if (!value) {
       setSelectedRole(user.role);
       setSelectedDepartmentId(user.department_id ?? "");
+      setSelectedScope(user.distributor_scope ?? "");
     }
   }
 
@@ -200,21 +212,43 @@ export function EditUserDialog({ user, departments, regions, distributors, actor
           )}
 
           {isDistributor && (
-            <div className="space-y-1.5">
-              <Label htmlFor="eu-distributor">Perusahaan Distributor</Label>
-              <Select
-                id="eu-distributor"
-                name="distributor_id"
-                defaultValue={user.distributor_id ?? ""}
-                disabled={isPending}
-              >
-                <option value="">— Pilih Distributor (opsional) —</option>
-                {distributors.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name}
-                  </option>
-                ))}
-              </Select>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="eu-distributor">
+                  Perusahaan <span className="text-rose-400">*</span>
+                </Label>
+                <Select
+                  id="eu-distributor"
+                  name="distributor_id"
+                  defaultValue={user.distributor_id ?? ""}
+                  required
+                  disabled={isPending}
+                >
+                  <option value="">— Pilih Perusahaan —</option>
+                  {distributors.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="eu-scope">
+                  Cakupan <span className="text-rose-400">*</span>
+                </Label>
+                <Select
+                  id="eu-scope"
+                  name="distributor_scope"
+                  value={selectedScope}
+                  onChange={(e) => setSelectedScope(e.target.value as DistributorScope | "")}
+                  required
+                  disabled={isPending}
+                >
+                  <option value="">— Pilih Cakupan —</option>
+                  <option value="cabang">Cabang (region akun)</option>
+                  <option value="pusat">Pusat (semua region)</option>
+                </Select>
+              </div>
             </div>
           )}
 

@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
 import { SearchInput } from "@/components/ui/search-input";
 import {
   Dialog,
@@ -35,12 +36,26 @@ import type { DistributorRow } from "@/types/database";
 
 function DistributorDialog({
   distributor,
+  distributors,
   trigger,
 }: {
   distributor: DistributorRow | null;
+  distributors: DistributorRow[];
   trigger: React.ReactNode;
 }) {
   const isEdit = distributor !== null;
+  // Hierarki maksimal satu tingkat: perusahaan yang sudah jadi induk tidak bisa
+  // diberi induk, dan calon induk hanya perusahaan yang belum punya induk.
+  const childCompanies = distributor
+    ? distributors.filter((d) => d.parent_distributor_id === distributor.id)
+    : [];
+  const isParentCompany = childCompanies.length > 0;
+  const parentOptions = distributors.filter(
+    (d) =>
+      d.id !== distributor?.id &&
+      d.parent_distributor_id === null &&
+      (d.is_active || d.id === distributor?.parent_distributor_id)
+  );
   const [open, setOpen] = useState(false);
   const [state, formAction, isPending] = useActionState(saveDistributorAction, {});
 
@@ -90,6 +105,40 @@ function DistributorDialog({
               placeholder="No. telepon atau email"
               disabled={isPending}
             />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="distributor-parent">Perusahaan Induk</Label>
+            {isParentCompany ? (
+              <>
+                <input type="hidden" name="parent_distributor_id" value="" />
+                <p className="text-xs text-slate-400">
+                  Perusahaan ini adalah induk dari{" "}
+                  {childCompanies.map((c) => c.name).join(", ")}, jadi tidak bisa diberi
+                  induk.
+                </p>
+              </>
+            ) : (
+              <>
+                <Select
+                  id="distributor-parent"
+                  name="parent_distributor_id"
+                  defaultValue={distributor?.parent_distributor_id ?? ""}
+                  disabled={isPending}
+                >
+                  <option value="">— Tanpa induk —</option>
+                  {parentOptions.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name}
+                    </option>
+                  ))}
+                </Select>
+                <p className="text-xs text-slate-500">
+                  Maksimal satu tingkat. Akun Pusat perusahaan induk bisa melihat SKP anak
+                  perusahaan (lihat saja).
+                </p>
+              </>
+            )}
           </div>
 
           <DialogFooter className="pt-2">
@@ -198,6 +247,10 @@ function DeleteButton({ id, name }: { id: string; name: string }) {
 
 export function DistributorsTable({ distributors }: { distributors: DistributorRow[] }) {
   const [query, setQuery] = useState("");
+  const nameById = useMemo(
+    () => new Map(distributors.map((d) => [d.id, d.name])),
+    [distributors]
+  );
   const filteredDistributors = useMemo(
     () => filterBySearch(distributors, query, (d) => [d.name]),
     [distributors, query]
@@ -216,6 +269,7 @@ export function DistributorsTable({ distributors }: { distributors: DistributorR
           />
           <DistributorDialog
             distributor={null}
+            distributors={distributors}
             trigger={
               <Button size="sm">
                 <Plus className="h-4 w-4" />
@@ -232,6 +286,7 @@ export function DistributorsTable({ distributors }: { distributors: DistributorR
             <TableRow className="border-white/8 hover:bg-transparent">
               <TableHead>Nama Distributor</TableHead>
               <TableHead>Kontak</TableHead>
+              <TableHead>Perusahaan Induk</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Dibuat</TableHead>
               <TableHead className="text-right">Aksi</TableHead>
@@ -245,6 +300,11 @@ export function DistributorsTable({ distributors }: { distributors: DistributorR
                   <TableCell className="text-slate-400">
                     {distributor.contact ?? "—"}
                   </TableCell>
+                  <TableCell className="text-slate-400">
+                    {distributor.parent_distributor_id
+                      ? (nameById.get(distributor.parent_distributor_id) ?? "—")
+                      : "—"}
+                  </TableCell>
                   <TableCell>
                     <Badge variant={distributor.is_active ? "default" : "outline"}>
                       {distributor.is_active ? "Aktif" : "Nonaktif"}
@@ -257,6 +317,7 @@ export function DistributorsTable({ distributors }: { distributors: DistributorR
                     <div className="flex items-center justify-end gap-2">
                       <DistributorDialog
                         distributor={distributor}
+                        distributors={distributors}
                         trigger={
                           <Button variant="outline" size="sm">
                             <Pencil className="h-3 w-3" />
@@ -274,7 +335,7 @@ export function DistributorsTable({ distributors }: { distributors: DistributorR
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={5} className="text-center py-12 text-slate-500">
+                <TableCell colSpan={6} className="text-center py-12 text-slate-500">
                   {query.trim() ? (
                     <>Tidak ada hasil untuk &ldquo;{query.trim()}&rdquo;</>
                   ) : (

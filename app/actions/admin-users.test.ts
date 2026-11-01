@@ -7,7 +7,7 @@ vi.mock("@/lib/supabase/server", () => ({
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/email", () => ({ sendPasswordResetNotificationEmail: vi.fn() }));
 
-import { createUserAction, updateUserAction } from "./admin-users";
+import { createUserAction, updateUserAction, toggleUserActiveAction } from "./admin-users";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 
 function makeUserChain(profile: { role: string; is_active?: boolean }) {
@@ -82,6 +82,7 @@ describe("createUserAction — distributor_id", () => {
         role: "distributor",
         region_id: uuid,
         distributor_id: distributorUuid,
+        distributor_scope: "cabang",
       })
     );
 
@@ -109,23 +110,6 @@ describe("createUserAction — distributor_id", () => {
     expect(insert).toHaveBeenCalledWith(expect.objectContaining({ distributor_id: null }));
   });
 
-  it("stores empty distributor_id as null for distributor role", async () => {
-    const { insert } = setup("admin");
-
-    const result = await createUserAction(
-      {},
-      formDataOf({
-        email: "dist2@example.com",
-        password: "password123",
-        full_name: "Distributor Two",
-        role: "distributor",
-        region_id: uuid,
-      })
-    );
-
-    expect(result.error).toBeUndefined();
-    expect(insert).toHaveBeenCalledWith(expect.objectContaining({ distributor_id: null }));
-  });
 });
 
 // -------------------------------------------------------
@@ -173,6 +157,7 @@ describe("updateUserAction — distributor_id", () => {
         role: "distributor",
         region_id: uuid,
         distributor_id: distributorUuid,
+        distributor_scope: "cabang",
       })
     );
 
@@ -197,5 +182,247 @@ describe("updateUserAction — distributor_id", () => {
 
     expect(result.error).toBeUndefined();
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ distributor_id: null }));
+  });
+});
+
+// -------------------------------------------------------
+// createUserAction — distributor_scope (Fase 2 multi-user distributor)
+// -------------------------------------------------------
+
+describe("createUserAction — distributor_scope", () => {
+  function setup() {
+    const insert = vi.fn().mockResolvedValue({ error: null });
+    const mockClient = {
+      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: "actor-1" } } }) },
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "users") return makeUserChain({ role: "admin", is_active: true });
+        return {};
+      }),
+    };
+    (createClient as ReturnType<typeof vi.fn>).mockResolvedValue(mockClient);
+    const adminClient = {
+      auth: {
+        admin: {
+          createUser: vi.fn().mockResolvedValue({ data: { user: { id: uuid } }, error: null }),
+          deleteUser: vi.fn(),
+        },
+      },
+      from: vi.fn().mockImplementation((table: string) => (table === "users" ? { insert } : {})),
+    };
+    (createAdminClient as ReturnType<typeof vi.fn>).mockReturnValue(adminClient);
+    return { insert, createUser: adminClient.auth.admin.createUser };
+  }
+
+  const base = {
+    email: "dist@example.com",
+    password: "password123",
+    full_name: "Distributor User",
+    role: "distributor",
+  };
+
+  it("rejects a distributor without a company", async () => {
+    const { createUser } = setup();
+    const result = await createUserAction(
+      {},
+      formDataOf({ ...base, region_id: uuid, distributor_scope: "cabang" })
+    );
+    expect(result.error).toBe("Perusahaan wajib diisi untuk Distributor.");
+    expect(createUser).not.toHaveBeenCalled();
+  });
+
+  it("rejects a distributor without a scope", async () => {
+    const { createUser } = setup();
+    const result = await createUserAction(
+      {},
+      formDataOf({ ...base, region_id: uuid, distributor_id: distributorUuid })
+    );
+    expect(result.error).toBe("Cakupan (Cabang/Pusat) wajib diisi untuk Distributor.");
+    expect(createUser).not.toHaveBeenCalled();
+  });
+
+  it("rejects scope cabang without a region", async () => {
+    const { createUser } = setup();
+    const result = await createUserAction(
+      {},
+      formDataOf({ ...base, distributor_id: distributorUuid, distributor_scope: "cabang" })
+    );
+    expect(result.error).toBe("Region wajib diisi untuk Distributor Cabang.");
+    expect(createUser).not.toHaveBeenCalled();
+  });
+
+  it("saves scope pusat even without a region", async () => {
+    const { insert } = setup();
+    const result = await createUserAction(
+      {},
+      formDataOf({ ...base, distributor_id: distributorUuid, distributor_scope: "pusat" })
+    );
+    expect(result.error).toBeUndefined();
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        distributor_id: distributorUuid,
+        distributor_scope: "pusat",
+        region_id: null,
+      })
+    );
+  });
+
+  it("saves scope cabang with company and region", async () => {
+    const { insert } = setup();
+    const result = await createUserAction(
+      {},
+      formDataOf({
+        ...base,
+        distributor_id: distributorUuid,
+        distributor_scope: "cabang",
+        region_id: uuid,
+      })
+    );
+    expect(result.error).toBeUndefined();
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({ distributor_scope: "cabang", region_id: uuid })
+    );
+  });
+
+  it("forces distributor_scope to null for non-distributor roles", async () => {
+    const { insert } = setup();
+    const result = await createUserAction(
+      {},
+      formDataOf({ ...base, role: "user", distributor_scope: "pusat" })
+    );
+    expect(result.error).toBeUndefined();
+    expect(insert).toHaveBeenCalledWith(expect.objectContaining({ distributor_scope: null }));
+  });
+});
+
+// -------------------------------------------------------
+// updateUserAction — distributor_scope (Fase 2 multi-user distributor)
+// -------------------------------------------------------
+
+describe("updateUserAction — distributor_scope", () => {
+  function setup() {
+    const update = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) });
+    let callCount = 0;
+    const mockClient = {
+      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: "actor-1" } } }) },
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "users") {
+          callCount += 1;
+          const profile =
+            callCount === 1 ? { role: "admin", is_active: true } : { role: "distributor" };
+          return { ...makeUserChain(profile), update };
+        }
+        return {};
+      }),
+    };
+    (createClient as ReturnType<typeof vi.fn>).mockResolvedValue(mockClient);
+    return { update };
+  }
+
+  const base = { id: uuid, full_name: "Distributor User", role: "distributor" };
+
+  it("rejects a distributor without a company", async () => {
+    const { update } = setup();
+    const result = await updateUserAction(
+      {},
+      formDataOf({ ...base, region_id: uuid, distributor_scope: "cabang" })
+    );
+    expect(result.error).toBe("Perusahaan wajib diisi untuk Distributor.");
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("rejects a distributor without a scope", async () => {
+    const { update } = setup();
+    const result = await updateUserAction(
+      {},
+      formDataOf({ ...base, region_id: uuid, distributor_id: distributorUuid })
+    );
+    expect(result.error).toBe("Cakupan (Cabang/Pusat) wajib diisi untuk Distributor.");
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("rejects scope cabang without a region", async () => {
+    const { update } = setup();
+    const result = await updateUserAction(
+      {},
+      formDataOf({ ...base, distributor_id: distributorUuid, distributor_scope: "cabang" })
+    );
+    expect(result.error).toBe("Region wajib diisi untuk Distributor Cabang.");
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("saves scope pusat without a region", async () => {
+    const { update } = setup();
+    const result = await updateUserAction(
+      {},
+      formDataOf({ ...base, distributor_id: distributorUuid, distributor_scope: "pusat" })
+    );
+    expect(result.error).toBeUndefined();
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ distributor_scope: "pusat", region_id: null })
+    );
+  });
+
+  it("clears distributor_scope when role changes away from distributor", async () => {
+    const { update } = setup();
+    const result = await updateUserAction(
+      {},
+      formDataOf({ ...base, role: "user", distributor_scope: "pusat" })
+    );
+    expect(result.error).toBeUndefined();
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ distributor_id: null, distributor_scope: null })
+    );
+  });
+});
+
+// -------------------------------------------------------
+// toggleUserActiveAction — akun distributor tanpa perusahaan
+// -------------------------------------------------------
+
+describe("toggleUserActiveAction — distributor tanpa perusahaan", () => {
+  function setup(target: { role: string; distributor_id: string | null }) {
+    const update = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) });
+    let callCount = 0;
+    const mockClient = {
+      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: "actor-1" } } }) },
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "users") {
+          callCount += 1;
+          const profile = callCount === 1 ? { role: "admin", is_active: true } : target;
+          return { ...makeUserChain(profile), update };
+        }
+        return {};
+      }),
+    };
+    (createClient as ReturnType<typeof vi.fn>).mockResolvedValue(mockClient);
+    return { update };
+  }
+
+  it("rejects activating a distributor account without a company", async () => {
+    const { update } = setup({ role: "distributor", distributor_id: null });
+    const result = await toggleUserActiveAction(uuid, true);
+    expect(result.error).toMatch(/belum terhubung ke perusahaan/);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("still allows deactivating a distributor account without a company", async () => {
+    const { update } = setup({ role: "distributor", distributor_id: null });
+    const result = await toggleUserActiveAction(uuid, false);
+    expect(result.error).toBeUndefined();
+    expect(update).toHaveBeenCalledWith({ is_active: false });
+  });
+
+  it("allows activating a distributor account with a company", async () => {
+    const { update } = setup({ role: "distributor", distributor_id: distributorUuid });
+    const result = await toggleUserActiveAction(uuid, true);
+    expect(result.error).toBeUndefined();
+    expect(update).toHaveBeenCalledWith({ is_active: true });
+  });
+
+  it("does not affect non-distributor accounts", async () => {
+    const { update } = setup({ role: "user", distributor_id: null });
+    const result = await toggleUserActiveAction(uuid, true);
+    expect(result.error).toBeUndefined();
+    expect(update).toHaveBeenCalledWith({ is_active: true });
   });
 });

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { z } from "zod";
+import { distributorParentError } from "@/lib/distributor-parent";
 
 async function requireAdmin() {
   const supabase = await createClient();
@@ -635,6 +636,11 @@ const distributorSchema = z.object({
   id: z.string().uuid().optional(),
   name: z.string().min(1, "Nama distributor harus diisi"),
   contact: z.string().optional().or(z.literal("")),
+  parent_distributor_id: z
+    .string()
+    .uuid("Perusahaan induk tidak valid")
+    .optional()
+    .or(z.literal("")),
 });
 
 export type SaveDistributorState = { error?: string; success?: boolean };
@@ -650,6 +656,7 @@ export async function saveDistributorAction(
       id: formData.get("id") || undefined,
       name: formData.get("name"),
       contact: formData.get("contact") || undefined,
+      parent_distributor_id: formData.get("parent_distributor_id") || undefined,
     });
 
     if (!parsed.success) {
@@ -657,9 +664,36 @@ export async function saveDistributorAction(
     }
 
     const { id, ...data } = parsed.data;
+    const parentId = data.parent_distributor_id || null;
+
+    // Hierarki maksimal satu tingkat, tanpa siklus (Fase 2 multi-user distributor).
+    if (parentId) {
+      const { data: parent } = await supabase
+        .from("distributors")
+        .select("id, parent_distributor_id")
+        .eq("id", parentId)
+        .maybeSingle();
+      let hasChildren = false;
+      if (id) {
+        const { count } = await supabase
+          .from("distributors")
+          .select("id", { count: "exact", head: true })
+          .eq("parent_distributor_id", id);
+        hasChildren = (count ?? 0) > 0;
+      }
+      const parentError = distributorParentError({
+        selfId: id ?? null,
+        parentId,
+        parent: parent ?? null,
+        hasChildren,
+      });
+      if (parentError) return { error: parentError };
+    }
+
     const payload = {
       name: data.name,
       contact: data.contact || null,
+      parent_distributor_id: parentId,
     };
 
     if (id) {
