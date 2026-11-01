@@ -101,14 +101,19 @@ describe("distributorCampaignAccess — perusahaan lain & induk", () => {
   });
 });
 
-describe("distributorCampaignAccess — SKP tanpa perusahaan (sementara, sampai Fase 6)", () => {
-  it("cabang melihat & bertindak hanya di region yang sama", () => {
-    expect(distributorCampaignAccess(skpNoCompanyWcj, cabangEdmWcj)).toBe("act");
+describe("distributorCampaignAccess — SKP tanpa perusahaan (Fase 6: tidak terlihat siapa pun)", () => {
+  it("cabang tidak melihat SKP tanpa perusahaan, termasuk di region yang sama", () => {
+    expect(distributorCampaignAccess(skpNoCompanyWcj, cabangEdmWcj)).toBeNull();
     expect(distributorCampaignAccess(skpNoCompanyEjb, cabangEdmWcj)).toBeNull();
   });
 
-  it("pusat melihat & bertindak di semua region", () => {
-    expect(distributorCampaignAccess(skpNoCompanyEjb, pusatEdm)).toBe("act");
+  it("pusat tidak melihat SKP tanpa perusahaan di region mana pun", () => {
+    expect(distributorCampaignAccess(skpNoCompanyWcj, pusatEdm)).toBeNull();
+    expect(distributorCampaignAccess(skpNoCompanyEjb, pusatEdm)).toBeNull();
+  });
+
+  it("pusat induk pun tidak melihat SKP tanpa perusahaan", () => {
+    expect(distributorCampaignAccess(skp({ distributor_id: null, distributor_parent_id: EDM }), pusatEdm)).toBeNull();
   });
 });
 
@@ -131,7 +136,9 @@ describe("distributorActionDenial", () => {
     expect(distributorActionDenial(skpAjsWcj, cabangEdmWcj)).toBe("otherCompany");
     expect(distributorActionDenial(skpEdmEjb, cabangEdmWcj)).toBe("otherRegion");
     expect(distributorActionDenial(skpMmsWcj, pusatEdm)).toBe("parentViewOnly");
-    expect(distributorActionDenial(skpNoCompanyEjb, cabangEdmWcj)).toBe("otherRegion");
+    expect(distributorActionDenial(skpNoCompanyEjb, cabangEdmWcj)).toBe("otherCompany");
+    expect(distributorActionDenial(skpNoCompanyWcj, cabangEdmWcj)).toBe("otherCompany");
+    expect(distributorActionDenial(skpNoCompanyWcj, pusatEdm)).toBe("otherCompany");
   });
 
   it("null jika boleh bertindak", () => {
@@ -164,7 +171,7 @@ describe("distributorClaimActionError", () => {
 
   it("null jika boleh; admin tidak pernah diblokir", () => {
     expect(distributorClaimActionError(cabangEdmWcj, skpEdmWcj)).toBeNull();
-    expect(distributorClaimActionError(pusatEdm, skpNoCompanyEjb)).toBeNull();
+    expect(distributorClaimActionError(pusatEdm, skpNoCompanyEjb)).toBe(DISTRIBUTOR_GUARD_MESSAGES.otherCompany);
     expect(distributorClaimActionError(viewer({ role: "admin", distributor_id: null }), skpBirWcj)).toBeNull();
   });
 });

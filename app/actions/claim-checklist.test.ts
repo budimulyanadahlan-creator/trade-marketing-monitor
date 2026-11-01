@@ -20,7 +20,7 @@ function setupMocks({
   role = "distributor",
   isActive = true,
   userDistributorId = "company-a",
-  campaign = { id: "camp-1", status: "ongoing" },
+  campaign = { id: "camp-1", status: "ongoing", distributor_id: "company-a" },
   upsertError = null,
 }: Partial<{
   role: string;
@@ -52,19 +52,19 @@ describe("upsertClaimChecklistAction", () => {
   });
 
   it("allows toggling while status is ongoing", async () => {
-    setupMocks({ campaign: { id: "camp-1", status: "ongoing" } });
+    setupMocks({ campaign: { id: "camp-1", status: "ongoing", distributor_id: "company-a" } });
     const result = await upsertClaimChecklistAction("camp-1", "doc-1", true);
     expect(result).toEqual({ success: true });
   });
 
   it("allows toggling while status is approved", async () => {
-    setupMocks({ campaign: { id: "camp-1", status: "approved" } });
+    setupMocks({ campaign: { id: "camp-1", status: "approved", distributor_id: "company-a" } });
     const result = await upsertClaimChecklistAction("camp-1", "doc-1", true);
     expect(result).toEqual({ success: true });
   });
 
   it("rejects toggling once the claim has been submitted (locked)", async () => {
-    setupMocks({ campaign: { id: "camp-1", status: "claim_submitted" } });
+    setupMocks({ campaign: { id: "camp-1", status: "claim_submitted", distributor_id: "company-a" } });
     const result = await upsertClaimChecklistAction("camp-1", "doc-1", true);
     expect(result.success).toBeUndefined();
     expect(result.error).toMatch(/Approved|Ongoing/i);
@@ -95,12 +95,13 @@ describe("upsertClaimChecklistAction", () => {
     expect(upsertChain.upsert).not.toHaveBeenCalled();
   });
 
-  it("allows a mapped distributor on a campaign with no distributor assigned yet (sementara)", async () => {
-    setupMocks({
+  it("rejects a mapped distributor on a campaign with no distributor (Fase 6)", async () => {
+    const { upsertChain } = setupMocks({
       userDistributorId: "company-a",
       campaign: { id: "camp-1", status: "ongoing", distributor_id: null },
     });
     const result = await upsertClaimChecklistAction("camp-1", "doc-1", true);
-    expect(result).toEqual({ success: true });
+    expect(result).toEqual({ error: "SKP ini bukan milik distributor Anda" });
+    expect(upsertChain.upsert).not.toHaveBeenCalled();
   });
 });

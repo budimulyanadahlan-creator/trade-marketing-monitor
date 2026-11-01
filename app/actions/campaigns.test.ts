@@ -383,10 +383,10 @@ describe("createDistributorReceiptAction — kasus lain pengaman", () => {
     });
   });
 
-  it("allows a mapped distributor on a campaign without a company (sementara)", async () => {
+  it("rejects a mapped distributor on a campaign without a company (Fase 6)", async () => {
     setupReceiptMocks({ campaign: { id: "camp-1", distributor_id: null } });
     const result = await createDistributorReceiptAction("camp-1", null);
-    expect(result).toEqual({ success: true });
+    expect(result).toEqual({ error: "SKP ini bukan milik distributor Anda" });
   });
 
   it("returns not-found when the campaign is not visible", async () => {

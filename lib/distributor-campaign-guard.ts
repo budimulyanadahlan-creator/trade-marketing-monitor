@@ -1,5 +1,5 @@
 /**
- * Modul akses distributor terhadap SKP (Multi-User Distributor, Fase 1 & 3).
+ * Modul akses distributor terhadap SKP (Multi-User Distributor, Fase 1, 3 & 6).
  * Satu sumber kebenaran di sisi aplikasi untuk dua pertanyaan:
  *
  * - **Boleh lihat?** — daftar SKP, detail (termasuk URL langsung), file,
@@ -14,12 +14,12 @@
  * - Perusahaan sama + scope `cabang` → bertindak hanya di region akun.
  *   Scope null (akun lama) diperlakukan sebagai cabang.
  * - Scope `pusat` dari perusahaan INDUK SKP → **hanya lihat**.
- * - SKP tanpa perusahaan: SEMENTARA (sampai Fase 6) diperlakukan seperti SKP
- *   perusahaan akun sendiri — cabang di region yang sama / pusat semua
- *   region boleh bertindak.
+ * - SKP tanpa perusahaan tidak terlihat dan tidak bisa dikerjakan oleh
+ *   distributor mana pun (Fase 6; pengecualian sementara sudah dicabut).
  * - Admin/superadmin selalu boleh bertindak (fallback).
  *
- * Padanannya di database: fungsi `distributor_campaign_access` (migrasi 067)
+ * Padanannya di database: fungsi `distributor_campaign_access` (migrasi 067,
+ * diperbarui 069)
  * yang dipakai semua policy RLS tabel terkait klaim. Status dan departemen
  * SKP (Sales/TM, Disetujui s.d. Selesai) disaring oleh RLS +
  * DISTRIBUTOR_VISIBLE_CAMPAIGN_STATUSES, bukan oleh modul ini.
@@ -75,8 +75,10 @@ export function distributorActionDenial(
   if (isAdminRole(viewer.role)) return null;
   if (!viewer.distributor_id) return "noCompany";
 
-  // Perusahaan sama, atau SKP belum punya perusahaan (sementara).
-  if (!campaign.distributor_id || campaign.distributor_id === viewer.distributor_id) {
+  // SKP tanpa perusahaan bukan milik siapa pun (Fase 6).
+  if (!campaign.distributor_id) return "otherCompany";
+
+  if (campaign.distributor_id === viewer.distributor_id) {
     return regionMatches(campaign, viewer) ? null : "otherRegion";
   }
 

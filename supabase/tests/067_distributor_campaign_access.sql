@@ -1,5 +1,6 @@
--- Tes aturan fungsi akses distributor (migrasi 067). Jalankan di SQL editor
--- Supabase SETELAH migrasi 067. Tidak menulis data apa pun (transaksi
+-- Tes aturan fungsi akses distributor (migrasi 067, diperbarui 069 — Fase 6:
+-- SKP tanpa distributor tidak terlihat siapa pun). Jalankan di SQL editor
+-- Supabase SETELAH migrasi 069. Tidak menulis data apa pun (transaksi
 -- di-rollback); gagal = exception "GAGAL: ...", sukses = notice "SEMUA LOLOS".
 --
 -- Fungsi distributor_campaign_access menerima konteks akun sebagai parameter,
@@ -18,8 +19,11 @@ begin
      or not exists (select 1 from pg_proc where proname = 'distributor_campaign_access') then
     raise exception 'GAGAL: migrasi 067_distributor_campaign_access.sql belum dijalankan — jalankan migrasi itu dulu, baru tes ini';
   end if;
+  if coalesce(obj_description('public.distributor_campaign_access(uuid, uuid, uuid, public.campaign_status, public.distributor_viewer)'::regprocedure, 'pg_proc'), '') not like '%(069)%' then
+    raise exception 'GAGAL: migrasi 069_hide_campaigns_without_distributor.sql belum dijalankan — jalankan migrasi itu dulu, baru tes ini';
+  end if;
 end
-$$;
+$;
 
 do $$
 declare
@@ -78,10 +82,12 @@ begin
   -- perusahaan tidak terkait
   if v_ajs is not null and public.distributor_campaign_access(v_ajs, r_nat, v_sales, 'approved', pusat_edm) is not null then raise exception 'GAGAL: pusat EDM tidak boleh lihat perusahaan non-anak'; end if;
 
-  -- SKP tanpa perusahaan (sementara, sampai Fase 6)
-  if public.distributor_campaign_access(null, r_wcj, v_sales, 'approved', cabang_edm_wcj) is distinct from 'act' then raise exception 'GAGAL: SKP tanpa distributor harus act bagi cabang region sama'; end if;
+  -- SKP tanpa perusahaan: tidak terlihat siapa pun (Fase 6, migrasi 069)
+  if public.distributor_campaign_access(null, r_wcj, v_sales, 'approved', cabang_edm_wcj) is not null then raise exception 'GAGAL: SKP tanpa distributor tidak boleh terlihat cabang region sama'; end if;
   if public.distributor_campaign_access(null, r_ejb, v_sales, 'approved', cabang_edm_wcj) is not null then raise exception 'GAGAL: SKP tanpa distributor region lain tidak boleh terlihat cabang'; end if;
-  if public.distributor_campaign_access(null, r_ejb, v_sales, 'approved', pusat_edm) is distinct from 'act' then raise exception 'GAGAL: SKP tanpa distributor harus act bagi pusat'; end if;
+  if public.distributor_campaign_access(null, r_wcj, v_sales, 'approved', pusat_edm) is not null then raise exception 'GAGAL: SKP tanpa distributor tidak boleh terlihat pusat'; end if;
+  if public.distributor_campaign_access(null, r_ejb, v_sales, 'ongoing',  pusat_edm) is not null then raise exception 'GAGAL: SKP tanpa distributor region lain tidak boleh terlihat pusat'; end if;
+  if public.distributor_campaign_access(null, r_wcj, v_sales, 'approved', legacy_noscope) is not null then raise exception 'GAGAL: SKP tanpa distributor tidak boleh terlihat akun scope null'; end if;
 
   -- akun tanpa perusahaan / bukan distributor
   if public.distributor_campaign_access(v_edm, r_wcj, v_sales, 'approved', orphan) is not null then raise exception 'GAGAL: akun tanpa perusahaan tidak boleh lihat'; end if;
@@ -95,7 +101,7 @@ begin
   if v_other is not null and public.distributor_campaign_access(v_edm, r_wcj, v_other, 'approved', pusat_edm) is not null then raise exception 'GAGAL: departemen non-Sales/TM tidak boleh terlihat'; end if;
   if public.distributor_campaign_access(v_edm, r_wcj, null, 'approved', pusat_edm) is not null then raise exception 'GAGAL: SKP tanpa departemen tidak boleh terlihat'; end if;
 
-  raise notice 'SEMUA LOLOS: aturan distributor_campaign_access sesuai PRD';
+  raise notice 'SEMUA LOLOS: aturan distributor_campaign_access sesuai PRD (termasuk Fase 6)';
 end
 $$;
 

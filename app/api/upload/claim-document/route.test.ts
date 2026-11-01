@@ -69,7 +69,7 @@ function setupMocks(
     role = "distributor",
     isActive = true,
     userDistributorId = "company-a",
-    campaign = { id: "camp-1", status: "ongoing" },
+    campaign = { id: "camp-1", status: "ongoing", distributor_id: "company-a" },
     docType = { id: "doc-1" },
     insertedFile = { id: "file-1" },
     insertError = null,
@@ -234,19 +234,21 @@ describe("POST /api/upload/claim-document", () => {
     expect(json.error).toBe("Akun Anda belum terhubung ke perusahaan distributor");
   });
 
-  it("allows a mapped distributor on a campaign with no distributor assigned yet (sementara)", async () => {
+  it("rejects a mapped distributor on a campaign with no distributor (Fase 6)", async () => {
     setupMocks({
       userDistributorId: "company-a",
       campaign: { id: "camp-1", status: "ongoing", distributor_id: null },
     });
 
     const res = await POST(makeRequest());
+    const json = await res.json();
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(403);
+    expect(json.error).toBe("SKP ini bukan milik distributor Anda");
   });
 
   it("rejects when campaign status is not editable (e.g. draft)", async () => {
-    setupMocks({ campaign: { id: "camp-1", status: "draft" } });
+    setupMocks({ campaign: { id: "camp-1", status: "draft", distributor_id: "company-a" } });
 
     const res = await POST(makeRequest());
     const json = await res.json();
@@ -324,7 +326,7 @@ describe("POST /api/upload/claim-document", () => {
 
   it("rejects claim_submitted when the item's verification isn't revision_requested", async () => {
     setupMocks({
-      campaign: { id: "camp-1", status: "claim_submitted" },
+      campaign: { id: "camp-1", status: "claim_submitted", distributor_id: "company-a" },
       verificationItem: { id: "item-1", status: "pending" },
     });
 
@@ -337,7 +339,7 @@ describe("POST /api/upload/claim-document", () => {
 
   it("rejects claim_submitted when no verification item exists yet for the document", async () => {
     setupMocks({
-      campaign: { id: "camp-1", status: "claim_submitted" },
+      campaign: { id: "camp-1", status: "claim_submitted", distributor_id: "company-a" },
       verificationItem: null,
     });
 
@@ -348,7 +350,7 @@ describe("POST /api/upload/claim-document", () => {
 
   it("allows claim_submitted re-upload when the item is revision_requested, and resets it to pending", async () => {
     const { storageUpload } = setupMocks({
-      campaign: { id: "camp-1", status: "claim_submitted" },
+      campaign: { id: "camp-1", status: "claim_submitted", distributor_id: "company-a" },
       verificationItem: { id: "item-1", status: "revision_requested" },
     });
 
@@ -366,7 +368,7 @@ describe("POST /api/upload/claim-document", () => {
 
   it("still succeeds even if resetting the verification item fails", async () => {
     setupMocks({
-      campaign: { id: "camp-1", status: "claim_submitted" },
+      campaign: { id: "camp-1", status: "claim_submitted", distributor_id: "company-a" },
       verificationItem: { id: "item-1", status: "revision_requested" },
     });
     (resetClaimItemToPending as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
@@ -379,7 +381,7 @@ describe("POST /api/upload/claim-document", () => {
   });
 
   it("does not reset the verification item for an approved/ongoing upload", async () => {
-    setupMocks({ campaign: { id: "camp-1", status: "ongoing" } });
+    setupMocks({ campaign: { id: "camp-1", status: "ongoing", distributor_id: "company-a" } });
 
     await POST(makeRequest());
 

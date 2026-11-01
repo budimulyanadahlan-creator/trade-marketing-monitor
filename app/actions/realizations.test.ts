@@ -209,6 +209,7 @@ describe("submitKlaimAction", () => {
         status: "approved",
         name: "Promo A",
         created_by: "creator-1",
+        distributor_id: "dist-co-1",
       },
     });
     const result = await submitKlaimAction("camp-1", 1_000_000);
@@ -254,7 +255,7 @@ describe("submitKlaimAction", () => {
     expect(result).toEqual({ error: "Akun Anda belum terhubung ke perusahaan distributor" });
   });
 
-  it("allows a mapped distributor on a campaign without a company (sementara)", async () => {
+  it("rejects a mapped distributor on a campaign without a company (Fase 6)", async () => {
     setupMocks({
       campaign: {
         id: "camp-1",
@@ -265,7 +266,7 @@ describe("submitKlaimAction", () => {
       },
     });
     const result = await submitKlaimAction("camp-1", 1_000_000);
-    expect(result).toEqual({ success: true });
+    expect(result).toEqual({ error: "SKP ini bukan milik distributor Anda" });
   });
 
   it("does not block admin on another company's campaign", async () => {
@@ -415,6 +416,7 @@ describe("cancelKlaimAction", () => {
         status: "ongoing",
         name: "Promo A",
         created_by: "creator-1",
+        distributor_id: "dist-co-1",
       },
     });
     const result = await cancelKlaimAction("camp-1");
@@ -430,6 +432,7 @@ describe("cancelKlaimAction", () => {
         status: "claim_submitted",
         name: "Promo A",
         created_by: "creator-1",
+        distributor_id: "dist-co-1",
       },
       updateError: { message: "DB constraint violation" },
     });
@@ -475,6 +478,7 @@ describe("cancelKlaimAction", () => {
         status: "claim_submitted",
         name: "Promo A",
         created_by: "creator-1",
+        distributor_id: "dist-co-1",
       },
     });
 
@@ -511,6 +515,7 @@ describe("cancelKlaimAction", () => {
         status: "claim_submitted",
         name: "Promo A",
         created_by: "creator-1",
+        distributor_id: "dist-co-1",
       },
     });
     const result = await cancelKlaimAction("camp-1");
@@ -524,6 +529,7 @@ describe("cancelKlaimAction", () => {
         status: "claim_submitted",
         name: "Promo A",
         created_by: "creator-1",
+        distributor_id: "dist-co-1",
       },
     });
     claimEventsChain.insert.mockRejectedValueOnce(new Error("db down"));
@@ -539,6 +545,7 @@ describe("cancelKlaimAction", () => {
         status: "claim_submitted",
         name: "Promo A",
         created_by: "creator-1",
+        distributor_id: "dist-co-1",
       },
     });
 
@@ -556,6 +563,7 @@ describe("cancelKlaimAction", () => {
         status: "claim_submitted",
         name: "Promo A",
         created_by: "creator-1",
+        distributor_id: "dist-co-1",
       },
     });
     (claimItemVerificationsAdminChain.delete as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -1150,7 +1158,7 @@ describe("updateClaimAmountAction", () => {
   });
 
   it("returns error when campaign is not claim_submitted", async () => {
-    setupUpdateClaimAmountMocks({ campaign: { id: "camp-1", status: "ongoing" } });
+    setupUpdateClaimAmountMocks({ campaign: { id: "camp-1", status: "ongoing", distributor_id: "dist-co-1" } });
     const result = await updateClaimAmountAction("camp-1", 2_000_000);
     expect(result.error).toMatch(/klaim diajukan/i);
   });
