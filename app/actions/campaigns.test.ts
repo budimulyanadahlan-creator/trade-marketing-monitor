@@ -41,6 +41,7 @@ function setupMocks() {
     from: vi.fn().mockImplementation((table: string) => {
       if (table === "users")
         return makeQueryChain({ role: "user", is_active: true, department_id: null, region_id: null });
+      if (table === "departments") return makeQueryChain({ name: "Marketing" });
       if (table === "campaign_files") return makeFileCountChain(0);
       return {};
     }),
@@ -114,6 +115,77 @@ describe("submitCampaignAction — minimum requested_budget", () => {
 // distributor_id
 // -------------------------------------------------------
 
+// -------------------------------------------------------
+// Distributor wajib untuk Sales / Trade Marketing (Fase 5)
+// -------------------------------------------------------
+
+describe("submitCampaignAction — Distributor wajib untuk Sales/TM", () => {
+  function setupWithDepartment(deptName: string) {
+    const captured: { payload?: Record<string, unknown> } = {};
+    const chain = {
+      update: vi.fn().mockImplementation((p: unknown) => {
+        captured.payload = p as Record<string, unknown>;
+        return chain;
+      }),
+      eq: vi.fn().mockImplementation(() => chain),
+      then: (resolve: (v: { error: null }) => void) => resolve({ error: null }),
+    };
+    const mockClient = {
+      auth: {
+        getUser: vi.fn().mockResolvedValue({ data: { user: { id: "user-1" } } }),
+      },
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "users")
+          return makeQueryChain({ role: "user", is_active: true, department_id: null, region_id: null });
+        if (table === "departments") return makeQueryChain({ name: deptName });
+        if (table === "campaign_files") return makeFileCountChain(1);
+        if (table === "campaigns") return chain;
+        if (table === "approval_history")
+          return { insert: vi.fn().mockResolvedValue({ error: null }) };
+        return {};
+      }),
+    };
+    (createClient as ReturnType<typeof vi.fn>).mockResolvedValue(mockClient);
+    return { captured, update: chain.update };
+  }
+
+  it("menolak SKP Trade Marketing tanpa distributor dengan pesan yang menjelaskan alasannya", async () => {
+    const { update } = setupWithDepartment("Trade Marketing");
+    const result = await submitCampaignAction(
+      baseSubmitData({ distributor_id: null }) as Parameters<typeof submitCampaignAction>[0]
+    );
+    expect(result.error).toContain("tidak akan terlihat oleh distributor");
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("menolak SKP Sales tanpa distributor", async () => {
+    const { update } = setupWithDepartment("Sales");
+    const result = await submitCampaignAction(
+      baseSubmitData() as Parameters<typeof submitCampaignAction>[0]
+    );
+    expect(result.error).toContain("Distributor wajib");
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("menerima SKP Sales dengan distributor", async () => {
+    const { captured } = setupWithDepartment("Sales");
+    const result = await submitCampaignAction(
+      baseSubmitData({ distributor_id: uuid }) as Parameters<typeof submitCampaignAction>[0]
+    );
+    expect(result.error).toBeUndefined();
+    expect(captured.payload).toMatchObject({ distributor_id: uuid });
+  });
+
+  it("departemen lain tidak terpengaruh", async () => {
+    const { captured } = setupWithDepartment("Marketing");
+    const result = await submitCampaignAction(
+      baseSubmitData({ distributor_id: null }) as Parameters<typeof submitCampaignAction>[0]
+    );
+    expect(result.error).toBeUndefined();
+    expect(captured.payload).toMatchObject({ distributor_id: null });
+  });
+});
+
 function makeInsertChain(captured: { payload?: unknown }) {
   return {
     insert: vi.fn().mockImplementation((p: unknown) => {
@@ -175,6 +247,7 @@ describe("distributor_id disimpan mengikuti pola vendor_id", () => {
       from: vi.fn().mockImplementation((table: string) => {
         if (table === "users")
           return makeQueryChain({ role: "user", is_active: true, department_id: null, region_id: null });
+        if (table === "departments") return makeQueryChain({ name: "Marketing" });
         if (table === "campaign_files") return makeFileCountChain(1);
         if (table === "campaigns") return makeUpdateChain(captured);
         if (table === "approval_history")

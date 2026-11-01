@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { CampaignStatus, CampaignFileRow } from "@/types/database";
 import { sendSkpSubmittedEmail } from "@/lib/email";
 import { distributorClaimActionError } from "@/lib/distributor-campaign-guard";
+import { distributorRequiredError } from "@/lib/campaign-distributor-required";
 
 // Budget SKP asli terkecil di sistem (per Agustus 2026) adalah ~Rp168.000 —
 // threshold ini jauh di bawahnya sehingga tidak menolak SKP sah manapun,
@@ -161,6 +162,19 @@ export async function submitCampaignAction(
     }
 
     const { id, ...fields } = parsed.data;
+
+    // Distributor wajib untuk SKP Sales / Trade Marketing (Fase 5 multi-user
+    // distributor): tanpa distributor_id SKP tidak terlihat oleh distributor.
+    const { data: campaignDept } = await supabase
+      .from("departments")
+      .select("name")
+      .eq("id", fields.department_id)
+      .single();
+    const distributorError = distributorRequiredError(
+      campaignDept?.name,
+      fields.distributor_id
+    );
+    if (distributorError) return { error: distributorError };
 
     // Validate that at least one file has been uploaded for this campaign
     const { count: fileCount, error: fileCountError } = await supabase

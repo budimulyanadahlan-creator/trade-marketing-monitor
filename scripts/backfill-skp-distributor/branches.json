@@ -1,0 +1,26 @@
+{
+  "branchesByCompany": {
+    "MMS": ["Medan", "Siantar", "Batam", "Pekanbaru", "Palembang", "Makassar", "Manado", "Pontianak"],
+    "EDM": ["Jakarta", "Jaksel", "Bekasi", "Bogor", "Tangerang", "Tangsel", "Serang", "Karawang", "Cirebon", "Semarang", "Sukoharjo", "Yogyakarta", "Surabaya", "Malang", "Denpasar", "Samarinda"],
+    "BIR": ["Bandung"]
+  },
+  "aliases": {
+    "Borma": "Bandung",
+    "Brastagi": "Medan",
+    "Bali": "Denpasar",
+    "Solo": "Sukoharjo",
+    "Jogja": "Yogyakarta",
+    "Sidoarjo": "Surabaya",
+    "Gresik": "Surabaya",
+    "Depok": "Bogor",
+    "Sulawesi": "Makassar",
+    "Kalbar": "Pontianak"
+  },
+  "companyNames": {
+    "EDM": ["Esham Dima", "Esham", "EDM"],
+    "MMS": ["Mitra Monas", "MMS"],
+    "BIR": ["Bintang Indo", "BIR"],
+    "AJS": ["Arta Jaya", "Artha Jaya", "AJS"]
+  },
+  "noDistributorKeywords": ["Contoh", "Tutorial", "Demo"]
+}

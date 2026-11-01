@@ -3,10 +3,15 @@ import { DISTRIBUTOR_VISIBLE_CAMPAIGN_STATUSES } from "@/lib/campaign-status";
 import { computeChecklistReadinessByCampaignId } from "@/lib/claim-checklist-status";
 import { computeClaimVerificationProgressByCampaignId } from "@/lib/claim-verification-progress";
 import { distributorCampaignAccess } from "@/lib/distributor-campaign-guard";
+import { isCampaignWithoutDistributor } from "@/lib/campaign-distributor-required";
 import { CampaignsClient } from "./campaigns-client";
 import type { ClaimItemStatus, DistributorScope, UserRole } from "@/types/database";
 
-export default async function CampaignsPage() {
+export default async function CampaignsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ distributor?: string }>;
+}) {
   const supabase = await createClient();
 
   // Master data for the new campaign form doesn't depend on the logged-in
@@ -96,6 +101,22 @@ export default async function CampaignsPage() {
   }
 
   const { data: campaigns } = await campaignQuery;
+
+  // Filter khusus admin `?distributor=none` (Fase 5 multi-user distributor):
+  // SKP Sales/TM berstatus Disetujui s.d. Selesai yang belum punya distributor,
+  // yaitu SKP yang tidak terlihat oleh distributor mana pun.
+  const { distributor: distributorParam } = await searchParams;
+  const isAdminOrSuperadmin = profile?.role === "admin" || profile?.role === "superadmin";
+  const noDistributorOnly = isAdminOrSuperadmin && distributorParam === "none";
+  const listedCampaigns = noDistributorOnly
+    ? (campaigns ?? []).filter((c) =>
+        isCampaignWithoutDistributor({
+          distributor_id: c.distributor_id,
+          status: c.status,
+          departmentName: (c.department as { name?: string } | null)?.name,
+        })
+      )
+    : (campaigns ?? []);
 
   // SKP yang hanya boleh dilihat (Pusat perusahaan induk melihat SKP anak
   // perusahaan): tombol aksi di daftar disembunyikan untuk ID ini.
@@ -224,7 +245,8 @@ export default async function CampaignsPage() {
 
   return (
     <CampaignsClient
-      campaigns={campaigns ?? []}
+      campaigns={listedCampaigns}
+      noDistributorOnly={noDistributorOnly}
       userRole={profile?.role ?? "user"}
       departments={departments ?? []}
       brands={brands ?? []}

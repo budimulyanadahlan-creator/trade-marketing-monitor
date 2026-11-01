@@ -27,6 +27,10 @@ import { saveDraftCampaignAction, submitCampaignAction } from "@/app/actions/cam
 import { checkAABudgetExceededAction } from "@/app/actions/aa-budget";
 import { formatIDR } from "@/lib/utils";
 import { UPLOAD_MAX_LABEL, UPLOAD_MAX_SIZE } from "@/lib/upload-limits";
+import {
+  distributorRequiredError,
+  isDistributorRequiredDepartment,
+} from "@/lib/campaign-distributor-required";
 import type { CampaignFileRow } from "@/types/database";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -234,6 +238,7 @@ function Step2({
   actionApprovals,
   vendors,
   distributors,
+  distributorRequired,
 }: {
   data: FormData;
   onChange: (patch: Partial<FormData>) => void;
@@ -242,6 +247,8 @@ function Step2({
   actionApprovals: { id: string; name: string; master_budget: { promotion_category_id: string } | null }[];
   vendors: { id: string; name: string }[];
   distributors: { id: string; name: string }[];
+  /** Sales / Trade Marketing: Distributor wajib (SKP tanpa distributor tidak terlihat distributor). */
+  distributorRequired: boolean;
 }) {
   const selectedCategory = categories.find((c) => c.id === data.promotion_category_id);
   const showStoreId = selectedCategory
@@ -363,19 +370,30 @@ function Step2({
       </div>
 
       <div className="space-y-1.5">
-        <Label htmlFor="c-distributor">Distributor</Label>
+        <Label htmlFor="c-distributor">
+          Distributor{distributorRequired && <span className="text-rose-400"> *</span>}
+        </Label>
         <Select
           id="c-distributor"
           value={data.distributor_id}
           onChange={(e) => onChange({ distributor_id: e.target.value })}
+          required={distributorRequired}
         >
-          <option value="">— Pilih Distributor (opsional) —</option>
+          <option value="">
+            {distributorRequired ? "— Pilih Distributor —" : "— Pilih Distributor (opsional) —"}
+          </option>
           {distributors.map((d) => (
             <option key={d.id} value={d.id}>
               {d.name}
             </option>
           ))}
         </Select>
+        {distributorRequired && !data.distributor_id && (
+          <p className="text-xs text-amber-400">
+            Wajib untuk SKP Sales / Trade Marketing — SKP tanpa distributor tidak akan terlihat
+            oleh distributor.
+          </p>
+        )}
       </div>
 
       <div className="space-y-1.5">
@@ -677,10 +695,17 @@ function validateStep1(data: FormData): string | null {
   return null;
 }
 
-function validateStep2(data: FormData): string | null {
+function validateStep2(
+  data: FormData,
+  departments: { id: string; name: string }[]
+): string | null {
   if (!data.channel_id) return "Channel harus dipilih";
   if (!data.promotion_category_id) return "Kategori promosi harus dipilih";
   if (!data.mechanism.trim()) return "Mekanisme harus diisi";
+  // Harus sama dengan aturan server di submitCampaignAction.
+  const deptName = departments.find((d) => d.id === data.department_id)?.name;
+  const distributorError = distributorRequiredError(deptName, data.distributor_id);
+  if (distributorError) return distributorError;
   return null;
 }
 
@@ -896,7 +921,7 @@ export function CampaignFormModal({
   async function handleNext() {
     let err: string | null = null;
     if (step === 1) err = validateStep1(formData);
-    else if (step === 2) err = validateStep2(formData);
+    else if (step === 2) err = validateStep2(formData, departments);
 
     if (err) {
       setError(err);
@@ -929,7 +954,7 @@ export function CampaignFormModal({
 
   async function handleSubmit() {
     const step1Error = validateStep1(formData);
-    const step2Error = validateStep2(formData);
+    const step2Error = validateStep2(formData, departments);
     const step3Error = validateStep3(formData, pendingFiles, existingFiles);
     const firstError = step1Error ?? step2Error ?? step3Error;
     if (firstError) {
@@ -1035,6 +1060,9 @@ export function CampaignFormModal({
               actionApprovals={actionApprovals}
               vendors={vendors}
               distributors={distributors}
+              distributorRequired={isDistributorRequiredDepartment(
+                departments.find((d) => d.id === formData.department_id)?.name
+              )}
             />
           )}
           {step === 3 && (

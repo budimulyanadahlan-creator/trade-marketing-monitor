@@ -20,7 +20,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { Plus, ExternalLink, Pencil, CheckSquare, Download, Trash2, CheckCircle2 } from "lucide-react";
+import { Plus, ExternalLink, Pencil, CheckSquare, Download, Trash2, CheckCircle2, AlertTriangle, X } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate, formatIDR } from "@/lib/utils";
 import { filterBySearch } from "@/lib/search";
@@ -55,6 +55,8 @@ interface Props {
   distributors: { id: string; name: string }[];
   masterBudgets: { id: string; promotion_category_id: string; fiscal_year: number; quarter: number; total_amount: number }[];
   lockedRegionId?: string | null;
+  /** Admin only: daftar sedang difilter `?distributor=none` (SKP tanpa distributor). */
+  noDistributorOnly?: boolean;
   receiptedCampaignIds?: string[];
   /** Distributor only: SKP yang hanya boleh dilihat (Pusat induk → SKP anak perusahaan). */
   readOnlyCampaignIds?: string[];
@@ -80,6 +82,7 @@ export function CampaignsClient({
   distributors,
   masterBudgets,
   lockedRegionId,
+  noDistributorOnly = false,
   receiptedCampaignIds = [],
   readOnlyCampaignIds = [],
   checklistStatusByCampaignId = {},
@@ -219,6 +222,19 @@ export function CampaignsClient({
               Checklist Siap
             </label>
           )}
+          {isAdminOrSuperadmin && (
+            <Button
+              asChild
+              size="sm"
+              variant={noDistributorOnly ? "secondary" : "outline"}
+              title="SKP Sales/Trade Marketing berstatus Disetujui s.d. Selesai yang belum punya distributor"
+            >
+              <Link href={noDistributorOnly ? "/campaigns" : "/campaigns?distributor=none"}>
+                {noDistributorOnly ? <X className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
+                {noDistributorOnly ? "Semua SKP" : "SKP tanpa distributor"}
+              </Link>
+            </Button>
+          )}
           {["user", "manager", "finance", "admin", "superadmin"].includes(userRole) && (
             <Button size="sm" onClick={() => { setEditingCampaign(null); setModalOpen(true); }}>
               <Plus className="h-4 w-4" />
@@ -227,6 +243,17 @@ export function CampaignsClient({
           )}
         </div>
       </div>
+
+      {noDistributorOnly && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+          <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+          <span>
+            Menampilkan {campaigns.length} SKP Sales / Trade Marketing berstatus Disetujui s.d.
+            Selesai yang belum punya distributor. SKP ini tidak terlihat oleh distributor mana pun
+            sampai kolom Distributor diisi.
+          </span>
+        </div>
+      )}
 
       <div
         className="rounded-xl border border-white/8 bg-white/2 overflow-x-auto"
