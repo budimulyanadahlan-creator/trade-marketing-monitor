@@ -34,3 +34,15 @@ export function createAdminClient() {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
 }
+
+/**
+ * Klien anon tanpa sesi/cookie — dipakai untuk memverifikasi password lama
+ * (signInWithPassword) tanpa menyentuh sesi browser user.
+ */
+export function createAnonClient() {
+  return createSupabaseClient<Database>(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { auth: { persistSession: false, autoRefreshToken: false } }
+  );
+}

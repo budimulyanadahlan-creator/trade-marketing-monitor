@@ -1,6 +1,7 @@
 "use client";
 
-import { Bell } from "lucide-react";
+import Link from "next/link";
+import { Bell, KeyRound } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -76,6 +77,12 @@ export function Header({ fullName, role, notificationCount, onLogout }: HeaderPr
               </Badge>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
+            <DropdownMenuItem asChild>
+              <Link href="/ganti-password" className="flex items-center gap-2">
+                <KeyRound className="h-4 w-4" />
+                Ganti Password
+              </Link>
+            </DropdownMenuItem>
             <DropdownMenuItem
               onClick={onLogout}
               className="text-rose-400 focus:text-rose-400 focus:bg-rose-500/10"

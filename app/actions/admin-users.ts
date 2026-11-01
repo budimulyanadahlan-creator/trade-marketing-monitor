@@ -183,6 +183,8 @@ export async function createUserAction(
     ...distributorColumns(parsed.data),
     role: parsed.data.role as UserRole,
     is_active: true,
+    // Password awal dibuat admin → wajib diganti user di login pertama.
+    must_change_password: true,
   });
 
   if (profileError) {
@@ -379,6 +381,19 @@ export async function resetUserPasswordAction(
   });
 
   if (error) return { error: error.message };
+
+  // Password sementara dari admin → user wajib menggantinya di login berikutnya.
+  const { error: flagError } = await adminClient
+    .from("users")
+    .update({ must_change_password: true })
+    .eq("id", parsed.data.id);
+  if (flagError) {
+    return {
+      error:
+        "Password direset, tetapi gagal menandai akun wajib ganti password: " +
+        flagError.message,
+    };
+  }
 
   try {
     const { data: targetAuthUser } = await adminClient.auth.admin.getUserById(

@@ -40,6 +40,7 @@ export type UserRow = {
   distributor_scope: DistributorScope | null;
   role: UserRole;
   is_active: boolean;
+  must_change_password: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -625,6 +626,7 @@ export type Database = {
           distributor_scope?: DistributorScope | null;
           role?: UserRole;
           is_active?: boolean;
+          must_change_password?: boolean;
           created_at?: string;
           updated_at?: string;
         };
@@ -636,6 +638,7 @@ export type Database = {
           distributor_scope?: DistributorScope | null;
           role?: UserRole;
           is_active?: boolean;
+          must_change_password?: boolean;
           updated_at?: string;
         };
         Relationships: [

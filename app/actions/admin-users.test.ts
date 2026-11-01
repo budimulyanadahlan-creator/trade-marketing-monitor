@@ -7,7 +7,12 @@ vi.mock("@/lib/supabase/server", () => ({
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/email", () => ({ sendPasswordResetNotificationEmail: vi.fn() }));
 
-import { createUserAction, updateUserAction, toggleUserActiveAction } from "./admin-users";
+import {
+  createUserAction,
+  updateUserAction,
+  toggleUserActiveAction,
+  resetUserPasswordAction,
+} from "./admin-users";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 
 function makeUserChain(profile: { role: string; is_active?: boolean }) {
@@ -110,6 +115,80 @@ describe("createUserAction — distributor_id", () => {
     expect(insert).toHaveBeenCalledWith(expect.objectContaining({ distributor_id: null }));
   });
 
+  it("flags new users to change their password at first login", async () => {
+    const { insert } = setup("admin");
+
+    const result = await createUserAction(
+      {},
+      formDataOf({
+        email: "user@example.com",
+        password: "password123",
+        full_name: "Regular User",
+        role: "user",
+      })
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({ must_change_password: true })
+    );
+  });
+});
+
+// -------------------------------------------------------
+// resetUserPasswordAction — must_change_password
+// -------------------------------------------------------
+
+describe("resetUserPasswordAction — must_change_password", () => {
+  it("turns the flag on after resetting the password", async () => {
+    // Satu mock `single` dipakai bersama: panggilan pertama = profil aktor,
+    // kedua = user target.
+    const single = vi
+      .fn()
+      .mockResolvedValueOnce({ data: { role: "admin", is_active: true } })
+      .mockResolvedValueOnce({ data: { role: "user", full_name: "Target" } });
+    const mockClient = {
+      auth: {
+        getUser: vi.fn().mockResolvedValue({ data: { user: { id: "actor-1" } } }),
+      },
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "users") {
+          return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), single };
+        }
+        return {};
+      }),
+    };
+    (createClient as ReturnType<typeof vi.fn>).mockResolvedValue(mockClient);
+
+    const flagEq = vi.fn().mockResolvedValue({ error: null });
+    const flagUpdate = vi.fn().mockReturnValue({ eq: flagEq });
+    const adminClient = {
+      auth: {
+        admin: {
+          updateUserById: vi.fn().mockResolvedValue({ error: null }),
+          getUserById: vi.fn().mockResolvedValue({ data: { user: { email: "t@x.com" } } }),
+        },
+      },
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "users") return { update: flagUpdate };
+        return {};
+      }),
+    };
+    (createAdminClient as ReturnType<typeof vi.fn>).mockReturnValue(adminClient);
+
+    const result = await resetUserPasswordAction(
+      {},
+      formDataOf({ id: uuid, password: "password123", confirmPassword: "password123" })
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.success).toBe(true);
+    expect(adminClient.auth.admin.updateUserById).toHaveBeenCalledWith(uuid, {
+      password: "password123",
+    });
+    expect(flagUpdate).toHaveBeenCalledWith({ must_change_password: true });
+    expect(flagEq).toHaveBeenCalledWith("id", uuid);
+  });
 });
 
 // -------------------------------------------------------

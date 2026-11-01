@@ -43,12 +43,15 @@ export async function updateSession(request: NextRequest) {
   if (user && pathname === "/login") {
     const { data: profile } = await supabase
       .from("users")
-      .select("role")
+      .select("role, must_change_password")
       .eq("id", user.id)
       .single();
     const redirectUrl = request.nextUrl.clone();
-    redirectUrl.pathname =
-      profile?.role === "distributor" ? "/campaigns" : "/dashboard";
+    redirectUrl.pathname = profile?.must_change_password
+      ? "/ganti-password"
+      : profile?.role === "distributor"
+        ? "/campaigns"
+        : "/dashboard";
     return NextResponse.redirect(redirectUrl);
   }
 

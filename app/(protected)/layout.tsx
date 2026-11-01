@@ -75,13 +75,21 @@ export default async function ProtectedLayout({
 
   const { data: profile } = await supabase
     .from("users")
-    .select("full_name, role, is_active, department_id, distributor_id")
+    .select(
+      "full_name, role, is_active, department_id, distributor_id, must_change_password"
+    )
     .eq("id", user.id)
     .single();
 
   if (!profile || !profile.is_active) {
     await supabase.auth.signOut();
     redirect("/login");
+  }
+
+  // Password sementara dari admin belum diganti: hanya /ganti-password
+  // (di luar grup ini) dan logout yang boleh dibuka.
+  if (profile.must_change_password) {
+    redirect("/ganti-password");
   }
 
   const pendingStatuses = await getPendingStatuses(supabase, user.id, profile.role);

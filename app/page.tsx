@@ -13,9 +13,10 @@ export default async function RootPage() {
 
   const { data: profile } = await supabase
     .from("users")
-    .select("role")
+    .select("role, must_change_password")
     .eq("id", user.id)
     .single();
 
+  if (profile?.must_change_password) redirect("/ganti-password");
   redirect(profile?.role === "distributor" ? "/campaigns" : "/dashboard");
 }
