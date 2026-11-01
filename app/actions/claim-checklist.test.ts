@@ -35,7 +35,7 @@ function setupMocks({
     auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: "dist-1" } } }) },
     from: vi.fn().mockImplementation((table: string) => {
       if (table === "users")
-        return makeQueryChain({ role, is_active: isActive, distributor_id: userDistributorId });
+        return makeQueryChain({ role, is_active: isActive, distributor_id: userDistributorId, distributor_scope: "pusat" });
       if (table === "campaigns") return makeQueryChain(campaign);
       if (table === "distributor_claim_checklists") return upsertChain;
       return {};

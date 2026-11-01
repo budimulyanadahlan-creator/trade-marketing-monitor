@@ -287,7 +287,7 @@ export async function createDistributorReceiptAction(
 
     const { data: profile } = await supabase
       .from("users")
-      .select("role, is_active, region_id, distributor_id")
+      .select("role, is_active, region_id, distributor_id, distributor_scope")
       .eq("id", user.id)
       .single();
 
@@ -297,16 +297,20 @@ export async function createDistributorReceiptAction(
 
     const { data: campaign } = await supabase
       .from("campaigns")
-      .select("id, distributor_id")
+      .select("id, distributor_id, region_id")
       .eq("id", campaignId)
       .single();
 
     if (!campaign) return { error: "SKP tidak ditemukan" };
 
     const guardError = distributorClaimActionError(
-      profile.role,
-      profile.distributor_id ?? null,
-      campaign.distributor_id ?? null
+      {
+        role: profile.role,
+        distributor_id: profile.distributor_id ?? null,
+        distributor_scope: profile.distributor_scope ?? null,
+        region_id: profile.region_id ?? null,
+      },
+      { distributor_id: campaign.distributor_id ?? null, region_id: campaign.region_id ?? null }
     );
     if (guardError) return { error: guardError };
 

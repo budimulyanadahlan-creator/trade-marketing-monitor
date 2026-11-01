@@ -78,7 +78,7 @@ function setupMocks(
   } = opts;
 
   const usersChain = makeSelectChain({
-    data: { role, is_active: isActive, distributor_id: userDistributorId },
+    data: { role, is_active: isActive, distributor_id: userDistributorId, distributor_scope: "pusat" },
   });
   const campaignsChain = makeSelectChain({ data: campaign });
   const docTypesChain = makeSelectChain({ data: docType });

@@ -4,7 +4,6 @@ import type { ReactNode } from "react";
 import { ArrowLeft, History } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { getStatusConfig } from "@/lib/campaign-status";
-import { isDistributorAllowedOnCampaign } from "@/lib/distributor-campaign-guard";
 import {
   canViewEvent,
   EVENT_STATUS_LABELS,
@@ -155,10 +154,11 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
   const isDistributor = viewer.role === "distributor";
   const [{ data: refs }, { data: readableCampaigns }, formOptions, { data: photoRows }] = await Promise.all([
     campaignIds.length ? supabase.rpc("event_campaign_refs", { p_ids: campaignIds }) : Promise.resolve({ data: [] }),
-    // Distributor hanya mendapat link ke SKP yang bisa dibukanya: terbaca
-    // lewat RLS campaigns dan milik distributornya (atau belum ditetapkan).
+    // Distributor hanya mendapat link ke SKP yang bisa dibukanya: RLS
+    // campaigns (fungsi distributor_campaign_access, migrasi 067) sudah
+    // menyaring per perusahaan/cakupan/region, jadi terbaca = bisa dibuka.
     isDistributor && campaignIds.length
-      ? supabase.from("campaigns").select("id, distributor_id").in("id", campaignIds)
+      ? supabase.from("campaigns").select("id").in("id", campaignIds)
       : Promise.resolve({ data: null }),
     canManage && cost
       ? loadEventFormOptions(supabase, {
@@ -187,9 +187,7 @@ export default async function EventDetailPage({ params }: { params: Promise<{ id
   const refById = new Map((refs ?? []).map((r) => [r.id, r]));
   const openableIds = isDistributor
     ? new Set(
-        (readableCampaigns ?? [])
-          .filter((c) => isDistributorAllowedOnCampaign(c.distributor_id, viewer.distributor_id))
-          .map((c) => c.id)
+        (readableCampaigns ?? []).map((c) => c.id)
       )
     : null;
   const skps = linkedCampaigns.map((c) => {

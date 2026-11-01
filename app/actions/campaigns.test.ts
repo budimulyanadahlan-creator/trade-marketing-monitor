@@ -227,8 +227,10 @@ function setupReceiptMocks({
   role = "distributor",
   isActive = true,
   userDistributorId = "co-edm" as string | null,
+  userScope = "pusat" as "cabang" | "pusat" | null,
+  userRegionId = null as string | null,
   campaign = { id: "camp-1", distributor_id: "co-edm" } as
-    | { id: string; distributor_id: string | null }
+    | { id: string; distributor_id: string | null; region_id?: string | null }
     | null,
   insertError = null as { code?: string; message: string } | null,
 } = {}) {
@@ -242,8 +244,9 @@ function setupReceiptMocks({
         return makeQueryChain({
           role,
           is_active: isActive,
-          region_id: null,
+          region_id: userRegionId,
           distributor_id: userDistributorId,
+          distributor_scope: userScope,
         });
       if (table === "campaigns") return makeQueryChain(campaign);
       if (table === "distributor_receipts") return insertChain;
@@ -263,6 +266,25 @@ describe("createDistributorReceiptAction — pengaman per perusahaan", () => {
     const result = await createDistributorReceiptAction("camp-1", null);
     expect(result).toEqual({ error: "SKP ini bukan milik distributor Anda" });
     expect(insertChain.insert).not.toHaveBeenCalled();
+  });
+
+  it("rejects a cabang account outside its region, allows it inside (Fase 3)", async () => {
+    const { insertChain } = setupReceiptMocks({
+      userScope: "cabang",
+      userRegionId: "region-wcj",
+      campaign: { id: "camp-1", distributor_id: "co-edm", region_id: "region-ejb" },
+    });
+    expect(await createDistributorReceiptAction("camp-1", null)).toEqual({
+      error: "SKP ini di luar region akun Anda",
+    });
+    expect(insertChain.insert).not.toHaveBeenCalled();
+
+    setupReceiptMocks({
+      userScope: "cabang",
+      userRegionId: "region-wcj",
+      campaign: { id: "camp-1", distributor_id: "co-edm", region_id: "region-wcj" },
+    });
+    expect(await createDistributorReceiptAction("camp-1", null)).toEqual({ success: true });
   });
 });
 

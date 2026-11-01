@@ -56,6 +56,8 @@ interface Props {
   masterBudgets: { id: string; promotion_category_id: string; fiscal_year: number; quarter: number; total_amount: number }[];
   lockedRegionId?: string | null;
   receiptedCampaignIds?: string[];
+  /** Distributor only: SKP yang hanya boleh dilihat (Pusat induk → SKP anak perusahaan). */
+  readOnlyCampaignIds?: string[];
   /** Approved SKP only: required vs fulfilled claim-document checklist items. */
   checklistStatusByCampaignId?: Record<string, { required: number; fulfilled: number }>;
   /** claim_submitted SKP only: per-item finance verification progress. */
@@ -79,6 +81,7 @@ export function CampaignsClient({
   masterBudgets,
   lockedRegionId,
   receiptedCampaignIds = [],
+  readOnlyCampaignIds = [],
   checklistStatusByCampaignId = {},
   claimVerificationProgressByCampaignId = {},
 }: Props) {
@@ -100,6 +103,7 @@ export function CampaignsClient({
   );
 
   const isDistributor = userRole === "distributor";
+  const readOnlyIds = new Set(readOnlyCampaignIds);
   const isAdminOrSuperadmin = userRole === "admin" || userRole === "superadmin";
   const canSeeChecklistReadiness = ["admin", "superadmin", "finance", "manager"].includes(userRole);
   // Finance queue badge (Phase 5, verifikasi klaim finance) — narrower than
@@ -257,7 +261,9 @@ export function CampaignsClient({
                       {campaign.skp_number ?? "—"}
                     </TableCell>
                     <TableCell className="font-medium text-slate-100">
-                      {isDistributor && !localReceiptedIds.has(campaign.id) ? (
+                      {isDistributor &&
+                      !localReceiptedIds.has(campaign.id) &&
+                      !readOnlyIds.has(campaign.id) ? (
                         campaign.name
                       ) : (
                         <Link
@@ -342,7 +348,14 @@ export function CampaignsClient({
                     </TableCell>
                     {isDistributor && (
                       <TableCell>
-                        {localReceiptedIds.has(campaign.id) ? (
+                        {readOnlyIds.has(campaign.id) ? (
+                          <span
+                            className="inline-flex items-center rounded-full border border-sky-500/30 bg-sky-500/10 px-2.5 py-0.5 text-xs font-medium text-sky-300"
+                            title="Hanya lihat — SKP anak perusahaan"
+                          >
+                            Hanya lihat
+                          </span>
+                        ) : localReceiptedIds.has(campaign.id) ? (
                           <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-400">
                             Sudah Diterima
                           </span>
@@ -355,7 +368,9 @@ export function CampaignsClient({
                     )}
                     <TableCell>
                       <div className="flex items-center justify-end gap-1">
-                        {isDistributor && !localReceiptedIds.has(campaign.id) && (
+                        {isDistributor &&
+                          !localReceiptedIds.has(campaign.id) &&
+                          !readOnlyIds.has(campaign.id) && (
                           <Button
                             variant="outline"
                             size="sm"
@@ -391,7 +406,7 @@ export function CampaignsClient({
                           </Button>
                         )}
                         {["approved", "ongoing", "claim_submitted", "claim_verified", "ready_to_pay", "paid", "completed"].includes(campaign.status) &&
-                          (!isDistributor || localReceiptedIds.has(campaign.id)) && (
+                          (!isDistributor || localReceiptedIds.has(campaign.id) || readOnlyIds.has(campaign.id)) && (
                           <Button
                             asChild
                             variant="outline"
@@ -404,7 +419,7 @@ export function CampaignsClient({
                             </a>
                           </Button>
                         )}
-                        {(!isDistributor || localReceiptedIds.has(campaign.id)) && (
+                        {(!isDistributor || localReceiptedIds.has(campaign.id) || readOnlyIds.has(campaign.id)) && (
                           <Button asChild variant="outline" size="sm" className="h-7 w-7 p-0">
                             <Link href={`/campaigns/${campaign.id}`}>
                               <ExternalLink className="h-3 w-3" />

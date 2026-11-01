@@ -34,11 +34,13 @@ import {
   Download,
   Upload,
   TriangleAlert,
+  Eye,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate, formatIDR } from "@/lib/utils";
 import { UPLOAD_MAX_LABEL, UPLOAD_MAX_SIZE } from "@/lib/upload-limits";
 import { getStatusConfig } from "@/lib/campaign-status";
+import type { DistributorCampaignAccess } from "@/lib/distributor-campaign-guard";
 import { BudgetProgress } from "@/components/budget-progress";
 import {
   addRealizationAction,
@@ -85,7 +87,7 @@ type CampaignWithJoins = CampaignRow & {
   promotion_category: { name: string; account_code: string } | null;
   action_approval: { name: string } | null;
   vendor: { name: string } | null;
-  distributor: { name: string } | null;
+  distributor: { name: string; parent_distributor_id?: string | null } | null;
 };
 
 type ApprovalHistoryWithActor = ApprovalHistoryRow & {
@@ -109,6 +111,12 @@ interface Props {
   isEditable: boolean;
   userRole: UserRole;
   userId: string;
+  /**
+   * Hak akses distributor atas SKP ini (Multi-User Distributor, Fase 3):
+   * "act" = boleh bertindak, "view" = hanya lihat (Pusat perusahaan induk
+   * melihat SKP anak perusahaan). Selalu "act" untuk role lain.
+   */
+  distributorAccess: DistributorCampaignAccess;
   departments: { id: string; name: string }[];
   brands: { id: string; name: string }[];
   regions: { id: string; name: string }[];
@@ -831,6 +839,7 @@ export function ClaimChecklistSection({
   documents,
   claimAmount,
   claimAmountVerification,
+  canAct = true,
 }: {
   campaignId: string;
   campaignStatus: CampaignStatus;
@@ -839,11 +848,16 @@ export function ClaimChecklistSection({
   documents: ClaimDocument[];
   claimAmount: number | null;
   claimAmountVerification: ClaimItemVerificationInfo | null;
+  /** false = distributor hanya lihat (Pusat induk → SKP anak perusahaan). */
+  canAct?: boolean;
 }) {
   const router = useRouter();
   const isDistributor = userRole === "distributor";
+  // Semua aksi distributor (centang, upload, hapus, ubah nominal) hanya
+  // untuk akun yang boleh bertindak — server menolak selebihnya.
+  const canActAsDistributor = isDistributor && canAct;
   const isEditable =
-    isDistributor && CHECKLIST_EDITABLE_STATUSES.includes(campaignStatus);
+    canActAsDistributor && CHECKLIST_EDITABLE_STATUSES.includes(campaignStatus);
   const canVerifyItems =
     ["finance", "admin", "superadmin"].includes(userRole) &&
     campaignStatus === "claim_submitted";
@@ -944,10 +958,10 @@ export function ClaimChecklistSection({
           // reopens for re-upload only while finance has it as
           // revision_requested — everything else stays locked.
           const canReupload =
-            isDistributor &&
+            canActAsDistributor &&
             campaignStatus === "claim_submitted" &&
             doc.verification?.status === "revision_requested";
-          const canUpload = (isDistributor && isEditable) || canReupload;
+          const canUpload = (canActAsDistributor && isEditable) || canReupload;
 
           return (
             <div
@@ -1020,7 +1034,7 @@ export function ClaimChecklistSection({
                     <ClaimFileRow
                       key={f.id}
                       file={f}
-                      canDelete={isDistributor && isEditable && f.uploadedBy === userId}
+                      canDelete={canActAsDistributor && isEditable && f.uploadedBy === userId}
                       onDeleted={() => router.refresh()}
                       showVersionTag={doc.files.length > 1}
                     />
@@ -1043,7 +1057,7 @@ export function ClaimChecklistSection({
           // instead of the plain read-only figure, but only while finance
           // has it marked revision_requested.
           const canEditAmount =
-            isDistributor &&
+            canActAsDistributor &&
             campaignStatus === "claim_submitted" &&
             claimAmountVerification.status === "revision_requested";
 
@@ -1635,6 +1649,7 @@ export function CampaignDetailClient({
   isEditable,
   userRole,
   userId,
+  distributorAccess,
   departments,
   brands,
   regions,
@@ -1662,12 +1677,19 @@ export function CampaignDetailClient({
       ? claimDocuments.filter((d) => !d.isFulfilled).map((d) => d.name)
       : [];
 
+  // Distributor hanya bisa bertindak jika hak aksesnya "act" — Pusat
+  // perusahaan induk yang melihat SKP anak perusahaan hanya lihat.
+  const distributorCanAct = userRole !== "distributor" || distributorAccess === "act";
+  const distributorReadOnly = userRole === "distributor" && distributorAccess === "view";
+
   const canSubmitKlaim =
     ["distributor", "admin", "superadmin"].includes(userRole) &&
+    distributorCanAct &&
     campaign.status === "ongoing";
 
   const canCancelKlaim =
     ["distributor", "admin", "superadmin"].includes(userRole) &&
+    distributorCanAct &&
     campaign.status === "claim_submitted";
 
   const canApproveClaim =
@@ -1787,6 +1809,20 @@ export function CampaignDetailClient({
           )}
         </div>
       </div>
+
+      {/* Hanya lihat: Pusat perusahaan induk melihat SKP anak perusahaan */}
+      {distributorReadOnly && (
+        <div className="rounded-xl border border-sky-500/30 bg-sky-500/10 px-5 py-3 flex items-start gap-3">
+          <Eye className="h-4 w-4 text-sky-300 mt-0.5 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-sky-200">Hanya lihat — SKP anak perusahaan</p>
+            <p className="text-xs text-sky-300/80 mt-0.5">
+              SKP ini milik {campaign.distributor?.name ?? "anak perusahaan"}. Tanggung jawab
+              klaim tetap di perusahaan tersebut; tombol aksi disembunyikan.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* SKP Number & AA Reference */}
       <div className="rounded-xl border border-white/8 bg-white/2 px-6 py-4 flex flex-wrap gap-8">
@@ -2030,6 +2066,7 @@ export function CampaignDetailClient({
           documents={claimDocuments}
           claimAmount={campaign.claim_amount}
           claimAmountVerification={claimAmountVerification}
+          canAct={distributorCanAct}
         />
       )}
 

@@ -1,8 +1,12 @@
 import { notFound } from "next/navigation";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { computeAARemainingBudget } from "@/lib/campaign-status";
+import {
+  distributorCampaignAccess,
+  type DistributorCampaignAccess,
+} from "@/lib/distributor-campaign-guard";
 import { CampaignDetailClient } from "./campaign-detail-client";
-import type { CampaignRow, CampaignFileRow, ApprovalHistoryRow, RealizationRow, DistributorReceiptRow, ClaimEventRow, ClaimItemStatus, UserRole, CampaignStatus } from "@/types/database";
+import type { CampaignRow, CampaignFileRow, ApprovalHistoryRow, RealizationRow, DistributorReceiptRow, ClaimEventRow, ClaimItemStatus, UserRole, CampaignStatus, DistributorScope } from "@/types/database";
 
 export type ClaimDocumentFile = {
   id: string;
@@ -54,7 +58,7 @@ type CampaignWithJoins = CampaignRow & {
   promotion_category: { name: string; account_code: string } | null;
   action_approval: { name: string } | null;
   vendor: { name: string } | null;
-  distributor: { name: string } | null;
+  distributor: { name: string; parent_distributor_id: string | null } | null;
 };
 
 type ClaimItemRow = {
@@ -104,7 +108,11 @@ export default async function CampaignDetailPage({ params }: Props) {
     { data: receiptsRaw },
     { data: claimEventsRaw },
   ] = await Promise.all([
-    supabase.from("users").select("role").eq("id", user.id).single(),
+    supabase
+      .from("users")
+      .select("role, distributor_id, distributor_scope, region_id")
+      .eq("id", user.id)
+      .single(),
     supabase
       .from("campaigns")
       .select(
@@ -117,7 +125,7 @@ export default async function CampaignDetailPage({ params }: Props) {
         promotion_category:promotion_categories(name, account_code),
         action_approval:action_approvals(name),
         vendor:vendors(name),
-        distributor:distributors(name)
+        distributor:distributors(name, parent_distributor_id)
       `
       )
       .eq("id", id)
@@ -150,8 +158,32 @@ export default async function CampaignDetailPage({ params }: Props) {
 
   const userRole = (userProfile?.role ?? "user") as UserRole;
 
+  // RLS (distributor_campaign_access, migrasi 067) sudah menyembunyikan SKP
+  // yang tidak boleh dilihat distributor — URL langsung berakhir "tidak
+  // ditemukan". Di sini tinggal menentukan boleh bertindak atau hanya lihat
+  // (Pusat perusahaan induk) agar tombol aksi disembunyikan di klien.
   if (!campaignRaw) notFound();
   const campaign = campaignRaw as unknown as CampaignWithJoins;
+
+  const distributorAccess: DistributorCampaignAccess =
+    userRole === "distributor"
+      ? distributorCampaignAccess(
+          {
+            distributor_id: campaign.distributor_id ?? null,
+            region_id: campaign.region_id ?? null,
+            distributor_parent_id: campaign.distributor?.parent_distributor_id ?? null,
+          },
+          {
+            role: userRole,
+            distributor_id: userProfile?.distributor_id ?? null,
+            distributor_scope: (userProfile?.distributor_scope ?? null) as DistributorScope | null,
+            region_id: userProfile?.region_id ?? null,
+          }
+        )
+      : "act";
+  // Pertahanan lapis kedua: jika RLS belum menyaring (misalnya migrasi belum
+  // jalan), distributor yang tidak berhak tetap mendapat "tidak ditemukan".
+  if (userRole === "distributor" && distributorAccess === null) notFound();
 
   const files = (filesRaw ?? []) as CampaignFileRow[];
   const approvalHistory = (historyRaw ?? []) as unknown as ApprovalHistoryWithActor[];
@@ -400,6 +432,7 @@ export default async function CampaignDetailPage({ params }: Props) {
       isEditable={isEditable}
       userRole={userRole}
       userId={user.id}
+      distributorAccess={distributorAccess}
       departments={departments ?? []}
       brands={brands ?? []}
       regions={regions ?? []}

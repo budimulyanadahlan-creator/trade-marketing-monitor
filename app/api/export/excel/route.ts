@@ -125,17 +125,11 @@ export async function GET(request: NextRequest) {
   let receiptedSet = new Set<string>();
 
   if (isDistributor) {
+    // Visibilitas distributor (perusahaan × cakupan × region × induk,
+    // departemen Sales/TM) ditegakkan RLS lewat distributor_campaign_access
+    // (migrasi 067) — sama dengan daftar SKP dan Rekap; hanya jendela status
+    // yang diulang di sini.
     query = query.in("status", DISTRIBUTOR_VISIBLE_CAMPAIGN_STATUSES);
-    if (profile.region_id) query = query.eq("region_id", profile.region_id);
-
-    const { data: allDepts } = await supabase.from("departments").select("id, name");
-    const targetDeptIds = (allDepts ?? [])
-      .filter((d) => {
-        const n = d.name.toLowerCase();
-        return n.includes("sales") || n.includes("trade");
-      })
-      .map((d) => d.id);
-    if (targetDeptIds.length > 0) query = query.in("department_id", targetDeptIds);
 
     if (dateFrom) query = query.gte("start_date", dateFrom);
     if (dateTo) query = query.lte("start_date", dateTo);

@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
 
   const { data: profile } = await supabase
     .from("users")
-    .select("role, is_active, distributor_id")
+    .select("role, is_active, distributor_id, distributor_scope, region_id")
     .eq("id", user.id)
     .single();
 
@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
   // below since the select policy also allows paid/completed for viewing.
   const { data: campaign } = await supabase
     .from("campaigns")
-    .select("id, status, distributor_id")
+    .select("id, status, distributor_id, region_id")
     .eq("id", campaignId)
     .single();
 
@@ -84,9 +84,13 @@ export async function POST(request: NextRequest) {
   }
 
   const guardError = distributorClaimActionError(
-    profile.role,
-    profile.distributor_id ?? null,
-    campaign.distributor_id ?? null
+    {
+      role: profile.role,
+      distributor_id: profile.distributor_id ?? null,
+      distributor_scope: profile.distributor_scope ?? null,
+      region_id: profile.region_id ?? null,
+    },
+    { distributor_id: campaign.distributor_id ?? null, region_id: campaign.region_id ?? null }
   );
   if (guardError) {
     return NextResponse.json({ error: guardError }, { status: 403 });

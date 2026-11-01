@@ -84,6 +84,8 @@ type SetupOptions = {
   role?: string;
   isActive?: boolean;
   userDistributorId?: string | null;
+  userScope?: "cabang" | "pusat" | null;
+  userRegionId?: string | null;
   campaign?:
     | {
         id: string;
@@ -91,6 +93,7 @@ type SetupOptions = {
         name: string;
         created_by: string;
         distributor_id?: string | null;
+        region_id?: string | null;
       }
     | null;
   updateError?: { message: string } | null;
@@ -104,6 +107,9 @@ function setupMocks({
   role = "distributor",
   isActive = true,
   userDistributorId = "dist-co-1",
+  // Default pusat: semua region. Tes region memakai cabang + userRegionId.
+  userScope = "pusat",
+  userRegionId = null,
   campaign = {
     id: "camp-1",
     status: "ongoing",
@@ -134,6 +140,8 @@ function setupMocks({
           role,
           is_active: isActive,
           distributor_id: userDistributorId,
+          distributor_scope: userScope,
+          region_id: userRegionId,
         });
       if (table === "campaigns") return campaignsChain;
       if (table === "claim_events") return claimEventsChain;
@@ -270,6 +278,41 @@ describe("submitKlaimAction", () => {
         name: "Promo A",
         created_by: "creator-1",
         distributor_id: "co-edm",
+      },
+    });
+    const result = await submitKlaimAction("camp-1", 1_000_000);
+    expect(result).toEqual({ success: true });
+  });
+
+  it("rejects a cabang account on its own company's campaign in another region (Fase 3)", async () => {
+    const { campaignsChain } = setupMocks({
+      userScope: "cabang",
+      userRegionId: "region-wcj",
+      campaign: {
+        id: "camp-1",
+        status: "ongoing",
+        name: "Promo A",
+        created_by: "creator-1",
+        distributor_id: "dist-co-1",
+        region_id: "region-ejb",
+      },
+    });
+    const result = await submitKlaimAction("camp-1", 1_000_000);
+    expect(result).toEqual({ error: "SKP ini di luar region akun Anda" });
+    expect(campaignsChain.update).not.toHaveBeenCalled();
+  });
+
+  it("allows a cabang account on its own company's campaign in its region (Fase 3)", async () => {
+    setupMocks({
+      userScope: "cabang",
+      userRegionId: "region-wcj",
+      campaign: {
+        id: "camp-1",
+        status: "ongoing",
+        name: "Promo A",
+        created_by: "creator-1",
+        distributor_id: "dist-co-1",
+        region_id: "region-wcj",
       },
     });
     const result = await submitKlaimAction("camp-1", 1_000_000);
@@ -1065,6 +1108,7 @@ function setupUpdateClaimAmountMocks({
           role,
           is_active: isActive,
           distributor_id: userDistributorId,
+          distributor_scope: "pusat",
         });
       if (table === "campaigns") return campaignsChain;
       if (table === "claim_item_verifications") return itemChain;

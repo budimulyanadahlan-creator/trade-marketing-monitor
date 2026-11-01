@@ -2,8 +2,9 @@ import { createClient } from "@/lib/supabase/server";
 import { DISTRIBUTOR_VISIBLE_CAMPAIGN_STATUSES } from "@/lib/campaign-status";
 import { computeChecklistReadinessByCampaignId } from "@/lib/claim-checklist-status";
 import { computeClaimVerificationProgressByCampaignId } from "@/lib/claim-verification-progress";
+import { distributorCampaignAccess } from "@/lib/distributor-campaign-guard";
 import { CampaignsClient } from "./campaigns-client";
-import type { ClaimItemStatus, UserRole } from "@/types/database";
+import type { ClaimItemStatus, DistributorScope, UserRole } from "@/types/database";
 
 export default async function CampaignsPage() {
   const supabase = await createClient();
@@ -43,23 +44,23 @@ export default async function CampaignsPage() {
 
   if (!user) return null;
 
-  // Profile (role + department name via nested select, one round-trip
-  // instead of two) and the full department list (only needed for
-  // distributors below, but fetched for everyone to keep this batched —
-  // departments is a tiny table) are independent of each other.
-  const [{ data: profileRaw }, { data: allDepts }] = await Promise.all([
-    supabase
-      .from("users")
-      .select("role, department_id, region_id, department:departments(name)")
-      .eq("id", user.id)
-      .single(),
-    supabase.from("departments").select("id, name"),
-  ]);
+  // Profile: role + department name via nested select (one round-trip), plus
+  // the distributor fields the access module needs (perusahaan, cakupan,
+  // region) for the per-row "hanya lihat" decision below.
+  const { data: profileRaw } = await supabase
+    .from("users")
+    .select(
+      "role, department_id, region_id, distributor_id, distributor_scope, department:departments(name)"
+    )
+    .eq("id", user.id)
+    .single();
   const profile = profileRaw as
     | {
         role: UserRole;
         department_id: string | null;
         region_id: string | null;
+        distributor_id: string | null;
+        distributor_scope: DistributorScope | null;
         department: { name: string } | null;
       }
     | null;
@@ -67,23 +68,11 @@ export default async function CampaignsPage() {
   const isDistributor = profile?.role === "distributor";
   const deptName = profile?.department?.name?.toLowerCase() ?? null;
 
-  // Distributors in finance/controller dept are not region-locked (can see all regions)
-  const REGION_EXEMPT_DEPTS = ["finance", "controller"];
-  const distributorRegionExempt =
-    isDistributor && REGION_EXEMPT_DEPTS.includes(deptName ?? "");
-
-  // Distributors only see campaigns from the Sales and Trade Marketing departments
-  let visibleDeptIds: string[] = [];
-  if (isDistributor) {
-    const allowedDeptNames = ["sales", "trade marketing"];
-    visibleDeptIds = (allDepts ?? [])
-      .filter((d) => allowedDeptNames.includes((d.name ?? "").toLowerCase()))
-      .map((d) => d.id);
-  }
-
-  // Fetch campaigns with joined display names. Needs isDistributor +
-  // visibleDeptIds from above, so this stays sequential — can't be batched
-  // with the block that produces them.
+  // Visibilitas distributor (perusahaan × cakupan × region × induk, departemen
+  // Sales/TM, jendela status) ditegakkan oleh RLS lewat fungsi
+  // distributor_campaign_access (migrasi 067) — tidak difilter ulang di sini
+  // agar aturannya tidak terduplikasi. Filter status tetap dipasang karena
+  // menyempitkan query dan sama persis dengan jendela RLS.
   let campaignQuery = supabase
     .from("campaigns")
     .select(
@@ -96,7 +85,7 @@ export default async function CampaignsPage() {
       promotion_category:promotion_categories(name, account_code),
       action_approval:action_approvals(name),
       vendor:vendors(name),
-      distributor:distributors(name),
+      distributor:distributors(name, parent_distributor_id),
       realizations(id)
     `
     )
@@ -104,12 +93,28 @@ export default async function CampaignsPage() {
 
   if (isDistributor) {
     campaignQuery = campaignQuery.in("status", DISTRIBUTOR_VISIBLE_CAMPAIGN_STATUSES);
-    if (visibleDeptIds.length > 0) {
-      campaignQuery = campaignQuery.in("department_id", visibleDeptIds);
-    }
   }
 
   const { data: campaigns } = await campaignQuery;
+
+  // SKP yang hanya boleh dilihat (Pusat perusahaan induk melihat SKP anak
+  // perusahaan): tombol aksi di daftar disembunyikan untuk ID ini.
+  const readOnlyCampaignIds: string[] = [];
+  if (isDistributor && profile) {
+    for (const c of campaigns ?? []) {
+      const access = distributorCampaignAccess(
+        {
+          distributor_id: c.distributor_id ?? null,
+          region_id: c.region_id ?? null,
+          distributor_parent_id:
+            (c.distributor as { parent_distributor_id?: string | null } | null)
+              ?.parent_distributor_id ?? null,
+        },
+        profile
+      );
+      if (access === "view") readOnlyCampaignIds.push(c.id);
+    }
+  }
 
   // Checklist readiness (approved SKP only) — tells admin/finance/manager which
   // approved SKP already has 100% of its distributor claim-document checklist
@@ -197,9 +202,9 @@ export default async function CampaignsPage() {
     receiptedCampaignIds = receipts?.map((r) => r.campaign_id) ?? [];
   }
 
-  // Determine locked region for the form: regular distributor + Sales dept are locked
+  // Determine locked region for the form: cabang distributor + Sales dept are locked
   let lockedRegionId: string | null = null;
-  if (isDistributor && !distributorRegionExempt && profile?.region_id) {
+  if (isDistributor && profile?.distributor_scope !== "pusat" && profile?.region_id) {
     lockedRegionId = profile.region_id;
   } else if (!isDistributor && deptName === "sales" && profile?.region_id) {
     lockedRegionId = profile.region_id;
@@ -232,6 +237,7 @@ export default async function CampaignsPage() {
       masterBudgets={masterBudgets ?? []}
       lockedRegionId={lockedRegionId}
       receiptedCampaignIds={receiptedCampaignIds}
+      readOnlyCampaignIds={readOnlyCampaignIds}
       checklistStatusByCampaignId={checklistStatusByCampaignId}
       claimVerificationProgressByCampaignId={claimVerificationProgressByCampaignId}
     />
