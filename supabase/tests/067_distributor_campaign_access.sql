@@ -10,6 +10,17 @@
 
 begin;
 
+-- Pengecekan awal: tipe & fungsi dibuat oleh migrasi 067. Tanpa ini, blok di
+-- bawah gagal parse dengan pesan "type public.distributor_viewer does not exist".
+do $$
+begin
+  if not exists (select 1 from pg_type where typname = 'distributor_viewer')
+     or not exists (select 1 from pg_proc where proname = 'distributor_campaign_access') then
+    raise exception 'GAGAL: migrasi 067_distributor_campaign_access.sql belum dijalankan — jalankan migrasi itu dulu, baru tes ini';
+  end if;
+end
+$$;
+
 do $$
 declare
   v_sales    uuid := (select id from public.departments where lower(trim(name)) = 'sales' limit 1);
