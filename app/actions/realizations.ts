@@ -9,6 +9,7 @@ import {
   resetAllClaimItemVerifications,
   resetClaimItemToPending,
 } from "@/lib/claim-item-verifications";
+import { distributorClaimActionError } from "@/lib/distributor-campaign-guard";
 import type { CampaignStatus } from "@/types/database";
 
 async function requireActiveUser() {
@@ -20,12 +21,21 @@ async function requireActiveUser() {
 
   const { data: profile } = await supabase
     .from("users")
-    .select("role, is_active")
+    .select("role, is_active, distributor_id")
     .eq("id", user.id)
     .single();
 
   if (!profile?.is_active) throw new Error("Akun tidak aktif");
-  return { supabase, userId: user.id, profile };
+  return {
+    supabase,
+    userId: user.id,
+    profile: {
+      role: profile.role,
+      is_active: profile.is_active,
+      // Older rows / mocks may omit the column; treat missing as unmapped.
+      distributor_id: (profile.distributor_id ?? null) as string | null,
+    },
+  };
 }
 
 // ============================================================
@@ -187,11 +197,20 @@ export async function submitKlaimAction(
 
     const { data: campaign } = await supabase
       .from("campaigns")
-      .select("id, status, name, created_by, promotion_category_id")
+      .select("id, status, name, created_by, promotion_category_id, distributor_id")
       .eq("id", campaignId)
       .single();
 
-    if (!campaign || campaign.status !== "ongoing") {
+    if (!campaign) return { error: "SKP tidak ditemukan" };
+
+    const guardError = distributorClaimActionError(
+      profile.role,
+      profile.distributor_id,
+      campaign.distributor_id ?? null
+    );
+    if (guardError) return { error: guardError };
+
+    if (campaign.status !== "ongoing") {
       return {
         error:
           "Hanya SKP berstatus Ongoing yang dapat diajukan klaimnya",
@@ -278,11 +297,20 @@ export async function cancelKlaimAction(
 
     const { data: campaign } = await supabase
       .from("campaigns")
-      .select("id, status")
+      .select("id, status, distributor_id")
       .eq("id", campaignId)
       .single();
 
-    if (!campaign || campaign.status !== "claim_submitted") {
+    if (!campaign) return { error: "SKP tidak ditemukan" };
+
+    const guardError = distributorClaimActionError(
+      profile.role,
+      profile.distributor_id,
+      campaign.distributor_id ?? null
+    );
+    if (guardError) return { error: guardError };
+
+    if (campaign.status !== "claim_submitted") {
       return {
         error: "Hanya SKP berstatus Klaim Diajukan yang dapat dibatalkan",
       };
@@ -359,11 +387,20 @@ export async function updateClaimAmountAction(
 
     const { data: campaign } = await supabase
       .from("campaigns")
-      .select("id, status")
+      .select("id, status, distributor_id")
       .eq("id", campaignId)
       .single();
 
-    if (!campaign || campaign.status !== "claim_submitted") {
+    if (!campaign) return { error: "SKP tidak ditemukan" };
+
+    const guardError = distributorClaimActionError(
+      profile.role,
+      profile.distributor_id,
+      campaign.distributor_id ?? null
+    );
+    if (guardError) return { error: guardError };
+
+    if (campaign.status !== "claim_submitted") {
       return {
         error: "Nominal klaim hanya dapat diedit saat SKP berstatus Klaim Diajukan",
       };

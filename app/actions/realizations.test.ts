@@ -83,8 +83,15 @@ type SetupOptions = {
   userId?: string | null;
   role?: string;
   isActive?: boolean;
+  userDistributorId?: string | null;
   campaign?:
-    | { id: string; status: string; name: string; created_by: string }
+    | {
+        id: string;
+        status: string;
+        name: string;
+        created_by: string;
+        distributor_id?: string | null;
+      }
     | null;
   updateError?: { message: string } | null;
   financeUsers?: { id: string; full_name: string }[];
@@ -96,11 +103,13 @@ function setupMocks({
   userId = "dist-1",
   role = "distributor",
   isActive = true,
+  userDistributorId = "dist-co-1",
   campaign = {
     id: "camp-1",
     status: "ongoing",
     name: "Promo A",
     created_by: "creator-1",
+    distributor_id: "dist-co-1",
   },
   updateError = null,
   financeUsers = [{ id: "fin-1", full_name: "Finance One" }],
@@ -121,7 +130,11 @@ function setupMocks({
     },
     from: vi.fn().mockImplementation((table: string) => {
       if (table === "users")
-        return makeQueryChain({ role, is_active: isActive });
+        return makeQueryChain({
+          role,
+          is_active: isActive,
+          distributor_id: userDistributorId,
+        });
       if (table === "campaigns") return campaignsChain;
       if (table === "claim_events") return claimEventsChain;
       return {};
@@ -200,6 +213,67 @@ describe("submitKlaimAction", () => {
     setupMocks({ updateError: { message: "DB constraint violation" } });
     const result = await submitKlaimAction("camp-1", 1_000_000);
     expect(result).toEqual({ error: "DB constraint violation" });
+  });
+
+  it("rejects a distributor from another company before touching the campaign", async () => {
+    const { campaignsChain } = setupMocks({
+      userDistributorId: "co-bir",
+      campaign: {
+        id: "camp-1",
+        status: "ongoing",
+        name: "Promo A",
+        created_by: "creator-1",
+        distributor_id: "co-edm",
+      },
+    });
+    const result = await submitKlaimAction("camp-1", 1_000_000);
+    expect(result).toEqual({ error: "SKP ini bukan milik distributor Anda" });
+    expect(campaignsChain.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects a distributor account with no company even on an unassigned campaign", async () => {
+    setupMocks({
+      userDistributorId: null,
+      campaign: {
+        id: "camp-1",
+        status: "ongoing",
+        name: "Promo A",
+        created_by: "creator-1",
+        distributor_id: null,
+      },
+    });
+    const result = await submitKlaimAction("camp-1", 1_000_000);
+    expect(result).toEqual({ error: "Akun Anda belum terhubung ke perusahaan distributor" });
+  });
+
+  it("allows a mapped distributor on a campaign without a company (sementara)", async () => {
+    setupMocks({
+      campaign: {
+        id: "camp-1",
+        status: "ongoing",
+        name: "Promo A",
+        created_by: "creator-1",
+        distributor_id: null,
+      },
+    });
+    const result = await submitKlaimAction("camp-1", 1_000_000);
+    expect(result).toEqual({ success: true });
+  });
+
+  it("does not block admin on another company's campaign", async () => {
+    setupMocks({
+      role: "admin",
+      userDistributorId: null,
+      campaign: {
+        id: "camp-1",
+        status: "ongoing",
+        name: "Promo A",
+        created_by: "creator-1",
+        distributor_id: "co-edm",
+      },
+    });
+    const result = await submitKlaimAction("camp-1", 1_000_000);
+    expect(result).toEqual({ success: true });
   });
 
   it("creates the claim item verification rows via the admin client", async () => {
@@ -318,6 +392,37 @@ describe("cancelKlaimAction", () => {
     });
     const result = await cancelKlaimAction("camp-1");
     expect(result).toEqual({ error: "DB constraint violation" });
+  });
+
+  it("rejects a distributor from another company before touching the campaign", async () => {
+    const { campaignsChain } = setupMocks({
+      userDistributorId: "co-bir",
+      campaign: {
+        id: "camp-1",
+        status: "claim_submitted",
+        name: "Promo A",
+        created_by: "creator-1",
+        distributor_id: "co-edm",
+      },
+    });
+    const result = await cancelKlaimAction("camp-1");
+    expect(result).toEqual({ error: "SKP ini bukan milik distributor Anda" });
+    expect(campaignsChain.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects a distributor account with no company", async () => {
+    setupMocks({
+      userDistributorId: null,
+      campaign: {
+        id: "camp-1",
+        status: "claim_submitted",
+        name: "Promo A",
+        created_by: "creator-1",
+        distributor_id: null,
+      },
+    });
+    const result = await cancelKlaimAction("camp-1");
+    expect(result).toEqual({ error: "Akun Anda belum terhubung ke perusahaan distributor" });
   });
 
   it("distributor happy path: reverts campaign to ongoing, clears claim fields, logs history", async () => {
@@ -936,8 +1041,9 @@ function setupUpdateClaimAmountMocks({
   userId = "dist-1",
   role = "distributor",
   isActive = true,
-  campaign = { id: "camp-1", status: "claim_submitted" } as
-    | { id: string; status: string }
+  userDistributorId = "dist-co-1" as string | null,
+  campaign = { id: "camp-1", status: "claim_submitted", distributor_id: "dist-co-1" } as
+    | { id: string; status: string; distributor_id?: string | null }
     | null,
   item = { id: "item-amount-1", status: "revision_requested" } as
     | { id: string; status: string }
@@ -954,7 +1060,12 @@ function setupUpdateClaimAmountMocks({
         .mockResolvedValue({ data: { user: userId ? { id: userId } : null } }),
     },
     from: vi.fn().mockImplementation((table: string) => {
-      if (table === "users") return makeQueryChain({ role, is_active: isActive });
+      if (table === "users")
+        return makeQueryChain({
+          role,
+          is_active: isActive,
+          distributor_id: userDistributorId,
+        });
       if (table === "campaigns") return campaignsChain;
       if (table === "claim_item_verifications") return itemChain;
       return {};
@@ -998,6 +1109,35 @@ describe("updateClaimAmountAction", () => {
     setupUpdateClaimAmountMocks({ campaign: { id: "camp-1", status: "ongoing" } });
     const result = await updateClaimAmountAction("camp-1", 2_000_000);
     expect(result.error).toMatch(/klaim diajukan/i);
+  });
+
+  it("rejects a distributor from another company before touching the campaign", async () => {
+    const { campaignsChain } = setupUpdateClaimAmountMocks({
+      userDistributorId: "co-bir",
+      campaign: { id: "camp-1", status: "claim_submitted", distributor_id: "co-edm" },
+    });
+    const result = await updateClaimAmountAction("camp-1", 2_000_000);
+    expect(result).toEqual({ error: "SKP ini bukan milik distributor Anda" });
+    expect(campaignsChain.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects a distributor account with no company", async () => {
+    setupUpdateClaimAmountMocks({
+      userDistributorId: null,
+      campaign: { id: "camp-1", status: "claim_submitted", distributor_id: null },
+    });
+    const result = await updateClaimAmountAction("camp-1", 2_000_000);
+    expect(result).toEqual({ error: "Akun Anda belum terhubung ke perusahaan distributor" });
+  });
+
+  it("does not block admin on another company's campaign", async () => {
+    setupUpdateClaimAmountMocks({
+      role: "admin",
+      userDistributorId: null,
+      campaign: { id: "camp-1", status: "claim_submitted", distributor_id: "co-edm" },
+    });
+    const result = await updateClaimAmountAction("camp-1", 2_000_000);
+    expect(result).toEqual({ success: true });
   });
 
   it("returns error when the amount item is not revision_requested", async () => {

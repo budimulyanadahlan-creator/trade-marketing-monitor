@@ -19,7 +19,7 @@ function makeQueryChain(data: unknown) {
 function setupMocks({
   role = "distributor",
   isActive = true,
-  userDistributorId = null,
+  userDistributorId = "company-a",
   campaign = { id: "camp-1", status: "ongoing" },
   upsertError = null,
 }: Partial<{
@@ -85,9 +85,19 @@ describe("upsertClaimChecklistAction", () => {
     expect(result.error).toMatch(/bukan milik/i);
   });
 
-  it("allows an unmapped distributor account on a campaign with no distributor assigned yet", async () => {
-    setupMocks({
+  it("rejects an unmapped distributor account even on a campaign with no distributor assigned yet", async () => {
+    const { upsertChain } = setupMocks({
       userDistributorId: null,
+      campaign: { id: "camp-1", status: "ongoing", distributor_id: null },
+    });
+    const result = await upsertClaimChecklistAction("camp-1", "doc-1", true);
+    expect(result).toEqual({ error: "Akun Anda belum terhubung ke perusahaan distributor" });
+    expect(upsertChain.upsert).not.toHaveBeenCalled();
+  });
+
+  it("allows a mapped distributor on a campaign with no distributor assigned yet (sementara)", async () => {
+    setupMocks({
+      userDistributorId: "company-a",
       campaign: { id: "camp-1", status: "ongoing", distributor_id: null },
     });
     const result = await upsertClaimChecklistAction("camp-1", "doc-1", true);

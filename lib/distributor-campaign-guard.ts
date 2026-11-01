@@ -1,31 +1,72 @@
 /**
- * Whether a distributor-role user is allowed to write claim data (checklist
- * toggles, claim document uploads) on a given campaign. A scoped guard for
- * those two write actions only — not a replacement for the broader
- * distributor visibility gap (any distributor can currently SELECT/browse
- * any campaign; see migration 031/032 and PRD Keputusan #5), which stays a
- * separate, not-yet-filtered concern.
+ * Pengaman aksi klaim distributor per perusahaan (Multi-User Distributor,
+ * Fase 1). Satu sumber kebenaran untuk semua aksi klaim yang dilakukan akun
+ * distributor: submit klaim, batal klaim, ubah nominal klaim, upload dokumen
+ * klaim, centang checklist, dan tandai diterima.
  *
- * Added after a real incident: an unmapped test account ("distributor tes",
- * distributor_id null) checked off a production campaign's claim checklist
- * for a company it had no relation to, so Finance saw "5/5 dokumen siap"
- * while the actual assigned distributor had uploaded 1 of 5.
+ * Aturan:
+ * - Akun distributor tanpa perusahaan (`users.distributor_id` null) ditolak
+ *   untuk semua aksi, termasuk pada SKP yang belum punya perusahaan.
+ * - SKP yang sudah punya perusahaan hanya boleh dikerjakan akun dari
+ *   perusahaan yang sama.
+ * - SKP tanpa perusahaan masih boleh dikerjakan akun yang punya perusahaan
+ *   (pengecualian sementara sampai backfill distributor selesai; dicabut di
+ *   Fase 6).
+ * - Admin/superadmin tidak terpengaruh (fallback).
  *
- * Pure, no I/O — callers fetch campaign.distributor_id and the acting user's
- * users.distributor_id and pass them in.
+ * Latar: insiden akun tes tanpa perusahaan yang mencentang checklist SKP
+ * perusahaan lain, lalu 25 akun cabang EDM/MMS/BIR aktif 2026-10-30 yang
+ * sebelum fase ini bisa mengajukan/membatalkan klaim SKP perusahaan lain.
+ *
+ * Murni, tanpa I/O — pemanggil mengambil `campaign.distributor_id` dan
+ * `users.distributor_id` + `users.role` akun yang bertindak, lalu
+ * meneruskannya ke sini.
+ */
+
+export const DISTRIBUTOR_GUARD_MESSAGES = {
+  noCompany: "Akun Anda belum terhubung ke perusahaan distributor",
+  otherCompany: "SKP ini bukan milik distributor Anda",
+} as const;
+
+export type DistributorGuardDenial = keyof typeof DISTRIBUTOR_GUARD_MESSAGES;
+
+/**
+ * Alasan penolakan untuk akun distributor, atau null jika boleh bertindak.
+ * Tidak memeriksa role — lihat `distributorClaimActionError` untuk itu.
+ */
+export function distributorGuardDenial(
+  campaignDistributorId: string | null,
+  userDistributorId: string | null
+): DistributorGuardDenial | null {
+  if (!userDistributorId) return "noCompany";
+  if (!campaignDistributorId) return null;
+  return campaignDistributorId === userDistributorId ? null : "otherCompany";
+}
+
+/**
+ * Apakah akun distributor boleh bertindak atas SKP ini. Bentuk boolean dari
+ * `distributorGuardDenial` untuk keputusan UI (misalnya tautan SKP di
+ * halaman event bisa dibuka atau tidak).
  */
 export function isDistributorAllowedOnCampaign(
   campaignDistributorId: string | null,
   userDistributorId: string | null
 ): boolean {
-  // Campaign not yet assigned to a distributor company (common — the
-  // distributor_id backfill from migration 028 is still in progress across
-  // existing campaigns). Falls back to the pre-guardrail behavior so those
-  // campaigns don't lock out real distributors.
-  if (!campaignDistributorId) return true;
+  return distributorGuardDenial(campaignDistributorId, userDistributorId) === null;
+}
 
-  // Campaign IS assigned to a company: the acting distributor must belong
-  // to that same company. An unmapped account (distributor_id null) never
-  // matches, which is the case that caused the incident above.
-  return campaignDistributorId === userDistributorId;
+/**
+ * Pesan error ramah untuk server action / route aksi klaim, atau null jika
+ * aksi boleh dilanjutkan. Admin dan superadmin selalu lolos; role lain
+ * diperlakukan sebagai distributor (pemanggil sudah memfilter role yang
+ * boleh memanggil aksi tersebut).
+ */
+export function distributorClaimActionError(
+  role: string,
+  userDistributorId: string | null,
+  campaignDistributorId: string | null
+): string | null {
+  if (role === "admin" || role === "superadmin") return null;
+  const denial = distributorGuardDenial(campaignDistributorId, userDistributorId);
+  return denial ? DISTRIBUTOR_GUARD_MESSAGES[denial] : null;
 }

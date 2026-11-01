@@ -7,7 +7,11 @@ vi.mock("@/lib/supabase/server", () => ({
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/email", () => ({ sendSkpSubmittedEmail: vi.fn() }));
 
-import { saveDraftCampaignAction, submitCampaignAction } from "./campaigns";
+import {
+  saveDraftCampaignAction,
+  submitCampaignAction,
+  createDistributorReceiptAction,
+} from "./campaigns";
 import { createClient } from "@/lib/supabase/server";
 
 // -------------------------------------------------------
@@ -212,5 +216,87 @@ describe("distributor_id disimpan mengikuti pola vendor_id", () => {
 
     expect(result.error).toBeUndefined();
     expect(captured.payload).toMatchObject({ distributor_id: null });
+  });
+});
+
+// -------------------------------------------------------
+// createDistributorReceiptAction — pengaman per perusahaan (Fase 1)
+// -------------------------------------------------------
+
+function setupReceiptMocks({
+  role = "distributor",
+  isActive = true,
+  userDistributorId = "co-edm" as string | null,
+  campaign = { id: "camp-1", distributor_id: "co-edm" } as
+    | { id: string; distributor_id: string | null }
+    | null,
+  insertError = null as { code?: string; message: string } | null,
+} = {}) {
+  const insertChain = { insert: vi.fn().mockResolvedValue({ error: insertError }) };
+  const mockClient = {
+    auth: {
+      getUser: vi.fn().mockResolvedValue({ data: { user: { id: "dist-user-1" } } }),
+    },
+    from: vi.fn().mockImplementation((table: string) => {
+      if (table === "users")
+        return makeQueryChain({
+          role,
+          is_active: isActive,
+          region_id: null,
+          distributor_id: userDistributorId,
+        });
+      if (table === "campaigns") return makeQueryChain(campaign);
+      if (table === "distributor_receipts") return insertChain;
+      return {};
+    }),
+  };
+  (createClient as ReturnType<typeof vi.fn>).mockResolvedValue(mockClient);
+  return { insertChain };
+}
+
+describe("createDistributorReceiptAction — pengaman per perusahaan", () => {
+  it("rejects a distributor from another company without inserting", async () => {
+    const { insertChain } = setupReceiptMocks({
+      userDistributorId: "co-bir",
+      campaign: { id: "camp-1", distributor_id: "co-edm" },
+    });
+    const result = await createDistributorReceiptAction("camp-1", null);
+    expect(result).toEqual({ error: "SKP ini bukan milik distributor Anda" });
+    expect(insertChain.insert).not.toHaveBeenCalled();
+  });
+});
+
+describe("createDistributorReceiptAction — kasus lain pengaman", () => {
+  it("rejects a distributor account with no company even on an unassigned campaign", async () => {
+    const { insertChain } = setupReceiptMocks({
+      userDistributorId: null,
+      campaign: { id: "camp-1", distributor_id: null },
+    });
+    const result = await createDistributorReceiptAction("camp-1", null);
+    expect(result).toEqual({ error: "Akun Anda belum terhubung ke perusahaan distributor" });
+    expect(insertChain.insert).not.toHaveBeenCalled();
+  });
+
+  it("allows same-company distributor and inserts the receipt", async () => {
+    const { insertChain } = setupReceiptMocks();
+    const result = await createDistributorReceiptAction("camp-1", "  ok  ");
+    expect(result).toEqual({ success: true });
+    expect(insertChain.insert).toHaveBeenCalledWith({
+      campaign_id: "camp-1",
+      received_by: "dist-user-1",
+      notes: "ok",
+    });
+  });
+
+  it("allows a mapped distributor on a campaign without a company (sementara)", async () => {
+    setupReceiptMocks({ campaign: { id: "camp-1", distributor_id: null } });
+    const result = await createDistributorReceiptAction("camp-1", null);
+    expect(result).toEqual({ success: true });
+  });
+
+  it("returns not-found when the campaign is not visible", async () => {
+    setupReceiptMocks({ campaign: null });
+    const result = await createDistributorReceiptAction("camp-1", null);
+    expect(result).toEqual({ error: "SKP tidak ditemukan" });
   });
 });

@@ -5,6 +5,7 @@ import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { z } from "zod";
 import type { CampaignStatus, CampaignFileRow } from "@/types/database";
 import { sendSkpSubmittedEmail } from "@/lib/email";
+import { distributorClaimActionError } from "@/lib/distributor-campaign-guard";
 
 // Budget SKP asli terkecil di sistem (per Agustus 2026) adalah ~Rp168.000 —
 // threshold ini jauh di bawahnya sehingga tidak menolak SKP sah manapun,
@@ -286,13 +287,28 @@ export async function createDistributorReceiptAction(
 
     const { data: profile } = await supabase
       .from("users")
-      .select("role, is_active, region_id")
+      .select("role, is_active, region_id, distributor_id")
       .eq("id", user.id)
       .single();
 
     if (!profile?.is_active || profile.role !== "distributor") {
       return { error: "Hanya Distributor yang dapat melakukan checklist penerimaan" };
     }
+
+    const { data: campaign } = await supabase
+      .from("campaigns")
+      .select("id, distributor_id")
+      .eq("id", campaignId)
+      .single();
+
+    if (!campaign) return { error: "SKP tidak ditemukan" };
+
+    const guardError = distributorClaimActionError(
+      profile.role,
+      profile.distributor_id ?? null,
+      campaign.distributor_id ?? null
+    );
+    if (guardError) return { error: guardError };
 
     const { error } = await supabase
       .from("distributor_receipts")

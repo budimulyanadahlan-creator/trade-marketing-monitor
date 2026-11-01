@@ -3,7 +3,7 @@ import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { compressImageIfNeeded } from "@/lib/image-compress";
 import { markChecklistFulfilled } from "@/lib/claim-checklist-sync";
 import { resetClaimItemToPending } from "@/lib/claim-item-verifications";
-import { isDistributorAllowedOnCampaign } from "@/lib/distributor-campaign-guard";
+import { distributorClaimActionError } from "@/lib/distributor-campaign-guard";
 import { UPLOAD_MAX_LABEL, UPLOAD_MAX_SIZE } from "@/lib/upload-limits";
 import type { CampaignStatus } from "@/types/database";
 
@@ -83,8 +83,13 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  if (!isDistributorAllowedOnCampaign(campaign.distributor_id, profile.distributor_id)) {
-    return NextResponse.json({ error: "SKP ini bukan milik distributor Anda" }, { status: 403 });
+  const guardError = distributorClaimActionError(
+    profile.role,
+    profile.distributor_id ?? null,
+    campaign.distributor_id ?? null
+  );
+  if (guardError) {
+    return NextResponse.json({ error: guardError }, { status: 403 });
   }
 
   // Phase 3 (Loop Revisi): once a claim is submitted, re-upload is only

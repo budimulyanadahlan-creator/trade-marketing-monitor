@@ -68,7 +68,7 @@ function setupMocks(
   const {
     role = "distributor",
     isActive = true,
-    userDistributorId = null,
+    userDistributorId = "company-a",
     campaign = { id: "camp-1", status: "ongoing" },
     docType = { id: "doc-1" },
     insertedFile = { id: "file-1" },
@@ -221,9 +221,22 @@ describe("POST /api/upload/claim-document", () => {
     expect(json.error).toMatch(/bukan milik/i);
   });
 
-  it("allows an unmapped distributor account on a campaign with no distributor assigned yet", async () => {
+  it("rejects an unmapped distributor account even on a campaign with no distributor assigned yet", async () => {
     setupMocks({
       userDistributorId: null,
+      campaign: { id: "camp-1", status: "ongoing", distributor_id: null },
+    });
+
+    const res = await POST(makeRequest());
+    const json = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(json.error).toBe("Akun Anda belum terhubung ke perusahaan distributor");
+  });
+
+  it("allows a mapped distributor on a campaign with no distributor assigned yet (sementara)", async () => {
+    setupMocks({
+      userDistributorId: "company-a",
       campaign: { id: "camp-1", status: "ongoing", distributor_id: null },
     });
 
