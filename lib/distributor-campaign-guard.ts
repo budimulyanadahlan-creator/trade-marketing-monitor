@@ -177,3 +177,66 @@ export function claimFileDeleteError(
   if (!file.uploaded_by || file.uploaded_by !== actor.id) return CLAIM_HOLDER_MESSAGES.notUploader;
   return claimHolderActionError(actor, claim);
 }
+
+// ============================================================
+// Alihkan pemegang klaim (Fase 10)
+//
+// Hanya admin/superadmin, hanya saat SKP berstatus `claim_submitted`.
+// Pemegang baru harus akun distributor aktif dari perusahaan SKP itu sendiri
+// (bukan perusahaan induk) dan bukan pemegang saat ini. Pengalihan tidak
+// mengubah status SKP maupun status verifikasi Finance per item.
+// ============================================================
+
+export const CLAIM_HOLDER_TRANSFER_MESSAGES = {
+  notAdmin: "Hanya admin yang dapat mengalihkan pemegang klaim",
+  notSubmitted: "Pemegang klaim hanya dapat dialihkan saat SKP berstatus Klaim Diajukan",
+  noCompany: "SKP ini belum terhubung ke perusahaan distributor",
+  candidateNotFound: "Akun pemegang baru tidak ditemukan",
+  candidateNotDistributor: "Pemegang baru harus akun distributor",
+  candidateInactive: "Akun pemegang baru tidak aktif",
+  candidateOtherCompany: "Pemegang baru harus dari perusahaan distributor SKP ini",
+  sameHolder: "Akun tersebut sudah menjadi pemegang klaim",
+} as const;
+
+export type ClaimHolderTransferTarget = ClaimHolderTarget & {
+  distributor_id: string | null;
+};
+
+export type ClaimHolderCandidate = {
+  id: string;
+  role: string;
+  is_active: boolean;
+  distributor_id: string | null;
+};
+
+/** true = akun ini boleh dipilih sebagai pemegang klaim baru untuk SKP ini. */
+export function isClaimHolderCandidate(
+  candidate: ClaimHolderCandidate,
+  claim: ClaimHolderTransferTarget
+): boolean {
+  return (
+    candidate.role === "distributor" &&
+    candidate.is_active &&
+    !!claim.distributor_id &&
+    candidate.distributor_id === claim.distributor_id &&
+    candidate.id !== claim.claim_submitted_by
+  );
+}
+
+/** Pesan error jika pengalihan ditolak, atau null jika boleh. */
+export function claimHolderTransferError(
+  actor: ClaimActor,
+  claim: ClaimHolderTransferTarget,
+  candidate: ClaimHolderCandidate | null
+): string | null {
+  const m = CLAIM_HOLDER_TRANSFER_MESSAGES;
+  if (!isAdminRole(actor.role)) return m.notAdmin;
+  if (claim.status !== "claim_submitted") return m.notSubmitted;
+  if (!claim.distributor_id) return m.noCompany;
+  if (!candidate) return m.candidateNotFound;
+  if (candidate.role !== "distributor") return m.candidateNotDistributor;
+  if (!candidate.is_active) return m.candidateInactive;
+  if (candidate.distributor_id !== claim.distributor_id) return m.candidateOtherCompany;
+  if (candidate.id === claim.claim_submitted_by) return m.sameHolder;
+  return null;
+}

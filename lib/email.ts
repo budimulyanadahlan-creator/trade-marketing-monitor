@@ -329,6 +329,130 @@ export async function sendClaimApprovedEmail(opts: ClaimApprovedEmailOptions) {
   }
 }
 
+export interface ClaimHolderTransferredEmailOptions {
+  to: { email: string; name: string }[];
+  campaignName: string;
+  campaignId: string;
+  previousHolderName: string | null;
+  transferredByName: string;
+}
+
+// Multi-User Distributor, Fase 10: pemegang klaim baru diberi tahu bahwa
+// klaim kini menjadi tanggung jawabnya.
+export async function sendClaimHolderTransferredEmail(opts: ClaimHolderTransferredEmailOptions) {
+  if (process.env.SKP_EMAIL_ENABLED !== "true") {
+    if (process.env.NODE_ENV === "development") {
+      console.warn(
+        "[Email] SKP_EMAIL_ENABLED is not \"true\" — skipping claim holder transferred email"
+      );
+    }
+    return;
+  }
+
+  if (!process.env.RESEND_API_KEY) {
+    if (process.env.NODE_ENV === "development") {
+      console.warn("[Email] RESEND_API_KEY not set — skipping email notification");
+    }
+    return;
+  }
+
+  const campaignUrl = `${APP_URL}/campaigns/${opts.campaignId}`;
+
+  const results = await Promise.allSettled(
+    opts.to.map(({ email, name }) =>
+      resend.emails.send({
+        from: FROM_EMAIL,
+        to: email,
+        subject: `[Pemegang Klaim] ${opts.campaignName}`,
+        html: buildClaimHolderTransferredHtml({
+          recipientName: name,
+          campaignName: opts.campaignName,
+          campaignUrl,
+          previousHolderName: opts.previousHolderName,
+          transferredByName: opts.transferredByName,
+        }),
+      })
+    )
+  );
+
+  if (process.env.NODE_ENV === "development") {
+    const failed = results.filter((r) => r.status === "rejected");
+    if (failed.length > 0) {
+      console.error("[Email] Some emails failed to send:", failed);
+    }
+  }
+}
+
+function buildClaimHolderTransferredHtml(opts: {
+  recipientName: string;
+  campaignName: string;
+  campaignUrl: string;
+  previousHolderName: string | null;
+  transferredByName: string;
+}) {
+  return `<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Anda Kini Pemegang Klaim</title>
+</head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:32px 16px;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:10px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);">
+          <!-- Header -->
+          <tr>
+            <td style="background:#1d4ed8;padding:28px 36px;">
+              <p style="margin:0;color:#bfdbfe;font-size:12px;text-transform:uppercase;letter-spacing:1px;font-weight:600;">Trade Marketing Monitor</p>
+              <h1 style="margin:8px 0 0;color:#ffffff;font-size:22px;font-weight:700;">Anda Kini Pemegang Klaim</h1>
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="padding:32px 36px;">
+              <p style="margin:0 0 16px;color:#374151;font-size:15px;">Halo, <strong>${opts.recipientName}</strong>,</p>
+              <p style="margin:0 0 24px;color:#374151;font-size:15px;">Admin mengalihkan pemegang klaim SKP berikut kepada Anda. Mulai sekarang Anda yang menindaklanjuti klaim ini, termasuk revisi dari Finance.</p>
+
+              <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;margin-bottom:28px;">
+                <tr>
+                  <td style="padding:12px 16px;background:#f9fafb;border-bottom:1px solid #e5e7eb;font-weight:600;color:#374151;width:40%;font-size:14px;">Nama Campaign</td>
+                  <td style="padding:12px 16px;border-bottom:1px solid #e5e7eb;color:#111827;font-size:14px;">${opts.campaignName}</td>
+                </tr>
+                <tr>
+                  <td style="padding:12px 16px;background:#f9fafb;border-bottom:1px solid #e5e7eb;font-weight:600;color:#374151;font-size:14px;">Pemegang Sebelumnya</td>
+                  <td style="padding:12px 16px;border-bottom:1px solid #e5e7eb;color:#111827;font-size:14px;">${opts.previousHolderName ?? "—"}</td>
+                </tr>
+                <tr>
+                  <td style="padding:12px 16px;background:#f9fafb;font-weight:600;color:#374151;font-size:14px;">Dialihkan Oleh</td>
+                  <td style="padding:12px 16px;color:#111827;font-size:14px;">${opts.transferredByName}</td>
+                </tr>
+              </table>
+
+              <table width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td align="center">
+                    <a href="${opts.campaignUrl}" style="display:inline-block;background:#1d4ed8;color:#ffffff;padding:13px 32px;border-radius:7px;text-decoration:none;font-weight:700;font-size:15px;">Lihat Detail SKP</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 36px;border-top:1px solid #e5e7eb;background:#f9fafb;">
+              <p style="margin:0;color:#9ca3af;font-size:12px;">Email ini dikirim otomatis oleh sistem Trade Marketing Monitor. Mohon tidak membalas email ini.</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
 export interface PasswordResetNotificationEmailOptions {
   to: { email: string; name: string };
 }

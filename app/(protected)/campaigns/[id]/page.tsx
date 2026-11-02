@@ -3,6 +3,7 @@ import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { computeAARemainingBudget } from "@/lib/campaign-status";
 import {
   distributorCampaignAccess,
+  isClaimHolderCandidate,
   type DistributorCampaignAccess,
 } from "@/lib/distributor-campaign-guard";
 import { CampaignDetailClient } from "./campaign-detail-client";
@@ -161,7 +162,9 @@ export default async function CampaignDetailPage({ params }: Props) {
     // finance/manager always, distributor for their own visible SKP).
     supabase
       .from("claim_events")
-      .select("*, actor:actor_id(full_name)")
+      .select(
+        "*, actor:actor_id(full_name), from_user:from_user_id(full_name), to_user:to_user_id(full_name)"
+      )
       .eq("campaign_id", id)
       .order("created_at", { ascending: true }),
   ]);
@@ -208,9 +211,38 @@ export default async function CampaignDetailPage({ params }: Props) {
       })[])
     : [];
 
-  const claimEvents = (claimEventsRaw ?? []) as (ClaimEventRow & {
+  const claimEvents = (claimEventsRaw ?? []) as unknown as (ClaimEventRow & {
     actor: { full_name: string } | null;
+    from_user: { full_name: string } | null;
+    to_user: { full_name: string } | null;
   })[];
+
+  // Fase 10: kandidat pemegang klaim baru untuk tombol "Alihkan pemegang
+  // klaim" — hanya admin/superadmin saat klaim diajukan. Hanya akun
+  // distributor aktif dari perusahaan SKP itu (bukan induk), tanpa pemegang
+  // saat ini; server action memeriksa ulang aturan yang sama.
+  let claimHolderCandidates: { id: string; full_name: string }[] = [];
+  if (
+    (userRole === "admin" || userRole === "superadmin") &&
+    campaign.status === "claim_submitted" &&
+    campaign.distributor_id
+  ) {
+    const { data: candidateUsers } = await supabase
+      .from("users")
+      .select("id, full_name, role, is_active, distributor_id")
+      .eq("role", "distributor")
+      .eq("distributor_id", campaign.distributor_id)
+      .eq("is_active", true)
+      .order("full_name");
+    const claim = {
+      status: campaign.status,
+      claim_submitted_by: campaign.claim_submitted_by ?? null,
+      distributor_id: campaign.distributor_id,
+    };
+    claimHolderCandidates = (candidateUsers ?? [])
+      .filter((u) => isClaimHolderCandidate({ ...u, distributor_id: u.distributor_id ?? null }, claim))
+      .map((u) => ({ id: u.id, full_name: u.full_name }));
+  }
 
   // Claim checklist data. "user" is included from Phase 2 onward so the SKP
   // creator can see per-item verification status/notes read-only (PRD story
@@ -440,6 +472,7 @@ export default async function CampaignDetailPage({ params }: Props) {
       claimDocuments={claimDocuments}
       claimAmountVerification={claimAmountVerification}
       claimEvents={claimEvents}
+      claimHolderCandidates={claimHolderCandidates}
       aaBudgetInfo={aaBudgetInfo}
       isEditable={isEditable}
       userRole={userRole}

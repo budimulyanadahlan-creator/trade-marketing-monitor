@@ -257,7 +257,8 @@ export type ClaimEventAction =
   | "claim_verified"
   | "ready_to_pay"
   | "item_accepted"
-  | "item_revision_requested";
+  | "item_revision_requested"
+  | "holder_transferred";
 
 export type ClaimEventRow = {
   id: string;
@@ -274,6 +275,10 @@ export type ClaimEventRow = {
   // Nama item yang diverifikasi ("Nominal Klaim" atau nama dokumen),
   // didenormalisasi agar riwayat tetap terbaca meski item dihapus.
   item_label: string | null;
+  // Pemegang klaim lama/baru untuk 'holder_transferred' (Fase 10, migrasi
+  // 073); null untuk aksi lain.
+  from_user_id: string | null;
+  to_user_id: string | null;
   created_at: string;
 };
 
@@ -1022,11 +1027,16 @@ export type Database = {
       };
       claim_events: {
         Row: ClaimEventRow;
-        Insert: Omit<ClaimEventRow, "id" | "created_at" | "note" | "item_label"> & {
+        Insert: Omit<
+          ClaimEventRow,
+          "id" | "created_at" | "note" | "item_label" | "from_user_id" | "to_user_id"
+        > & {
           id?: string;
           created_at?: string;
           note?: string | null;
           item_label?: string | null;
+          from_user_id?: string | null;
+          to_user_id?: string | null;
         };
         Update: never;
         Relationships: [
@@ -1040,6 +1050,20 @@ export type Database = {
           {
             foreignKeyName: "claim_events_actor_id_fkey";
             columns: ["actor_id"];
+            isOneToOne: false;
+            referencedRelation: "users";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "claim_events_from_user_id_fkey";
+            columns: ["from_user_id"];
+            isOneToOne: false;
+            referencedRelation: "users";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "claim_events_to_user_id_fkey";
+            columns: ["to_user_id"];
             isOneToOne: false;
             referencedRelation: "users";
             referencedColumns: ["id"];

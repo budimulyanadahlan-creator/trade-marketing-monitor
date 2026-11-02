@@ -10,6 +10,9 @@ import {
   claimHolderActionError,
   isClaimHolderLocked,
   claimFileDeleteError,
+  CLAIM_HOLDER_TRANSFER_MESSAGES,
+  claimHolderTransferError,
+  isClaimHolderCandidate,
 } from "./distributor-campaign-guard";
 
 // Perusahaan: EDM (induk), MMS & BIR (anak EDM), AJS (berdiri sendiri).
@@ -261,5 +264,103 @@ describe("claimFileDeleteError — pemegang × status × pengunggah", () => {
   it("admin pun hanya bisa menghapus file yang diunggahnya sendiri", () => {
     expect(claimFileDeleteError(admin, fileByA, ongoing)).toBe(CLAIM_HOLDER_MESSAGES.notUploader);
     expect(claimFileDeleteError(admin, { uploaded_by: "admin-1" }, submittedByA)).toBeNull();
+  });
+});
+
+// -------------------------------------------------------
+// Fase 10 — alihkan pemegang klaim
+// -------------------------------------------------------
+
+describe("claimHolderTransferError", () => {
+  const claimEdm = {
+    status: "claim_submitted",
+    claim_submitted_by: "user-a",
+    distributor_id: EDM,
+  };
+  const colleagueEdm = { id: "user-b", role: "distributor", is_active: true, distributor_id: EDM };
+
+  it("admin boleh mengalihkan ke rekan aktif satu perusahaan", () => {
+    expect(claimHolderTransferError(admin, claimEdm, colleagueEdm)).toBeNull();
+    expect(claimHolderTransferError(superadmin, claimEdm, colleagueEdm)).toBeNull();
+  });
+
+  it("distributor (termasuk pemegang & Pusat) tidak boleh mengalihkan", () => {
+    const m = CLAIM_HOLDER_TRANSFER_MESSAGES;
+    expect(claimHolderTransferError(holderA, claimEdm, colleagueEdm)).toBe(m.notAdmin);
+    expect(claimHolderTransferError({ id: "fin-1", role: "finance" }, claimEdm, colleagueEdm)).toBe(
+      m.notAdmin
+    );
+  });
+
+  it("hanya saat klaim diajukan", () => {
+    for (const status of ["ongoing", "approved", "claim_verified", "ready_to_pay", "paid"]) {
+      expect(
+        claimHolderTransferError(admin, { ...claimEdm, status }, colleagueEdm)
+      ).toBe(CLAIM_HOLDER_TRANSFER_MESSAGES.notSubmitted);
+    }
+  });
+
+  it("SKP tanpa perusahaan tidak bisa dialihkan", () => {
+    expect(
+      claimHolderTransferError(admin, { ...claimEdm, distributor_id: null }, colleagueEdm)
+    ).toBe(CLAIM_HOLDER_TRANSFER_MESSAGES.noCompany);
+  });
+
+  it("menolak akun yang tidak ditemukan, bukan distributor, atau nonaktif", () => {
+    const m = CLAIM_HOLDER_TRANSFER_MESSAGES;
+    expect(claimHolderTransferError(admin, claimEdm, null)).toBe(m.candidateNotFound);
+    expect(
+      claimHolderTransferError(admin, claimEdm, { ...colleagueEdm, role: "finance" })
+    ).toBe(m.candidateNotDistributor);
+    expect(
+      claimHolderTransferError(admin, claimEdm, { ...colleagueEdm, is_active: false })
+    ).toBe(m.candidateInactive);
+  });
+
+  it("menolak akun perusahaan lain, termasuk Pusat perusahaan induk", () => {
+    const claimMms = { ...claimEdm, distributor_id: MMS };
+    const pusatEdm = { ...colleagueEdm, distributor_id: EDM };
+    const birStaff = { ...colleagueEdm, distributor_id: BIR };
+    expect(claimHolderTransferError(admin, claimMms, pusatEdm)).toBe(
+      CLAIM_HOLDER_TRANSFER_MESSAGES.candidateOtherCompany
+    );
+    expect(claimHolderTransferError(admin, claimMms, birStaff)).toBe(
+      CLAIM_HOLDER_TRANSFER_MESSAGES.candidateOtherCompany
+    );
+  });
+
+  it("menolak pemegang saat ini", () => {
+    expect(
+      claimHolderTransferError(admin, claimEdm, { ...colleagueEdm, id: "user-a" })
+    ).toBe(CLAIM_HOLDER_TRANSFER_MESSAGES.sameHolder);
+  });
+
+  it("klaim tanpa pemegang tercatat tetap bisa dialihkan ke rekan", () => {
+    expect(
+      claimHolderTransferError(admin, { ...claimEdm, claim_submitted_by: null }, colleagueEdm)
+    ).toBeNull();
+  });
+});
+
+describe("isClaimHolderCandidate — isi dropdown pemegang baru", () => {
+  const claimEdm = { status: "claim_submitted", claim_submitted_by: "user-a", distributor_id: EDM };
+  const users = [
+    { id: "user-a", role: "distributor", is_active: true, distributor_id: EDM }, // pemegang
+    { id: "user-b", role: "distributor", is_active: true, distributor_id: EDM }, // rekan
+    { id: "user-c", role: "distributor", is_active: false, distributor_id: EDM }, // nonaktif
+    { id: "user-d", role: "distributor", is_active: true, distributor_id: MMS }, // anak
+    { id: "user-e", role: "admin", is_active: true, distributor_id: EDM }, // bukan distributor
+  ];
+
+  it("hanya akun distributor aktif dari perusahaan SKP, tanpa pemegang saat ini", () => {
+    expect(users.filter((u) => isClaimHolderCandidate(u, claimEdm)).map((u) => u.id)).toEqual([
+      "user-b",
+    ]);
+  });
+
+  it("SKP tanpa perusahaan tidak punya kandidat", () => {
+    expect(
+      users.filter((u) => isClaimHolderCandidate(u, { ...claimEdm, distributor_id: null }))
+    ).toEqual([]);
   });
 });

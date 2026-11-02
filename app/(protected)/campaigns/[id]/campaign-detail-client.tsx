@@ -36,7 +36,10 @@ import {
   TriangleAlert,
   Eye,
   Lock,
+  ArrowLeftRight,
 } from "lucide-react";
+import { Select } from "@/components/ui/select";
+import { transferClaimHolderAction } from "@/app/actions/claim-holder";
 import { toast } from "sonner";
 import { formatDate, formatIDR } from "@/lib/utils";
 import { UPLOAD_MAX_LABEL, UPLOAD_MAX_SIZE } from "@/lib/upload-limits";
@@ -102,7 +105,13 @@ type ApprovalHistoryWithActor = ApprovalHistoryRow & {
 
 type ClaimEventWithActor = ClaimEventRow & {
   actor: { full_name: string } | null;
+  /** Pemegang lama/baru untuk 'holder_transferred' (Fase 10). */
+  from_user?: { full_name: string } | null;
+  to_user?: { full_name: string } | null;
 };
+
+/** Akun distributor yang boleh dipilih sebagai pemegang klaim baru (Fase 10). */
+export type ClaimHolderOption = { id: string; full_name: string };
 
 interface Props {
   campaign: CampaignWithJoins;
@@ -113,6 +122,11 @@ interface Props {
   claimDocuments: ClaimDocument[];
   claimAmountVerification: ClaimItemVerificationInfo | null;
   claimEvents: ClaimEventWithActor[];
+  /**
+   * Kandidat pemegang klaim baru — hanya terisi untuk admin/superadmin saat
+   * SKP berstatus Klaim Diajukan (Fase 10).
+   */
+  claimHolderCandidates: ClaimHolderOption[];
   aaBudgetInfo: AABudgetInfo | null;
   isEditable: boolean;
   userRole: UserRole;
@@ -1187,6 +1201,104 @@ function SubmitKlaimDialog({
 }
 
 // ============================================================
+// Transfer Claim Holder Dialog (Fase 10)
+// ============================================================
+
+function TransferClaimHolderDialog({
+  campaignId,
+  currentHolderName,
+  candidates,
+  open,
+  onOpenChange,
+}: {
+  campaignId: string;
+  currentHolderName: string | null;
+  candidates: ClaimHolderOption[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [newHolderId, setNewHolderId] = useState("");
+  const [isPending, startTransition] = useTransition();
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newHolderId) {
+      toast.error("Pilih pemegang klaim baru");
+      return;
+    }
+
+    startTransition(async () => {
+      const result = await transferClaimHolderAction(campaignId, newHolderId);
+      if (result.error) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success("Pemegang klaim berhasil dialihkan");
+      setNewHolderId("");
+      onOpenChange(false);
+    });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !isPending && onOpenChange(o)}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Alihkan Pemegang Klaim</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <p className="text-sm text-slate-400">
+            Pemegang saat ini:{" "}
+            <span className="text-slate-200">{currentHolderName ?? "—"}</span>. Status SKP dan
+            status verifikasi Finance per item tidak berubah.
+          </p>
+
+          {candidates.length === 0 ? (
+            <p className="text-sm text-amber-300">
+              Tidak ada akun distributor aktif lain dari perusahaan SKP ini.
+            </p>
+          ) : (
+            <div className="space-y-1.5">
+              <Label htmlFor="new-holder">Pemegang Baru</Label>
+              <Select
+                id="new-holder"
+                value={newHolderId}
+                onChange={(e) => setNewHolderId(e.target.value)}
+                placeholder="Pilih akun distributor"
+              >
+                {candidates.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.full_name}
+                  </option>
+                ))}
+              </Select>
+              <p className="text-xs text-slate-500">
+                Hanya akun aktif dari perusahaan distributor SKP ini. Pemegang baru akan menerima
+                email pemberitahuan.
+              </p>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+              disabled={isPending}
+            >
+              Batal
+            </Button>
+            <Button type="submit" disabled={isPending || !newHolderId}>
+              {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              Alihkan
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ============================================================
 // Mark Paid Dialog
 // ============================================================
 
@@ -1580,6 +1692,7 @@ const claimEventIconMap: Record<string, React.ReactNode> = {
   ready_to_pay: <PackageCheck className="h-3.5 w-3.5 text-fuchsia-400" />,
   item_accepted: <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />,
   item_revision_requested: <TriangleAlert className="h-3.5 w-3.5 text-amber-400" />,
+  holder_transferred: <ArrowLeftRight className="h-3.5 w-3.5 text-sky-400" />,
 };
 
 const claimEventLabelMap: Record<string, string> = {
@@ -1589,6 +1702,7 @@ const claimEventLabelMap: Record<string, string> = {
   ready_to_pay: "Akan Segera Dibayar",
   item_accepted: "Item Diterima",
   item_revision_requested: "Revisi Diminta",
+  holder_transferred: "Pemegang Klaim Dialihkan",
 };
 
 function ClaimHistorySection({ events }: { events: ClaimEventWithActor[] }) {
@@ -1635,6 +1749,11 @@ function ClaimHistorySection({ events }: { events: ClaimEventWithActor[] }) {
                   {entry.note ? ` — ${entry.note}` : ""}
                 </p>
               )}
+              {entry.action === "holder_transferred" && (
+                <p className="mt-1 text-sm text-slate-400">
+                  {entry.from_user?.full_name ?? "—"} → {entry.to_user?.full_name ?? "—"}
+                </p>
+              )}
             </div>
           </li>
         ))}
@@ -1656,6 +1775,7 @@ export function CampaignDetailClient({
   claimDocuments,
   claimAmountVerification,
   claimEvents,
+  claimHolderCandidates,
   aaBudgetInfo,
   isEditable,
   userRole,
@@ -1702,6 +1822,13 @@ export function CampaignDetailClient({
   );
   const showHolderNotice =
     userRole === "distributor" && distributorCanAct && !distributorReadOnly && holderLocked;
+
+  // Fase 10: admin/superadmin bisa mengalihkan pemegang klaim selama klaim diajukan.
+  const canTransferHolder =
+    ["admin", "superadmin"].includes(userRole) &&
+    campaign.status === "claim_submitted" &&
+    !!campaign.distributor_id;
+  const [transferHolderOpen, setTransferHolderOpen] = useState(false);
 
   const canSubmitKlaim =
     ["distributor", "admin", "superadmin"].includes(userRole) &&
@@ -1982,8 +2109,26 @@ export function CampaignDetailClient({
           <DetailRow label="AA" value={campaign.action_approval?.name} />
           <DetailRow label="Vendor" value={campaign.vendor?.name} />
           <DetailRow label="Distributor" value={campaign.distributor?.name} />
-          {campaign.claim_submitted_by && (
-            <DetailRow label="Pemegang Klaim" value={claimHolderName ?? "—"} />
+          {(campaign.claim_submitted_by || canTransferHolder) && (
+            <DetailRow
+              label="Pemegang Klaim"
+              value={
+                <div className="flex flex-wrap items-center gap-3">
+                  <span>{claimHolderName ?? "—"}</span>
+                  {canTransferHolder && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setTransferHolderOpen(true)}
+                    >
+                      <ArrowLeftRight className="h-3.5 w-3.5" />
+                      Alihkan pemegang klaim
+                    </Button>
+                  )}
+                </div>
+              }
+            />
           )}
           <DetailRow label="Objective" value={campaign.objective} />
           <DetailRow label="Mekanisme" value={campaign.mechanism || null} />
@@ -2114,6 +2259,16 @@ export function CampaignDetailClient({
 
       {/* Claim history */}
       {claimEvents.length > 0 && <ClaimHistorySection events={claimEvents} />}
+
+      {canTransferHolder && (
+        <TransferClaimHolderDialog
+          campaignId={campaign.id}
+          currentHolderName={claimHolderName}
+          candidates={claimHolderCandidates}
+          open={transferHolderOpen}
+          onOpenChange={setTransferHolderOpen}
+        />
+      )}
 
       {/* Files */}
       {skpFiles.length > 0 && (

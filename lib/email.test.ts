@@ -13,6 +13,7 @@ import {
   sendClaimSubmittedEmail,
   sendClaimRevisionRequestedEmail,
   sendClaimApprovedEmail,
+  sendClaimHolderTransferredEmail,
 } from "./email";
 
 describe("sendSkpPendingDigestEmail", () => {
@@ -320,5 +321,43 @@ describe("sendClaimApprovedEmail", () => {
     ).resolves.not.toThrow();
 
     expect(mockSend).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("sendClaimHolderTransferredEmail", () => {
+  const originalEnv = process.env;
+  const opts = {
+    to: [{ email: "budi@edm.co.id", name: "Budi" }],
+    campaignId: "camp-1",
+    campaignName: "Promo A",
+    previousHolderName: "Ani",
+    transferredByName: "Admin Satu",
+  };
+
+  beforeEach(() => {
+    mockSend.mockReset();
+    mockSend.mockResolvedValue({ data: { id: "email-1" }, error: null });
+    process.env = { ...originalEnv, RESEND_API_KEY: "re_test_key", SKP_EMAIL_ENABLED: "true" };
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
+  it("mengirim ke pemegang baru dengan nama pemegang lama dan admin pelaku", async () => {
+    await sendClaimHolderTransferredEmail(opts);
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    const sent = mockSend.mock.calls[0][0];
+    expect(sent.to).toBe("budi@edm.co.id");
+    expect(sent.subject).toBe("[Pemegang Klaim] Promo A");
+    expect(sent.html).toContain("Ani");
+    expect(sent.html).toContain("Admin Satu");
+    expect(sent.html).toContain("/campaigns/camp-1");
+  });
+
+  it("tidak mengirim jika SKP_EMAIL_ENABLED tidak aktif", async () => {
+    delete process.env.SKP_EMAIL_ENABLED;
+    await sendClaimHolderTransferredEmail(opts);
+    expect(mockSend).not.toHaveBeenCalled();
   });
 });
