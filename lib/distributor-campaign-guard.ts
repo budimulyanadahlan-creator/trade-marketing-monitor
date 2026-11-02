@@ -116,3 +116,64 @@ export function distributorClaimActionError(
   const denial = distributorActionDenial(campaign, viewer);
   return denial ? DISTRIBUTOR_GUARD_MESSAGES[denial] : null;
 }
+
+// ============================================================
+// Pemegang klaim (Fase 9)
+//
+// Akun yang menekan Submit Klaim (`campaigns.claim_submitted_by`) menjadi
+// pemegang klaim. Selama SKP berstatus `claim_submitted`, aksi berikut hanya
+// untuk pemegang klaim (dan admin/superadmin sebagai fallback): batal klaim,
+// ubah nominal, upload dokumen revisi, hapus file. Sebelum klaim diajukan
+// belum ada pemegang — semua akun yang boleh bertindak bisa bekerja bersama.
+// File hanya bisa dihapus oleh pengunggahnya, sebelum maupun sesudah submit.
+//
+// Aturan ini melengkapi distributorClaimActionError (perusahaan/region),
+// bukan menggantikannya — pemanggil memeriksa keduanya.
+// ============================================================
+
+export const CLAIM_HOLDER_MESSAGES = {
+  notHolder:
+    "Klaim ini dipegang oleh akun lain — hanya pemegang klaim yang dapat melakukan aksi ini",
+  notUploader: "Hanya pengunggah yang dapat menghapus file ini",
+} as const;
+
+export type ClaimActor = { id: string; role: string };
+
+export type ClaimHolderTarget = {
+  status: string;
+  claim_submitted_by: string | null;
+};
+
+/**
+ * Pesan error jika aksi khusus pemegang klaim ditolak, atau null jika boleh.
+ * Hanya berlaku saat status `claim_submitted`; klaim diajukan tanpa pemegang
+ * tercatat (akun pemegang terhapus) hanya bisa ditangani admin.
+ */
+export function claimHolderActionError(
+  actor: ClaimActor,
+  claim: ClaimHolderTarget
+): string | null {
+  if (isAdminRole(actor.role)) return null;
+  if (claim.status !== "claim_submitted") return null;
+  if (claim.claim_submitted_by && claim.claim_submitted_by === actor.id) return null;
+  return CLAIM_HOLDER_MESSAGES.notHolder;
+}
+
+/** true = aksi khusus pemegang klaim disembunyikan/ditolak untuk akun ini. */
+export function isClaimHolderLocked(actor: ClaimActor, claim: ClaimHolderTarget): boolean {
+  return claimHolderActionError(actor, claim) !== null;
+}
+
+/**
+ * Pesan error jika akun tidak boleh menghapus file dokumen klaim, atau null
+ * jika boleh: harus pengunggahnya (admin juga), dan selama klaim diajukan
+ * pengunggah itu harus pemegang klaim.
+ */
+export function claimFileDeleteError(
+  actor: ClaimActor,
+  file: { uploaded_by: string | null },
+  claim: ClaimHolderTarget
+): string | null {
+  if (!file.uploaded_by || file.uploaded_by !== actor.id) return CLAIM_HOLDER_MESSAGES.notUploader;
+  return claimHolderActionError(actor, claim);
+}

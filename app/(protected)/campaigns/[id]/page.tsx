@@ -130,7 +130,8 @@ export default async function CampaignDetailPage({ params }: Props) {
         promotion_category:promotion_categories(name, account_code),
         action_approval:action_approvals(name),
         vendor:vendors(name),
-        distributor:distributors(name, parent_distributor_id)
+        distributor:distributors(name, parent_distributor_id),
+        claim_holder:users!campaigns_claim_submitted_by_fkey(full_name)
       `
       )
       .eq("id", id)

@@ -3,7 +3,10 @@ import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { compressImageIfNeeded } from "@/lib/image-compress";
 import { markChecklistFulfilled } from "@/lib/claim-checklist-sync";
 import { resetClaimItemToPending } from "@/lib/claim-item-verifications";
-import { distributorClaimActionError } from "@/lib/distributor-campaign-guard";
+import {
+  claimHolderActionError,
+  distributorClaimActionError,
+} from "@/lib/distributor-campaign-guard";
 import { UPLOAD_MAX_LABEL, UPLOAD_MAX_SIZE } from "@/lib/upload-limits";
 import type { CampaignStatus } from "@/types/database";
 
@@ -72,7 +75,7 @@ export async function POST(request: NextRequest) {
   // below since the select policy also allows paid/completed for viewing.
   const { data: campaign } = await supabase
     .from("campaigns")
-    .select("id, status, distributor_id, region_id")
+    .select("id, status, distributor_id, region_id, claim_submitted_by")
     .eq("id", campaignId)
     .single();
 
@@ -112,6 +115,15 @@ export async function POST(request: NextRequest) {
   }
 
   if (isRevisionUpload) {
+    // Fase 9: upload revisi hanya untuk pemegang klaim.
+    const holderError = claimHolderActionError(
+      { id: user.id, role: profile.role },
+      { status: campaign.status, claim_submitted_by: campaign.claim_submitted_by ?? null }
+    );
+    if (holderError) {
+      return NextResponse.json({ error: holderError }, { status: 403 });
+    }
+
     const { data: item } = await supabase
       .from("claim_item_verifications")
       .select("id, status")

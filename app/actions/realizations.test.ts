@@ -94,6 +94,7 @@ type SetupOptions = {
         created_by: string;
         distributor_id?: string | null;
         region_id?: string | null;
+        claim_submitted_by?: string | null;
       }
     | null;
   updateError?: { message: string } | null;
@@ -417,6 +418,7 @@ describe("cancelKlaimAction", () => {
         name: "Promo A",
         created_by: "creator-1",
         distributor_id: "dist-co-1",
+        claim_submitted_by: "dist-1",
       },
     });
     const result = await cancelKlaimAction("camp-1");
@@ -433,6 +435,7 @@ describe("cancelKlaimAction", () => {
         name: "Promo A",
         created_by: "creator-1",
         distributor_id: "dist-co-1",
+        claim_submitted_by: "dist-1",
       },
       updateError: { message: "DB constraint violation" },
     });
@@ -471,6 +474,23 @@ describe("cancelKlaimAction", () => {
     expect(result).toEqual({ error: "Akun Anda belum terhubung ke perusahaan distributor" });
   });
 
+  it("rejects a same-company colleague who is not the claim holder (Fase 9)", async () => {
+    const { campaignsChain } = setupMocks({
+      userId: "dist-2",
+      campaign: {
+        id: "camp-1",
+        status: "claim_submitted",
+        name: "Promo A",
+        created_by: "creator-1",
+        distributor_id: "dist-co-1",
+        claim_submitted_by: "dist-1",
+      },
+    });
+    const result = await cancelKlaimAction("camp-1");
+    expect(result.error).toMatch(/pemegang klaim/i);
+    expect(campaignsChain.update).not.toHaveBeenCalled();
+  });
+
   it("distributor happy path: reverts campaign to ongoing, clears claim fields, logs history", async () => {
     const { campaignsChain, claimEventsChain } = setupMocks({
       campaign: {
@@ -479,6 +499,7 @@ describe("cancelKlaimAction", () => {
         name: "Promo A",
         created_by: "creator-1",
         distributor_id: "dist-co-1",
+        claim_submitted_by: "dist-1",
       },
     });
 
@@ -516,6 +537,7 @@ describe("cancelKlaimAction", () => {
         name: "Promo A",
         created_by: "creator-1",
         distributor_id: "dist-co-1",
+        claim_submitted_by: "dist-1",
       },
     });
     const result = await cancelKlaimAction("camp-1");
@@ -530,6 +552,7 @@ describe("cancelKlaimAction", () => {
         name: "Promo A",
         created_by: "creator-1",
         distributor_id: "dist-co-1",
+        claim_submitted_by: "dist-1",
       },
     });
     claimEventsChain.insert.mockRejectedValueOnce(new Error("db down"));
@@ -546,6 +569,7 @@ describe("cancelKlaimAction", () => {
         name: "Promo A",
         created_by: "creator-1",
         distributor_id: "dist-co-1",
+        claim_submitted_by: "dist-1",
       },
     });
 
@@ -564,6 +588,7 @@ describe("cancelKlaimAction", () => {
         name: "Promo A",
         created_by: "creator-1",
         distributor_id: "dist-co-1",
+        claim_submitted_by: "dist-1",
       },
     });
     (claimItemVerificationsAdminChain.delete as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -1093,8 +1118,8 @@ function setupUpdateClaimAmountMocks({
   role = "distributor",
   isActive = true,
   userDistributorId = "dist-co-1" as string | null,
-  campaign = { id: "camp-1", status: "claim_submitted", distributor_id: "dist-co-1" } as
-    | { id: string; status: string; distributor_id?: string | null }
+  campaign = { id: "camp-1", status: "claim_submitted", distributor_id: "dist-co-1", claim_submitted_by: "dist-1" } as
+    | { id: string; status: string; distributor_id?: string | null; claim_submitted_by?: string | null }
     | null,
   item = { id: "item-amount-1", status: "revision_requested" } as
     | { id: string; status: string }
@@ -1190,6 +1215,20 @@ describe("updateClaimAmountAction", () => {
     });
     const result = await updateClaimAmountAction("camp-1", 2_000_000);
     expect(result).toEqual({ success: true });
+  });
+
+  it("rejects a same-company colleague who is not the claim holder (Fase 9)", async () => {
+    const { campaignsChain } = setupUpdateClaimAmountMocks({
+      campaign: {
+        id: "camp-1",
+        status: "claim_submitted",
+        distributor_id: "dist-co-1",
+        claim_submitted_by: "dist-other",
+      },
+    });
+    const result = await updateClaimAmountAction("camp-1", 2_000_000);
+    expect(result.error).toMatch(/pemegang klaim/i);
+    expect(campaignsChain.update).not.toHaveBeenCalled();
   });
 
   it("returns error when the amount item is not revision_requested", async () => {

@@ -6,6 +6,10 @@ import {
   distributorClaimActionError,
   type DistributorViewer,
   type CampaignAccessTarget,
+  CLAIM_HOLDER_MESSAGES,
+  claimHolderActionError,
+  isClaimHolderLocked,
+  claimFileDeleteError,
 } from "./distributor-campaign-guard";
 
 // Perusahaan: EDM (induk), MMS & BIR (anak EDM), AJS (berdiri sendiri).
@@ -173,5 +177,89 @@ describe("distributorClaimActionError", () => {
     expect(distributorClaimActionError(cabangEdmWcj, skpEdmWcj)).toBeNull();
     expect(distributorClaimActionError(pusatEdm, skpNoCompanyEjb)).toBe(DISTRIBUTOR_GUARD_MESSAGES.otherCompany);
     expect(distributorClaimActionError(viewer({ role: "admin", distributor_id: null }), skpBirWcj)).toBeNull();
+  });
+});
+
+// -------------------------------------------------------
+// Fase 9 — pemegang klaim
+// -------------------------------------------------------
+
+const holderA = { id: "user-a", role: "distributor" };
+const colleagueB = { id: "user-b", role: "distributor" };
+const admin = { id: "admin-1", role: "admin" };
+const superadmin = { id: "sa-1", role: "superadmin" };
+
+const submittedByA = { status: "claim_submitted", claim_submitted_by: "user-a" };
+const ongoing = { status: "ongoing", claim_submitted_by: null };
+const approved = { status: "approved", claim_submitted_by: null };
+
+describe("claimHolderActionError", () => {
+  it("pemegang klaim boleh bertindak selama klaim diajukan", () => {
+    expect(claimHolderActionError(holderA, submittedByA)).toBeNull();
+  });
+
+  it("rekan yang bukan pemegang ditolak selama klaim diajukan", () => {
+    expect(claimHolderActionError(colleagueB, submittedByA)).toBe(
+      CLAIM_HOLDER_MESSAGES.notHolder
+    );
+  });
+
+  it("klaim diajukan tanpa pemegang tercatat: hanya admin yang bisa bertindak", () => {
+    const orphan = { status: "claim_submitted", claim_submitted_by: null };
+    expect(claimHolderActionError(holderA, orphan)).toBe(CLAIM_HOLDER_MESSAGES.notHolder);
+    expect(claimHolderActionError(admin, orphan)).toBeNull();
+  });
+
+  it("sebelum klaim diajukan tidak ada pemegang — semua akun boleh", () => {
+    expect(claimHolderActionError(colleagueB, ongoing)).toBeNull();
+    expect(claimHolderActionError(colleagueB, approved)).toBeNull();
+  });
+
+  it("admin/superadmin selalu boleh (fallback)", () => {
+    expect(claimHolderActionError(admin, submittedByA)).toBeNull();
+    expect(claimHolderActionError(superadmin, submittedByA)).toBeNull();
+  });
+
+  it("isClaimHolderLocked = kebalikan boleh bertindak", () => {
+    expect(isClaimHolderLocked(colleagueB, submittedByA)).toBe(true);
+    expect(isClaimHolderLocked(holderA, submittedByA)).toBe(false);
+    expect(isClaimHolderLocked(colleagueB, ongoing)).toBe(false);
+  });
+});
+
+describe("claimFileDeleteError — pemegang × status × pengunggah", () => {
+  const fileByA = { uploaded_by: "user-a" };
+  const fileByB = { uploaded_by: "user-b" };
+
+  it("sebelum submit: pengunggah boleh menghapus filenya sendiri", () => {
+    expect(claimFileDeleteError(holderA, fileByA, ongoing)).toBeNull();
+    expect(claimFileDeleteError(colleagueB, fileByB, approved)).toBeNull();
+  });
+
+  it("sebelum submit: rekan tidak bisa menghapus file milik orang lain", () => {
+    expect(claimFileDeleteError(colleagueB, fileByA, ongoing)).toBe(
+      CLAIM_HOLDER_MESSAGES.notUploader
+    );
+  });
+
+  it("setelah submit: pengunggah yang juga pemegang boleh", () => {
+    expect(claimFileDeleteError(holderA, fileByA, submittedByA)).toBeNull();
+  });
+
+  it("setelah submit: pengunggah yang bukan pemegang ditolak", () => {
+    expect(claimFileDeleteError(colleagueB, fileByB, submittedByA)).toBe(
+      CLAIM_HOLDER_MESSAGES.notHolder
+    );
+  });
+
+  it("setelah submit: pemegang tetap tidak bisa menghapus file milik rekan", () => {
+    expect(claimFileDeleteError(holderA, fileByB, submittedByA)).toBe(
+      CLAIM_HOLDER_MESSAGES.notUploader
+    );
+  });
+
+  it("admin pun hanya bisa menghapus file yang diunggahnya sendiri", () => {
+    expect(claimFileDeleteError(admin, fileByA, ongoing)).toBe(CLAIM_HOLDER_MESSAGES.notUploader);
+    expect(claimFileDeleteError(admin, { uploaded_by: "admin-1" }, submittedByA)).toBeNull();
   });
 });

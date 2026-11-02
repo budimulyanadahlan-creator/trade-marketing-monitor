@@ -35,12 +35,16 @@ import {
   Upload,
   TriangleAlert,
   Eye,
+  Lock,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate, formatIDR } from "@/lib/utils";
 import { UPLOAD_MAX_LABEL, UPLOAD_MAX_SIZE } from "@/lib/upload-limits";
 import { getStatusConfig } from "@/lib/campaign-status";
-import type { DistributorCampaignAccess } from "@/lib/distributor-campaign-guard";
+import {
+  isClaimHolderLocked,
+  type DistributorCampaignAccess,
+} from "@/lib/distributor-campaign-guard";
 import { BudgetProgress } from "@/components/budget-progress";
 import {
   addRealizationAction,
@@ -88,6 +92,8 @@ type CampaignWithJoins = CampaignRow & {
   action_approval: { name: string } | null;
   vendor: { name: string } | null;
   distributor: { name: string; parent_distributor_id?: string | null } | null;
+  /** Pemegang klaim = `claim_submitted_by` (Fase 9). */
+  claim_holder?: { full_name: string } | null;
 };
 
 type ApprovalHistoryWithActor = ApprovalHistoryRow & {
@@ -1687,6 +1693,16 @@ export function CampaignDetailClient({
   const distributorCanAct = userRole !== "distributor" || distributorAccess === "act";
   const distributorReadOnly = userRole === "distributor" && distributorAccess === "view";
 
+  // Fase 9: selama klaim diajukan, aksi klaim hanya untuk pemegang klaim
+  // (dan admin). Rekan yang bukan pemegang tetap melihat semuanya.
+  const claimHolderName = campaign.claim_holder?.full_name ?? null;
+  const holderLocked = isClaimHolderLocked(
+    { id: userId, role: userRole },
+    { status: campaign.status, claim_submitted_by: campaign.claim_submitted_by ?? null }
+  );
+  const showHolderNotice =
+    userRole === "distributor" && distributorCanAct && !distributorReadOnly && holderLocked;
+
   const canSubmitKlaim =
     ["distributor", "admin", "superadmin"].includes(userRole) &&
     distributorCanAct &&
@@ -1695,6 +1711,7 @@ export function CampaignDetailClient({
   const canCancelKlaim =
     ["distributor", "admin", "superadmin"].includes(userRole) &&
     distributorCanAct &&
+    !holderLocked &&
     campaign.status === "claim_submitted";
 
   const canApproveClaim =
@@ -1829,6 +1846,23 @@ export function CampaignDetailClient({
         </div>
       )}
 
+      {/* Fase 9: rekan yang bukan pemegang klaim — lihat saja selama klaim diajukan */}
+      {showHolderNotice && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-5 py-3 flex items-start gap-3">
+          <Lock className="h-4 w-4 text-amber-300 mt-0.5 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-amber-200">
+              Klaim dipegang oleh {claimHolderName ?? "akun lain"}
+            </p>
+            <p className="text-xs text-amber-300/80 mt-0.5">
+              Hanya pemegang klaim yang dapat membatalkan, mengubah nominal, atau mengupload
+              dokumen revisi. Anda tetap dapat melihat status, dokumen, dan catatan revisi Finance.
+              Hubungi admin Marmot jika pemegang klaim perlu dialihkan.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* SKP Number & AA Reference */}
       <div className="rounded-xl border border-white/8 bg-white/2 px-6 py-4 flex flex-wrap gap-8">
         <div>
@@ -1948,6 +1982,9 @@ export function CampaignDetailClient({
           <DetailRow label="AA" value={campaign.action_approval?.name} />
           <DetailRow label="Vendor" value={campaign.vendor?.name} />
           <DetailRow label="Distributor" value={campaign.distributor?.name} />
+          {campaign.claim_submitted_by && (
+            <DetailRow label="Pemegang Klaim" value={claimHolderName ?? "—"} />
+          )}
           <DetailRow label="Objective" value={campaign.objective} />
           <DetailRow label="Mekanisme" value={campaign.mechanism || null} />
         </dl>
@@ -2071,7 +2108,7 @@ export function CampaignDetailClient({
           documents={claimDocuments}
           claimAmount={campaign.claim_amount}
           claimAmountVerification={claimAmountVerification}
-          canAct={distributorCanAct}
+          canAct={distributorCanAct && !holderLocked}
         />
       )}
 

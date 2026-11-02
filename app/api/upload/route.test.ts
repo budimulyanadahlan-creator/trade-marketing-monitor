@@ -24,15 +24,17 @@ function makeSelectChain(result: { data: unknown }) {
 
 function setupMocks(
   fileRecord: unknown,
-  campaign: { status: string } | null = { status: "ongoing" }
+  campaign: { status: string; claim_submitted_by?: string | null } | null = { status: "ongoing" }
 ) {
   const filesChain = makeSelectChain({ data: fileRecord });
   const campaignsChain = makeSelectChain({ data: campaign });
+  const usersChain = makeSelectChain({ data: { role: "distributor" } });
   const supabase = {
     auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: "dist-1" } } }) },
     from: vi.fn().mockImplementation((table: string) => {
       if (table === "campaign_files") return filesChain;
       if (table === "campaigns") return campaignsChain;
+      if (table === "users") return usersChain;
       return filesChain;
     }),
   };
@@ -124,7 +126,7 @@ describe("DELETE /api/upload", () => {
 
     const res = await DELETE(makeRequest("file-1"));
 
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(403);
     expect(syncChecklistAfterFileDelete).not.toHaveBeenCalled();
   });
 
@@ -136,7 +138,7 @@ describe("DELETE /api/upload", () => {
         campaign_id: "camp-1",
         document_type_id: "doc-1",
       },
-      { status: "claim_submitted" }
+      { status: "claim_submitted", claim_submitted_by: "dist-1" }
     );
 
     const res = await DELETE(makeRequest("file-1"));
@@ -155,11 +157,46 @@ describe("DELETE /api/upload", () => {
         campaign_id: "camp-1",
         document_type_id: null,
       },
-      { status: "claim_submitted" }
+      { status: "claim_submitted", claim_submitted_by: "dist-1" }
     );
 
     const res = await DELETE(makeRequest("file-1"));
 
     expect(res.status).toBe(200);
+  });
+
+  // Fase 9 — pemegang klaim
+  it("rejects deleting a colleague's claim document with a clear message (pengunggah saja)", async () => {
+    setupMocks({
+      file_url: "path/to/file.jpg",
+      uploaded_by: "dist-2",
+      campaign_id: "camp-1",
+      document_type_id: "doc-1",
+    });
+
+    const res = await DELETE(makeRequest("file-1"));
+    const json = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(json.error).toMatch(/pengunggah/i);
+  });
+
+  it("rejects an uploader who is not the claim holder once the claim is submitted", async () => {
+    const { storageRemove } = setupMocks(
+      {
+        file_url: "path/to/file.jpg",
+        uploaded_by: "dist-1",
+        campaign_id: "camp-1",
+        document_type_id: "doc-1",
+      },
+      { status: "claim_submitted", claim_submitted_by: "dist-2" }
+    );
+
+    const res = await DELETE(makeRequest("file-1"));
+    const json = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(json.error).toMatch(/pemegang klaim/i);
+    expect(storageRemove).not.toHaveBeenCalled();
   });
 });

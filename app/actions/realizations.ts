@@ -9,7 +9,10 @@ import {
   resetAllClaimItemVerifications,
   resetClaimItemToPending,
 } from "@/lib/claim-item-verifications";
-import { distributorClaimActionError } from "@/lib/distributor-campaign-guard";
+import {
+  claimHolderActionError,
+  distributorClaimActionError,
+} from "@/lib/distributor-campaign-guard";
 import type { CampaignStatus, DistributorScope } from "@/types/database";
 
 async function requireActiveUser() {
@@ -299,7 +302,7 @@ export async function cancelKlaimAction(
 
     const { data: campaign } = await supabase
       .from("campaigns")
-      .select("id, status, distributor_id, region_id")
+      .select("id, status, distributor_id, region_id, claim_submitted_by")
       .eq("id", campaignId)
       .single();
 
@@ -316,6 +319,13 @@ export async function cancelKlaimAction(
         error: "Hanya SKP berstatus Klaim Diajukan yang dapat dibatalkan",
       };
     }
+
+    // Fase 9: hanya pemegang klaim (dan admin) yang boleh membatalkan.
+    const holderError = claimHolderActionError(
+      { id: userId, role: profile.role },
+      { status: campaign.status, claim_submitted_by: campaign.claim_submitted_by ?? null }
+    );
+    if (holderError) return { error: holderError };
 
     const { error } = await supabase
       .from("campaigns")
@@ -375,7 +385,7 @@ export async function updateClaimAmountAction(
   claimAmount: number
 ): Promise<{ error?: string; success?: boolean }> {
   try {
-    const { supabase, profile } = await requireActiveUser();
+    const { supabase, userId, profile } = await requireActiveUser();
 
     if (!["distributor", "admin", "superadmin"].includes(profile.role)) {
       return { error: "Hanya distributor atau admin yang dapat mengedit nominal klaim" };
@@ -388,7 +398,7 @@ export async function updateClaimAmountAction(
 
     const { data: campaign } = await supabase
       .from("campaigns")
-      .select("id, status, distributor_id, region_id")
+      .select("id, status, distributor_id, region_id, claim_submitted_by")
       .eq("id", campaignId)
       .single();
 
@@ -405,6 +415,13 @@ export async function updateClaimAmountAction(
         error: "Nominal klaim hanya dapat diedit saat SKP berstatus Klaim Diajukan",
       };
     }
+
+    // Fase 9: hanya pemegang klaim (dan admin) yang boleh mengubah nominal.
+    const holderError = claimHolderActionError(
+      { id: userId, role: profile.role },
+      { status: campaign.status, claim_submitted_by: campaign.claim_submitted_by ?? null }
+    );
+    if (holderError) return { error: holderError };
 
     const { data: item } = await supabase
       .from("claim_item_verifications")
