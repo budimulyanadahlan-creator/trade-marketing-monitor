@@ -1,0 +1,35 @@
+{
+  "distributors": {
+    "EDM": "Esham Dima",
+    "MMS": "Mitra Monas Sejahtera",
+    "BIR": "Bintang Indo Raya",
+    "AJS": "Arta Jaya Semesta"
+  },
+  "regions": {
+    "Medan": "North Sumatera etc",
+    "Siantar": "North Sumatera etc",
+    "Batam": "North Sumatera etc",
+    "Pekanbaru": "North Sumatera etc",
+    "Palembang": "North Sumatera etc",
+    "Jakarta": "Greater Jakarta",
+    "Jaksel": "Greater Jakarta",
+    "Bekasi": "Greater Jakarta",
+    "Bogor": "Greater Jakarta",
+    "Tangerang": "Greater Jakarta",
+    "Tangsel": "Greater Jakarta",
+    "Serang": "Greater Jakarta",
+    "Karawang": "West & Central Java",
+    "Cirebon": "West & Central Java",
+    "Bandung": "West & Central Java",
+    "Semarang": "West & Central Java",
+    "Sukoharjo": "West & Central Java",
+    "Yogyakarta": "West & Central Java",
+    "Surabaya": "East Java & Bali",
+    "Malang": "East Java & Bali",
+    "Denpasar": "East Java & Bali",
+    "Samarinda": "East Java & Bali",
+    "Makassar": "East Java & Bali",
+    "Manado": "East Java & Bali",
+    "Pontianak": "West Kalimantan"
+  }
+}
