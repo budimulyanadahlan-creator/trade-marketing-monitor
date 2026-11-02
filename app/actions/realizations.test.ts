@@ -5,6 +5,9 @@ vi.mock("@/lib/supabase/server", () => ({
   createAdminClient: vi.fn(),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("@/lib/distributor-notification-recipients", () => ({
+  getDistributorNotificationRecipients: vi.fn(),
+}));
 vi.mock("@/lib/email", () => ({
   sendClaimSubmittedEmail: vi.fn(),
   sendMarkedAsPaidEmail: vi.fn(),
@@ -23,6 +26,16 @@ import {
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { sendClaimSubmittedEmail, sendMarkedAsPaidEmail, sendClaimApprovedEmail } from "@/lib/email";
+import { getDistributorNotificationRecipients } from "@/lib/distributor-notification-recipients";
+
+// Fase 11: penerima email distributor ditentukan modul penerima (diuji
+// tersendiri); di sini cukup dipastikan aksi memakainya dengan tahap
+// "after_claim".
+const DIST_RECIPIENT = { id: "dist-user-1", email: "distuser1@example.com", name: "Dist User One" };
+beforeEach(() => {
+  vi.mocked(getDistributorNotificationRecipients).mockResolvedValue([DIST_RECIPIENT]);
+});
+
 
 // -------------------------------------------------------
 // Mock builder helpers
@@ -776,8 +789,13 @@ describe("approveClaimAction", () => {
       expect.objectContaining({
         campaignId: "camp-1",
         campaignName: "Promo A",
-        to: [{ email: "distuser1@example.com", name: "Dist User One" }],
+        to: [DIST_RECIPIENT],
       })
+    );
+    expect(getDistributorNotificationRecipients).toHaveBeenCalledWith(
+      expect.anything(),
+      "camp-1",
+      "after_claim"
     );
   });
 
@@ -1069,8 +1087,13 @@ describe("markAsPaidAction", () => {
         campaignId: "camp-1",
         campaignName: "Promo A",
         claimAmount: 1_500_000,
-        to: [{ email: "distuser1@example.com", name: "Dist User One" }],
+        to: [DIST_RECIPIENT],
       })
+    );
+    expect(getDistributorNotificationRecipients).toHaveBeenCalledWith(
+      expect.anything(),
+      "camp-1",
+      "after_claim"
     );
   });
 

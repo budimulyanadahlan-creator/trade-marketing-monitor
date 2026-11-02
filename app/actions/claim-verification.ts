@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { z } from "zod";
 import { sendClaimRevisionRequestedEmail } from "@/lib/email";
+import { getDistributorNotificationRecipients } from "@/lib/distributor-notification-recipients";
 import { CLAIM_AMOUNT_ITEM_LABEL } from "@/lib/claim-item-verifications";
 import type { ClaimItemStatus } from "@/types/database";
 
@@ -128,33 +129,14 @@ async function notifyClaimRevisionRequested(opts: {
   itemLabel: string;
   note: string;
 }) {
-  // Not filtered further than distributor_id — same accepted cross-distributor
-  // visibility gap documented for this feature (PRD Keputusan #5).
   if (!opts.distributorId) return;
 
-  const adminClient = createAdminClient();
-
-  const { data: distributorUsers } = await adminClient
-    .from("users")
-    .select("id, full_name")
-    .eq("role", "distributor")
-    .eq("distributor_id", opts.distributorId)
-    .eq("is_active", true);
-
-  if (!distributorUsers || distributorUsers.length === 0) return;
-
-  const nameById = new Map<string, string>();
-  const recipientIds = new Set<string>();
-  for (const u of distributorUsers) {
-    recipientIds.add(u.id);
-    nameById.set(u.id, u.full_name);
-  }
-
-  const { data: authData } = await adminClient.auth.admin.listUsers({ perPage: 1000 });
-  const recipients = (authData?.users ?? [])
-    .filter((u) => recipientIds.has(u.id) && u.email)
-    .map((u) => ({ email: u.email!, name: nameById.get(u.id) ?? u.email! }));
-
+  // Fase 11: pemegang klaim + Pusat perusahaan SKP + Pusat induk.
+  const recipients = await getDistributorNotificationRecipients(
+    createAdminClient(),
+    opts.campaignId,
+    "after_claim"
+  );
   if (recipients.length === 0) return;
 
   await sendClaimRevisionRequestedEmail({

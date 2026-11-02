@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { sendClaimHolderTransferredEmail } from "@/lib/email";
 import { claimHolderTransferError } from "@/lib/distributor-campaign-guard";
+import { getDistributorNotificationRecipients } from "@/lib/distributor-notification-recipients";
 
 type TransferResult = { error?: string; success?: boolean };
 
@@ -104,6 +105,7 @@ export async function transferClaimHolderAction(
     }
 
     // Best-effort: kegagalan email tidak menggagalkan pengalihan.
+    // Fase 11: pemegang baru + Pusat perusahaan SKP + Pusat induk.
     try {
       let previousHolderName: string | null = null;
       if (previousHolderId) {
@@ -115,14 +117,23 @@ export async function transferClaimHolderAction(
         previousHolderName = prev?.full_name ?? null;
       }
 
-      const { data: authData } = await createAdminClient().auth.admin.getUserById(newHolderId);
-      const email = authData?.user?.email;
-      if (email && candidate) {
+      const recipients = await getDistributorNotificationRecipients(
+        createAdminClient(),
+        campaignId,
+        "after_claim",
+        { holderOverride: newHolderId }
+      );
+      if (recipients.length > 0 && candidate) {
         await sendClaimHolderTransferredEmail({
-          to: [{ email, name: candidate.full_name }],
+          to: recipients.map((r) => ({
+            email: r.email,
+            name: r.name,
+            isNewHolder: r.id === newHolderId,
+          })),
           campaignId,
           campaignName: campaign.name,
           previousHolderName,
+          newHolderName: candidate.full_name,
           transferredByName: actor.full_name,
         });
       }

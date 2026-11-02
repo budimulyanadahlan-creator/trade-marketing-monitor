@@ -327,12 +327,31 @@ describe("sendClaimApprovedEmail", () => {
 describe("sendClaimHolderTransferredEmail", () => {
   const originalEnv = process.env;
   const opts = {
-    to: [{ email: "budi@edm.co.id", name: "Budi" }],
+    to: [{ email: "budi@edm.co.id", name: "Budi", isNewHolder: true }],
     campaignId: "camp-1",
     campaignName: "Promo A",
     previousHolderName: "Ani",
+    newHolderName: "Budi",
     transferredByName: "Admin Satu",
   };
+
+  it("akun Pusat (bukan pemegang baru) mendapat teks pemberitahuan dengan nama pemegang baru", async () => {
+    await sendClaimHolderTransferredEmail({
+      ...opts,
+      to: [
+        { email: "budi@edm.co.id", name: "Budi", isNewHolder: true },
+        { email: "pusat@edm.co.id", name: "Pusat EDM" },
+      ],
+    });
+    expect(mockSend).toHaveBeenCalledTimes(2);
+    const toHolder = mockSend.mock.calls[0][0];
+    const toPusat = mockSend.mock.calls[1][0];
+    expect(toHolder.html).toContain("kepada Anda");
+    expect(toPusat.to).toBe("pusat@edm.co.id");
+    expect(toPusat.html).not.toContain("kepada Anda");
+    expect(toPusat.html).toContain("Pemegang Baru");
+    expect(toPusat.html).toContain("Budi");
+  });
 
   beforeEach(() => {
     mockSend.mockReset();

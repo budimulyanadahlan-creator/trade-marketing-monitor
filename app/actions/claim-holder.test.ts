@@ -8,11 +8,15 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/email", () => ({
   sendClaimHolderTransferredEmail: vi.fn(),
 }));
+vi.mock("@/lib/distributor-notification-recipients", () => ({
+  getDistributorNotificationRecipients: vi.fn(),
+}));
 
 import { transferClaimHolderAction } from "./claim-holder";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { sendClaimHolderTransferredEmail } from "@/lib/email";
+import { getDistributorNotificationRecipients } from "@/lib/distributor-notification-recipients";
 
 type Profile = { id: string; role: string; is_active: boolean; full_name: string; distributor_id: string | null };
 
@@ -26,7 +30,7 @@ type SetupOptions = {
   users?: Profile[];
   updateError?: { message: string } | null;
   updatedRows?: { id: string }[];
-  newHolderEmail?: string | null;
+  recipients?: { id: string; email: string; name: string }[];
 };
 
 function setupMocks({
@@ -41,7 +45,10 @@ function setupMocks({
   users = [ADMIN, HOLDER_A, COLLEAGUE_B],
   updateError = null,
   updatedRows = [{ id: "camp-1" }],
-  newHolderEmail = "budi@edm.co.id",
+  recipients = [
+    { id: "user-b", email: "budi@edm.co.id", name: "Budi" },
+    { id: "user-p", email: "pusat@edm.co.id", name: "Pusat EDM" },
+  ],
 }: SetupOptions = {}) {
   const campaignUpdate = vi.fn();
   const updateChain: Record<string, unknown> = {};
@@ -85,12 +92,11 @@ function setupMocks({
   };
   vi.mocked(createClient).mockResolvedValue(mockClient as never);
 
-  const getUserById = vi
-    .fn()
-    .mockResolvedValue({ data: { user: newHolderEmail ? { email: newHolderEmail } : null } });
-  vi.mocked(createAdminClient).mockReturnValue({ auth: { admin: { getUserById } } } as never);
+  const adminClient = { marker: "admin" };
+  vi.mocked(createAdminClient).mockReturnValue(adminClient as never);
+  vi.mocked(getDistributorNotificationRecipients).mockResolvedValue(recipients);
 
-  return { campaignUpdate, updateChain, claimEventsInsert, getUserById };
+  return { campaignUpdate, updateChain, claimEventsInsert, adminClient };
 }
 
 beforeEach(() => {
@@ -134,18 +140,37 @@ describe("transferClaimHolderAction", () => {
     });
   });
 
-  it("mengirim email ke pemegang baru", async () => {
-    setupMocks();
+  it("mengirim email ke pemegang baru + Pusat (penerima sesudah klaim dengan pemegang baru)", async () => {
+    const { adminClient } = setupMocks();
 
     await transferClaimHolderAction("camp-1", "user-b");
 
+    expect(getDistributorNotificationRecipients).toHaveBeenCalledWith(
+      adminClient,
+      "camp-1",
+      "after_claim",
+      { holderOverride: "user-b" }
+    );
     expect(sendClaimHolderTransferredEmail).toHaveBeenCalledWith({
-      to: [{ email: "budi@edm.co.id", name: "Budi" }],
+      to: [
+        { email: "budi@edm.co.id", name: "Budi", isNewHolder: true },
+        { email: "pusat@edm.co.id", name: "Pusat EDM", isNewHolder: false },
+      ],
       campaignId: "camp-1",
       campaignName: "Promo A",
       previousHolderName: "Ani",
+      newHolderName: "Budi",
       transferredByName: "Admin Satu",
     });
+  });
+
+  it("tanpa penerima → email tidak dikirim, pengalihan tetap berhasil", async () => {
+    setupMocks({ recipients: [] });
+
+    const result = await transferClaimHolderAction("camp-1", "user-b");
+
+    expect(result).toEqual({ success: true });
+    expect(sendClaimHolderTransferredEmail).not.toHaveBeenCalled();
   });
 
   it("kegagalan email tidak menggagalkan pengalihan", async () => {

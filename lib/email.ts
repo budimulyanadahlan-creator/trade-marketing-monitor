@@ -330,15 +330,18 @@ export async function sendClaimApprovedEmail(opts: ClaimApprovedEmailOptions) {
 }
 
 export interface ClaimHolderTransferredEmailOptions {
-  to: { email: string; name: string }[];
+  /** isNewHolder = penerima adalah pemegang baru; lainnya (akun Pusat) sekadar diberi tahu. */
+  to: { email: string; name: string; isNewHolder?: boolean }[];
   campaignName: string;
   campaignId: string;
   previousHolderName: string | null;
+  newHolderName: string;
   transferredByName: string;
 }
 
 // Multi-User Distributor, Fase 10: pemegang klaim baru diberi tahu bahwa
-// klaim kini menjadi tanggung jawabnya.
+// klaim kini menjadi tanggung jawabnya. Fase 11: akun Pusat perusahaan SKP
+// dan Pusat induk ikut diberi tahu dengan teks yang menyebut pemegang baru.
 export async function sendClaimHolderTransferredEmail(opts: ClaimHolderTransferredEmailOptions) {
   if (process.env.SKP_EMAIL_ENABLED !== "true") {
     if (process.env.NODE_ENV === "development") {
@@ -359,13 +362,15 @@ export async function sendClaimHolderTransferredEmail(opts: ClaimHolderTransferr
   const campaignUrl = `${APP_URL}/campaigns/${opts.campaignId}`;
 
   const results = await Promise.allSettled(
-    opts.to.map(({ email, name }) =>
+    opts.to.map(({ email, name, isNewHolder }) =>
       resend.emails.send({
         from: FROM_EMAIL,
         to: email,
         subject: `[Pemegang Klaim] ${opts.campaignName}`,
         html: buildClaimHolderTransferredHtml({
           recipientName: name,
+          isNewHolder: !!isNewHolder,
+          newHolderName: opts.newHolderName,
           campaignName: opts.campaignName,
           campaignUrl,
           previousHolderName: opts.previousHolderName,
@@ -385,17 +390,23 @@ export async function sendClaimHolderTransferredEmail(opts: ClaimHolderTransferr
 
 function buildClaimHolderTransferredHtml(opts: {
   recipientName: string;
+  isNewHolder: boolean;
+  newHolderName: string;
   campaignName: string;
   campaignUrl: string;
   previousHolderName: string | null;
   transferredByName: string;
 }) {
+  const title = opts.isNewHolder ? "Anda Kini Pemegang Klaim" : "Pemegang Klaim Dialihkan";
+  const intro = opts.isNewHolder
+    ? "Admin mengalihkan pemegang klaim SKP berikut kepada Anda. Mulai sekarang Anda yang menindaklanjuti klaim ini, termasuk revisi dari Finance."
+    : `Admin mengalihkan pemegang klaim SKP berikut kepada <strong>${opts.newHolderName}</strong>. Mulai sekarang beliau yang menindaklanjuti klaim ini, termasuk revisi dari Finance.`;
   return `<!DOCTYPE html>
 <html lang="id">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Anda Kini Pemegang Klaim</title>
+  <title>${title}</title>
 </head>
 <body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,sans-serif;">
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:32px 16px;">
@@ -406,14 +417,14 @@ function buildClaimHolderTransferredHtml(opts: {
           <tr>
             <td style="background:#1d4ed8;padding:28px 36px;">
               <p style="margin:0;color:#bfdbfe;font-size:12px;text-transform:uppercase;letter-spacing:1px;font-weight:600;">Trade Marketing Monitor</p>
-              <h1 style="margin:8px 0 0;color:#ffffff;font-size:22px;font-weight:700;">Anda Kini Pemegang Klaim</h1>
+              <h1 style="margin:8px 0 0;color:#ffffff;font-size:22px;font-weight:700;">${title}</h1>
             </td>
           </tr>
           <!-- Body -->
           <tr>
             <td style="padding:32px 36px;">
               <p style="margin:0 0 16px;color:#374151;font-size:15px;">Halo, <strong>${opts.recipientName}</strong>,</p>
-              <p style="margin:0 0 24px;color:#374151;font-size:15px;">Admin mengalihkan pemegang klaim SKP berikut kepada Anda. Mulai sekarang Anda yang menindaklanjuti klaim ini, termasuk revisi dari Finance.</p>
+              <p style="margin:0 0 24px;color:#374151;font-size:15px;">${intro}</p>
 
               <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;margin-bottom:28px;">
                 <tr>
@@ -423,6 +434,10 @@ function buildClaimHolderTransferredHtml(opts: {
                 <tr>
                   <td style="padding:12px 16px;background:#f9fafb;border-bottom:1px solid #e5e7eb;font-weight:600;color:#374151;font-size:14px;">Pemegang Sebelumnya</td>
                   <td style="padding:12px 16px;border-bottom:1px solid #e5e7eb;color:#111827;font-size:14px;">${opts.previousHolderName ?? "—"}</td>
+                </tr>
+                <tr>
+                  <td style="padding:12px 16px;background:#f9fafb;border-bottom:1px solid #e5e7eb;font-weight:600;color:#374151;font-size:14px;">Pemegang Baru</td>
+                  <td style="padding:12px 16px;border-bottom:1px solid #e5e7eb;color:#111827;font-size:14px;">${opts.newHolderName}</td>
                 </tr>
                 <tr>
                   <td style="padding:12px 16px;background:#f9fafb;font-weight:600;color:#374151;font-size:14px;">Dialihkan Oleh</td>
