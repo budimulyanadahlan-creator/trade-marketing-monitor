@@ -452,6 +452,11 @@ function ClaimFileRow({
         )}
         {file.fileName}
       </button>
+      {/* Fase 8: banyak akun satu perusahaan bisa mengupload ke SKP yang
+          sama — tampilkan siapa pengunggahnya. */}
+      <span className="text-[11px] text-slate-500 whitespace-nowrap">
+        oleh {file.uploaderName ?? "—"}
+      </span>
       {showVersionTag && (
         <span
           className={`text-[10px] rounded-full px-1.5 py-0.5 border whitespace-nowrap ${

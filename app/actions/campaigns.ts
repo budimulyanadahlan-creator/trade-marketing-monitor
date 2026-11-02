@@ -337,7 +337,9 @@ export async function createDistributorReceiptAction(
       });
 
     if (error) {
-      if (error.code === "23505") return { error: "SKP ini sudah pernah di-checklist" };
+      // Fase 8: penerimaan unik per SKP — rekan satu perusahaan mungkin
+      // sudah menandainya lebih dulu.
+      if (error.code === "23505") return { error: "SKP ini sudah ditandai diterima" };
       return { error: error.message };
     }
 

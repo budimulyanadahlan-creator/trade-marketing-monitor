@@ -136,8 +136,7 @@ export async function GET(request: NextRequest) {
 
     const { data: receipts } = await supabase
       .from("distributor_receipts")
-      .select("campaign_id")
-      .eq("received_by", user.id);
+      .select("campaign_id");
     receiptedSet = new Set((receipts ?? []).map((r) => r.campaign_id));
   } else {
     const statusParam = searchParams.get("status") ?? "";

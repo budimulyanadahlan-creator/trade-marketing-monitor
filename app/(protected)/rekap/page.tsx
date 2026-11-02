@@ -106,8 +106,7 @@ export default async function RekapPage({
 
     const { data: receipts } = await supabase
       .from("distributor_receipts")
-      .select("campaign_id")
-      .eq("received_by", user.id);
+      .select("campaign_id");
     receiptedCampaignIds = receipts?.map((r) => r.campaign_id) ?? [];
   } else {
     const statusFilters = strArr(params.status) as CampaignStatus[];

@@ -12,6 +12,7 @@ export type ClaimDocumentFile = {
   id: string;
   fileName: string;
   uploadedBy: string;
+  uploaderName: string | null;
   uploadedAt: string;
   // Phase 3 (Loop Revisi): true for the most recently uploaded file for this
   // checklist item — re-uploads never delete the old file, so multiple files
@@ -46,7 +47,11 @@ export type AABudgetInfo = {
   shortfall: number;
 };
 
-type ApprovalHistoryWithActor = ApprovalHistoryRow & {
+type CampaignFileWithUploader = CampaignFileRow & {
+  uploader: { full_name: string } | null;
+};
+
+type ApprovalHistoryWithActor =ApprovalHistoryRow & {
   actor: { full_name: string } | null;
 };
 
@@ -130,7 +135,11 @@ export default async function CampaignDetailPage({ params }: Props) {
       )
       .eq("id", id)
       .single(),
-    supabase.from("campaign_files").select("*").eq("campaign_id", id).order("uploaded_at"),
+    supabase
+      .from("campaign_files")
+      .select("*, uploader:uploaded_by(full_name)")
+      .eq("campaign_id", id)
+      .order("uploaded_at"),
     supabase
       .from("approval_history")
       .select("*, actor:users!approval_history_actor_id_fkey(full_name)")
@@ -283,7 +292,8 @@ export default async function CampaignDetailPage({ params }: Props) {
       .filter((d) => d.name)
       .sort((a, b) => a.sortOrder - b.sortOrder);
 
-    // True if any distributor has fulfilled the document (admin view) or own entry (distributor view via RLS)
+    // Fase 8: checklist satu baris per SKP + jenis dokumen, sama untuk
+    // distributor (semua akun perusahaan) dan Finance/admin.
     const fulfilledMap = new Map<string, boolean>();
     for (const row of checklistsRaw ?? []) {
       if (row.is_fulfilled) {
@@ -297,13 +307,14 @@ export default async function CampaignDetailPage({ params }: Props) {
     // filesRaw is already ordered by uploaded_at, so the last entry pushed
     // per document type is the most recent one.
     const claimFilesByDocType = new Map<string, ClaimDocumentFile[]>();
-    for (const f of (filesRaw ?? []) as CampaignFileRow[]) {
+    for (const f of (filesRaw ?? []) as unknown as CampaignFileWithUploader[]) {
       if (!f.document_type_id) continue;
       const list = claimFilesByDocType.get(f.document_type_id) ?? [];
       list.push({
         id: f.id,
         fileName: f.file_name,
         uploadedBy: f.uploaded_by,
+        uploaderName: f.uploader?.full_name ?? null,
         uploadedAt: f.uploaded_at,
         isLatest: false, // corrected below once each list is complete
       });

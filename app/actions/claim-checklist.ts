@@ -70,7 +70,7 @@ export async function upsertClaimChecklistAction(
           is_fulfilled: isFulfilled,
           updated_at: new Date().toISOString(),
         },
-        { onConflict: "campaign_id,distributor_id,document_type_id" }
+        { onConflict: "campaign_id,document_type_id" }
       );
 
     if (error) return { error: error.message };

@@ -95,7 +95,7 @@ describe("DELETE /api/upload", () => {
     expect(res.status).toBe(200);
     expect(syncChecklistAfterFileDelete).toHaveBeenCalledWith(expect.anything(), {
       campaignId: "camp-1",
-      distributorId: "dist-1",
+      actorId: "dist-1",
       documentTypeId: "doc-1",
     });
   });

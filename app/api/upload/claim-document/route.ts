@@ -199,7 +199,7 @@ export async function POST(request: NextRequest) {
   // saved, so a checklist sync failure shouldn't fail the whole upload.
   await markChecklistFulfilled(supabase, {
     campaignId,
-    distributorId: user.id,
+    actorId: user.id,
     documentTypeId,
   });
 

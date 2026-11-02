@@ -215,11 +215,12 @@ export default async function CampaignsPage({
 
   // Fetch receipted campaign IDs for distributor (to show Status Penerimaan column)
   let receiptedCampaignIds: string[] = [];
+  // Penerimaan milik SKP (Fase 8 multi-user distributor): rekan satu
+  // perusahaan melihat status yang sama; RLS membatasi ke SKP yang terlihat.
   if (isDistributor) {
     const { data: receipts } = await supabase
       .from("distributor_receipts")
-      .select("campaign_id")
-      .eq("received_by", user.id);
+      .select("campaign_id");
     receiptedCampaignIds = receipts?.map((r) => r.campaign_id) ?? [];
   }
 

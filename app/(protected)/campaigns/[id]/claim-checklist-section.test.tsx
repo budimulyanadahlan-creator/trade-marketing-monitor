@@ -20,7 +20,7 @@ function doc(id: string, isFulfilled: boolean, withFile = false): ClaimDocument 
     name: `Dokumen ${id}`,
     isFulfilled,
     files: withFile
-      ? [{ id: `f-${id}`, fileName: "bukti.jpg", uploadedBy: "dist-1", uploadedAt: "2026-01-01T00:00:00Z", isLatest: true }]
+      ? [{ id: `f-${id}`, fileName: "bukti.jpg", uploadedBy: "dist-1", uploaderName: "Budi Cabang", uploadedAt: "2026-01-01T00:00:00Z", isLatest: true }]
       : [],
     verification: null,
   };
@@ -66,6 +66,11 @@ describe("ClaimChecklistSection", () => {
     // Server says otherwise (e.g. the last file was removed elsewhere).
     rerender(section([doc("a", false), doc("b", false)]));
     expect(checkbox("a").checked).toBe(false);
+  });
+
+  it("shows who uploaded each claim document file", () => {
+    render(section([doc("a", true, true)]));
+    expect(screen.getByText("oleh Budi Cabang")).toBeTruthy();
   });
 
   it("reverts the toggle when saving fails", async () => {

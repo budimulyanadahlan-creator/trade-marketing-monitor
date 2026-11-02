@@ -243,6 +243,8 @@ export type ClaimRequirementRow = {
 export type DistributorClaimChecklistRow = {
   id: string;
   campaign_id: string;
+  // Fase 8 (multi-user distributor): satu baris per SKP + jenis dokumen;
+  // kolom ini = akun yang terakhir mengubah, bukan pemilik checklist.
   distributor_id: string;
   document_type_id: string;
   is_fulfilled: boolean;
@@ -993,7 +995,7 @@ export type Database = {
           is_fulfilled?: boolean;
           updated_at?: string;
         };
-        Update: { is_fulfilled?: boolean; updated_at?: string };
+        Update: { is_fulfilled?: boolean; distributor_id?: string; updated_at?: string };
         Relationships: [
           {
             foreignKeyName: "distributor_claim_checklists_campaign_id_fkey";

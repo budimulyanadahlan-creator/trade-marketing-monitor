@@ -165,12 +165,13 @@ export async function DELETE(request: NextRequest) {
 
   await supabase.from("campaign_files").delete().eq("id", fileId);
 
-  // Claim document (has document_type_id): if this was the last file
-  // attached to the checklist item, reset it back to unfulfilled.
+  // Claim document (has document_type_id): if this was the last file of
+  // that document type on the SKP (from any uploader), reset the shared
+  // checklist item back to unfulfilled.
   if (fileRecord.document_type_id) {
     await syncChecklistAfterFileDelete(supabase, {
       campaignId: fileRecord.campaign_id,
-      distributorId: fileRecord.uploaded_by,
+      actorId: user.id,
       documentTypeId: fileRecord.document_type_id,
     });
   }

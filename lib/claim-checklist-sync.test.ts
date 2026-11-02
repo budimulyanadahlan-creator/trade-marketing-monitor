@@ -14,13 +14,13 @@ function makeThenableChain(result: unknown) {
 }
 
 describe("markChecklistFulfilled", () => {
-  it("upserts is_fulfilled=true for the campaign/distributor/document combo", async () => {
+  it("upserts one row per SKP + document type, recording the actor as last modifier", async () => {
     const chain = makeThenableChain({ error: null });
     const supabase = { from: vi.fn().mockReturnValue(chain) };
 
     const result = await markChecklistFulfilled(supabase as never, {
       campaignId: "camp-1",
-      distributorId: "dist-1",
+      actorId: "dist-1",
       documentTypeId: "doc-1",
     });
 
@@ -33,7 +33,7 @@ describe("markChecklistFulfilled", () => {
         document_type_id: "doc-1",
         is_fulfilled: true,
       }),
-      { onConflict: "campaign_id,distributor_id,document_type_id" }
+      { onConflict: "campaign_id,document_type_id" }
     );
   });
 
@@ -43,7 +43,7 @@ describe("markChecklistFulfilled", () => {
 
     const result = await markChecklistFulfilled(supabase as never, {
       campaignId: "camp-1",
-      distributorId: "dist-1",
+      actorId: "dist-1",
       documentTypeId: "doc-1",
     });
 
@@ -52,7 +52,29 @@ describe("markChecklistFulfilled", () => {
 });
 
 describe("syncChecklistAfterFileDelete", () => {
-  it("resets is_fulfilled to false when no files remain for the item", async () => {
+  it("counts remaining files of that document type across ALL uploaders on the SKP", async () => {
+    const filesChain = makeThenableChain({ count: 1 });
+    const checklistChain = makeThenableChain({ error: null });
+    const supabase = {
+      from: vi.fn().mockImplementation((table: string) =>
+        table === "campaign_files" ? filesChain : checklistChain
+      ),
+    };
+
+    await syncChecklistAfterFileDelete(supabase as never, {
+      campaignId: "camp-1",
+      actorId: "dist-1",
+      documentTypeId: "doc-1",
+    });
+
+    expect(filesChain.eq).toHaveBeenCalledWith("campaign_id", "camp-1");
+    expect(filesChain.eq).toHaveBeenCalledWith("document_type_id", "doc-1");
+    expect(filesChain.eq).not.toHaveBeenCalledWith("uploaded_by", expect.anything());
+    // File milik rekan masih ada → centang tetap.
+    expect(checklistChain.update).not.toHaveBeenCalled();
+  });
+
+  it("resets the SKP's checklist item when no files remain, recording the actor", async () => {
     const filesChain = makeThenableChain({ count: 0 });
     const checklistChain = makeThenableChain({ error: null });
     const supabase = {
@@ -63,30 +85,15 @@ describe("syncChecklistAfterFileDelete", () => {
 
     await syncChecklistAfterFileDelete(supabase as never, {
       campaignId: "camp-1",
-      distributorId: "dist-1",
+      actorId: "dist-2",
       documentTypeId: "doc-1",
     });
 
     expect(checklistChain.update).toHaveBeenCalledWith(
-      expect.objectContaining({ is_fulfilled: false })
+      expect.objectContaining({ is_fulfilled: false, distributor_id: "dist-2" })
     );
-  });
-
-  it("leaves is_fulfilled untouched when other files still remain for the item", async () => {
-    const filesChain = makeThenableChain({ count: 2 });
-    const checklistChain = makeThenableChain({ error: null });
-    const supabase = {
-      from: vi.fn().mockImplementation((table: string) =>
-        table === "campaign_files" ? filesChain : checklistChain
-      ),
-    };
-
-    await syncChecklistAfterFileDelete(supabase as never, {
-      campaignId: "camp-1",
-      distributorId: "dist-1",
-      documentTypeId: "doc-1",
-    });
-
-    expect(checklistChain.update).not.toHaveBeenCalled();
+    expect(checklistChain.eq).toHaveBeenCalledWith("campaign_id", "camp-1");
+    expect(checklistChain.eq).toHaveBeenCalledWith("document_type_id", "doc-1");
+    expect(checklistChain.eq).not.toHaveBeenCalledWith("distributor_id", expect.anything());
   });
 });

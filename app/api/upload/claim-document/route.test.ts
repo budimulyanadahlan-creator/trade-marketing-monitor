@@ -178,7 +178,7 @@ describe("POST /api/upload/claim-document", () => {
     expect(storageUpload).toHaveBeenCalled();
     expect(markChecklistFulfilled).toHaveBeenCalledWith(
       expect.anything(),
-      { campaignId: "camp-1", distributorId: "dist-1", documentTypeId: "doc-1" }
+      { campaignId: "camp-1", actorId: "dist-1", documentTypeId: "doc-1" }
     );
   });
 

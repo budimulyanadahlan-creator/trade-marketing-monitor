@@ -57,6 +57,20 @@ describe("upsertClaimChecklistAction", () => {
     expect(result).toEqual({ success: true });
   });
 
+  it("writes one shared row per SKP + document type, recording the actor as last modifier", async () => {
+    const { upsertChain } = setupMocks();
+    await upsertClaimChecklistAction("camp-1", "doc-1", true);
+    expect(upsertChain.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        campaign_id: "camp-1",
+        document_type_id: "doc-1",
+        distributor_id: "dist-1",
+        is_fulfilled: true,
+      }),
+      { onConflict: "campaign_id,document_type_id" }
+    );
+  });
+
   it("allows toggling while status is approved", async () => {
     setupMocks({ campaign: { id: "camp-1", status: "approved", distributor_id: "company-a" } });
     const result = await upsertClaimChecklistAction("camp-1", "doc-1", true);
