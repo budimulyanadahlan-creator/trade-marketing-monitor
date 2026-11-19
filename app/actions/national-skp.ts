@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import {
   NATIONAL_REGION_NAME,
+  OPEN_CHILD_CLAIM_STATUSES,
+  cancelChildClaimError,
   createChildClaimError,
   makeNationalError,
   unmakeNationalError,
@@ -188,9 +190,6 @@ export async function unmakeNationalAction(campaignId: string): Promise<National
 
 export type CreateChildClaimResult = { error?: string; success?: boolean; childId?: string };
 
-/** Status klaim turunan yang belum diajukan — menghalangi klaim baru akun itu. */
-const OPEN_CHILD_CLAIM_STATUSES = ["approved", "ongoing"] as const;
-
 const CHILD_CLAIM_FAILED = "Klaim gagal dibuat — coba lagi sebentar lagi";
 
 /**
@@ -269,6 +268,83 @@ export async function createChildClaimAction(parentId: string): Promise<CreateCh
     revalidatePath("/campaigns");
     revalidatePath(`/campaigns/${parentId}`);
     return { success: true, childId };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Terjadi kesalahan" };
+  }
+}
+
+// ============================================================
+// Batalkan Klaim (SKP Nasional, Fase 3)
+// ============================================================
+
+const CHILD_CANCEL_FAILED = "Klaim gagal dibatalkan — coba lagi sebentar lagi";
+
+/**
+ * Batalkan Klaim: pemilik (atau admin/superadmin) membatalkan klaim turunan
+ * yang belum punya realisasi dan belum diajukan. Status menjadi Dibatalkan;
+ * baris, dokumen, dan nomor urutnya tetap ada, dan akun itu boleh membuat
+ * klaim baru atas SKP induk yang sama.
+ *
+ * Syaratnya di cancelChildClaimError (lib/national-skp.ts). Status ditulis
+ * dengan hak layanan lewat fungsi database cancel_national_child_claim
+ * (migrasi 076) — distributor tidak punya izin mengubah status SKP ke
+ * Dibatalkan, dan fungsi itu mengunci baris klaim agar tidak berpapasan
+ * dengan Finance yang sedang mencatat realisasi. Pelaku selalu akun yang
+ * login, tidak pernah dari input.
+ */
+export async function cancelChildClaimAction(childId: string): Promise<NationalResult> {
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { error: "Unauthorized" };
+
+    const { data: profile } = await supabase
+      .from("users")
+      .select("role, is_active")
+      .eq("id", user.id)
+      .single();
+    if (!profile) return { error: "Unauthorized" };
+
+    // Dibaca dengan sesi akun: RLS memastikan distributor hanya menemukan
+    // klaim turunannya sendiri.
+    const { data: child } = await supabase
+      .from("campaigns")
+      .select("id, status, parent_campaign_id, claim_owner_id")
+      .eq("id", childId)
+      .single();
+
+    const actor = { id: user.id, role: profile.role as string, is_active: !!profile.is_active };
+    if (!actor.is_active) return { error: "Akun tidak aktif" };
+    if (!child) return { error: "Klaim tidak ditemukan" };
+
+    const { count: realizationCount, error: countError } = await supabase
+      .from("realizations")
+      .select("id", { count: "exact", head: true })
+      .eq("campaign_id", childId);
+    if (countError) return { error: countError.message };
+
+    const ruleError = cancelChildClaimError(actor, child, realizationCount ?? 0);
+    if (ruleError) return { error: ruleError };
+
+    const { error } = await createAdminClient().rpc("cancel_national_child_claim", {
+      p_child_id: childId,
+      p_actor_id: user.id,
+    });
+
+    if (error) {
+      // P0001 = penolakan aturan dari fungsi database (pesannya sudah ramah,
+      // mis. Finance baru saja mencatat realisasi). Selain itu error teknis.
+      if (error.code === "P0001" && error.message) return { error: error.message };
+      console.error("[cancelChildClaimAction] rpc error:", error);
+      return { error: CHILD_CANCEL_FAILED };
+    }
+
+    revalidatePath("/campaigns");
+    revalidatePath(`/campaigns/${childId}`);
+    if (child.parent_campaign_id) revalidatePath(`/campaigns/${child.parent_campaign_id}`);
+    return { success: true };
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Terjadi kesalahan" };
   }

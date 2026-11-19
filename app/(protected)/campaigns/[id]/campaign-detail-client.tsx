@@ -42,6 +42,7 @@ import {
 import { Select } from "@/components/ui/select";
 import { transferClaimHolderAction } from "@/app/actions/claim-holder";
 import {
+  cancelChildClaimAction,
   createChildClaimAction,
   makeNationalAction,
   unmakeNationalAction,
@@ -86,6 +87,7 @@ import type {
   AABudgetInfo,
   ClaimDocument,
   ClaimItemVerificationInfo,
+  MyChildClaimInfo,
   NationalParentInfo,
   OpenChildClaimInfo,
 } from "./page";
@@ -157,6 +159,8 @@ interface Props {
   claimOwnerName: string | null;
   /** Induk dibuka distributor: klaim turunannya sendiri yang belum diajukan. */
   myOpenChildClaim: OpenChildClaimInfo | null;
+  /** Induk dibuka distributor: semua klaim turunan milik akun itu (Fase 3). */
+  myChildClaims: MyChildClaimInfo[];
   departments: { id: string; name: string }[];
   brands: { id: string; name: string }[];
   regions: { id: string; name: string }[];
@@ -1713,6 +1717,7 @@ const claimEventIconMap: Record<string, React.ReactNode> = {
   item_accepted: <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />,
   item_revision_requested: <TriangleAlert className="h-3.5 w-3.5 text-amber-400" />,
   holder_transferred: <ArrowLeftRight className="h-3.5 w-3.5 text-sky-400" />,
+  child_cancelled: <XCircle className="h-3.5 w-3.5 text-rose-400" />,
 };
 
 const claimEventLabelMap: Record<string, string> = {
@@ -1723,6 +1728,7 @@ const claimEventLabelMap: Record<string, string> = {
   item_accepted: "Item Diterima",
   item_revision_requested: "Revisi Diminta",
   holder_transferred: "Pemegang Klaim Dialihkan",
+  child_cancelled: "Klaim Dibatalkan",
 };
 
 function ClaimHistorySection({ events }: { events: ClaimEventWithActor[] }) {
@@ -1900,6 +1906,74 @@ function NationalToggleDialog({
 }
 
 // ============================================================
+// Batalkan Klaim turunan (SKP Nasional, Fase 3) — pemilik atau admin
+// ============================================================
+
+function CancelChildClaimDialog({
+  campaignId,
+  skpNumber,
+  isOwner,
+  open,
+  onOpenChange,
+}: {
+  campaignId: string;
+  skpNumber: string | null;
+  isOwner: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+
+  function handleConfirm() {
+    startTransition(async () => {
+      const result = await cancelChildClaimAction(campaignId);
+      if (result.error) {
+        toast.error(result.error);
+      } else {
+        toast.success("Klaim dibatalkan");
+      }
+      onOpenChange(false);
+      router.refresh();
+    });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !isPending && onOpenChange(o)}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Batalkan Klaim{skpNumber ? ` ${skpNumber}` : ""}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-2 text-sm text-slate-400">
+          <p>
+            Klaim ini akan berstatus <span className="text-slate-200">Dibatalkan</span> dan tidak
+            bisa diaktifkan kembali.
+          </p>
+          <ul className="list-disc pl-5 space-y-1">
+            <li>Dokumen dan checklist yang sudah diisi tetap tersimpan sebagai jejak.</li>
+            <li>Nomor klaim ini tidak dipakai ulang.</li>
+            <li>
+              {isOwner
+                ? "Anda dapat membuat klaim baru dari SKP Nasional induknya."
+                : "Pemilik klaim dapat membuat klaim baru dari SKP Nasional induknya."}
+            </li>
+          </ul>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isPending}>
+            Kembali
+          </Button>
+          <Button variant="destructive" onClick={handleConfirm} disabled={isPending}>
+            {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+            Batalkan Klaim
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ============================================================
 // Main Client Component
 // ============================================================
 
@@ -1922,6 +1996,7 @@ export function CampaignDetailClient({
   nationalParentFiles,
   claimOwnerName,
   myOpenChildClaim,
+  myChildClaims,
   departments,
   brands,
   regions,
@@ -1946,8 +2021,8 @@ export function CampaignDetailClient({
     isAdminOrSuperadmin && !isNational && !isNationalChild && campaign.status === "approved";
 
   // Buat Klaim (Fase 2): akun distributor pada induk nasional Disetujui.
-  // Selama akun masih punya klaim turunan yang belum diajukan, tombol
-  // berganti menjadi tautan ke klaim itu.
+  // Selama akun masih punya klaim turunan yang belum diajukan (Fase 3),
+  // tombol dinonaktifkan dan diberi tautan ke klaim itu.
   const canCreateChildClaim =
     userRole === "distributor" && isNational && campaign.status === "approved";
   const [isCreatingClaim, startCreateClaim] = useTransition();
@@ -1985,6 +2060,19 @@ export function CampaignDetailClient({
   // perusahaan induk yang melihat SKP anak perusahaan hanya lihat.
   const distributorCanAct = userRole !== "distributor" || distributorAccess === "act";
   const distributorReadOnly = userRole === "distributor" && distributorAccess === "view";
+
+  // Batalkan Klaim (Fase 3): pemilik atau admin, selama klaim turunan masih
+  // Disetujui dan belum punya realisasi. Server memeriksa ulang aturan yang
+  // sama (cancelChildClaimError).
+  const isCancelledChild = isNationalChild && campaign.status === "cancelled";
+  const isChildClaimOwner =
+    userRole === "distributor" && !!campaign.claim_owner_id && campaign.claim_owner_id === userId;
+  const canCancelChildClaim =
+    isNationalChild &&
+    campaign.status === "approved" &&
+    realizations.length === 0 &&
+    (isAdminOrSuperadmin || (isChildClaimOwner && distributorCanAct));
+  const [cancelChildOpen, setCancelChildOpen] = useState(false);
 
   // Fase 9: selama klaim diajukan, aksi klaim hanya untuk pemegang klaim
   // (dan admin). Rekan yang bukan pemegang tetap melihat semuanya.
@@ -2129,27 +2217,39 @@ export function CampaignDetailClient({
         </div>
 
         <div className="flex items-center gap-2">
-          {canCreateChildClaim &&
-            (myOpenChildClaim ? (
-              <Button asChild size="sm" variant="outline">
-                <Link
-                  href={`/campaigns/${myOpenChildClaim.id}`}
-                  title="Selesaikan atau batalkan klaim Anda yang belum diajukan sebelum membuat klaim baru"
-                >
-                  <Receipt className="h-4 w-4" />
-                  Buka Klaim Saya{myOpenChildClaim.skp_number ? ` (${myOpenChildClaim.skp_number})` : ""}
-                </Link>
-              </Button>
-            ) : (
-              <Button size="sm" onClick={handleCreateChildClaim} disabled={isCreatingClaim}>
-                {isCreatingClaim ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Plus className="h-4 w-4" />
-                )}
-                Buat Klaim
-              </Button>
-            ))}
+          {canCreateChildClaim && myOpenChildClaim && (
+            <Button asChild size="sm" variant="outline">
+              <Link href={`/campaigns/${myOpenChildClaim.id}`}>
+                <Receipt className="h-4 w-4" />
+                Buka Klaim Saya{myOpenChildClaim.skp_number ? ` (${myOpenChildClaim.skp_number})` : ""}
+              </Link>
+            </Button>
+          )}
+          {canCreateChildClaim && (
+            <Button
+              size="sm"
+              onClick={handleCreateChildClaim}
+              disabled={isCreatingClaim || !!myOpenChildClaim}
+              title={
+                myOpenChildClaim
+                  ? "Selesaikan atau batalkan klaim Anda yang belum diajukan sebelum membuat klaim baru"
+                  : undefined
+              }
+            >
+              {isCreatingClaim ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Plus className="h-4 w-4" />
+              )}
+              Buat Klaim
+            </Button>
+          )}
+          {canCancelChildClaim && (
+            <Button size="sm" variant="outline" onClick={() => setCancelChildOpen(true)}>
+              <XCircle className="h-4 w-4" />
+              Batalkan Klaim
+            </Button>
+          )}
           {canMakeNational && (
             <Button size="sm" variant="outline" onClick={() => setNationalDialog("make")}>
               <Globe className="h-4 w-4" />
@@ -2189,10 +2289,70 @@ export function CampaignDetailClient({
               {userRole === "distributor"
                 ? canCreateChildClaim
                   ? myOpenChildClaim
-                    ? "SKP ini berlaku untuk semua distributor. Anda masih punya klaim yang belum diajukan atas SKP ini — selesaikan klaim itu lewat tombol \"Buka Klaim Saya\" sebelum membuat klaim baru."
+                    ? "SKP ini berlaku untuk semua distributor. Selesaikan atau batalkan klaim Anda yang belum diajukan (tombol \"Buka Klaim Saya\") sebelum membuat klaim baru — tombol \"Buat Klaim\" aktif lagi setelah klaim itu diajukan atau dibatalkan."
                     : "SKP ini berlaku untuk semua distributor. Untuk menagih, tekan \"Buat Klaim\": Marmot membuat klaim milik akun Anda, tempat Anda mengunggah dokumen, mengisi checklist, dan mengajukan nominal."
                   : "SKP ini berlaku untuk semua distributor. Anda dapat membaca ketentuan dan mengunduh PDF-nya tanpa tanda terima; realisasi, checklist, dan dokumen klaim tidak dicatat langsung di SKP ini."
                 : "SKP ini terlihat oleh semua akun distributor di semua perusahaan dan region. Realisasi, checklist, dokumen klaim, dan tanda terima tidak dicatat di SKP ini — aktivitas klaim dilakukan di klaim turunan per akun distributor."}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Induk dibuka distributor: klaim turunan milik akun ini (Fase 3) */}
+      {isNational && userRole === "distributor" && myChildClaims.length > 0 && (
+        <div className="rounded-xl border border-white/8 bg-white/2 p-6">
+          <h2 className="text-sm font-semibold text-slate-300 mb-1 uppercase tracking-wider">
+            Klaim Saya
+          </h2>
+          <p className="text-xs text-slate-500 mb-3">
+            Klaim akun Anda atas SKP Nasional ini. Klaim akun lain tidak ditampilkan.
+          </p>
+          <ul className="divide-y divide-white/8">
+            {myChildClaims.map((claim) => {
+              const cfg = getStatusConfig(claim.status);
+              return (
+                <li
+                  key={claim.id}
+                  className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-2.5"
+                >
+                  <div className="min-w-0">
+                    <Link
+                      href={`/campaigns/${claim.id}`}
+                      className="font-mono text-sm font-medium text-emerald-300 hover:text-emerald-200 hover:underline underline-offset-2"
+                    >
+                      {claim.skp_number ?? "Klaim tanpa nomor"}
+                    </Link>
+                    <p className="text-xs text-slate-500">
+                      Dibuat {formatDate(claim.created_at)}
+                      {claim.claim_amount != null
+                        ? ` · Nominal klaim ${formatIDR(claim.claim_amount)}`
+                        : ""}
+                    </p>
+                  </div>
+                  <span
+                    className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${cfg.className}`}
+                  >
+                    {cfg.label}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
+      {/* Klaim turunan yang dibatalkan: jejaknya tetap ada, tanpa aksi (Fase 3) */}
+      {isCancelledChild && (
+        <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-5 py-3 flex items-start gap-3">
+          <XCircle className="h-4 w-4 text-rose-300 mt-0.5 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-rose-200">Klaim ini sudah dibatalkan</p>
+            <p className="text-xs text-rose-300/80 mt-0.5">
+              Dokumen dan checklist yang sudah diisi tetap tersimpan, tetapi klaim ini tidak
+              dapat dilanjutkan.
+              {userRole === "distributor"
+                ? " Untuk menagih, buat klaim baru dari SKP Nasional induknya."
+                : ""}
             </p>
           </div>
         </div>
@@ -2226,16 +2386,18 @@ export function CampaignDetailClient({
               ) : (
                 "SKP induk tidak dapat ditampilkan untuk akun Anda. "
               )}
-              {userRole === "distributor"
-                ? "Unggah dokumen dan isi checklist di sini; setelah Finance mencatat realisasi, ajukan nominal klaim Anda. Klaim ini tidak memakai tanda terima."
-                : "Alur klaim berjalan di sini seperti SKP biasa. Nilai SKP dan komitmen budget hanya ada di SKP induk."}
+              {isCancelledChild
+                ? ""
+                : userRole === "distributor"
+                  ? "Unggah dokumen dan isi checklist di sini; setelah Finance mencatat realisasi, ajukan nominal klaim Anda. Klaim ini tidak memakai tanda terima."
+                  : "Alur klaim berjalan di sini seperti SKP biasa. Nilai SKP dan komitmen budget hanya ada di SKP induk."}
             </p>
           </div>
         </div>
       )}
 
       {/* Hanya lihat: Pusat perusahaan induk melihat SKP anak perusahaan */}
-      {distributorReadOnly && !isNational && (
+      {distributorReadOnly && !isNational && !isNationalChild && (
         <div className="rounded-xl border border-sky-500/30 bg-sky-500/10 px-5 py-3 flex items-start gap-3">
           <Eye className="h-4 w-4 text-sky-300 mt-0.5 flex-shrink-0" />
           <div>
@@ -2551,6 +2713,16 @@ export function CampaignDetailClient({
           regionName={campaign.region?.name ?? null}
           open
           onOpenChange={(o) => !o && setNationalDialog(null)}
+        />
+      )}
+
+      {canCancelChildClaim && (
+        <CancelChildClaimDialog
+          campaignId={campaign.id}
+          skpNumber={campaign.skp_number ?? null}
+          isOwner={isChildClaimOwner}
+          open={cancelChildOpen}
+          onOpenChange={setCancelChildOpen}
         />
       )}
 

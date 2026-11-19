@@ -6,6 +6,7 @@ import {
   isClaimHolderCandidate,
   type DistributorCampaignAccess,
 } from "@/lib/distributor-campaign-guard";
+import { isOpenChildClaimStatus } from "@/lib/national-skp";
 import { CampaignDetailClient } from "./campaign-detail-client";
 import type { CampaignRow, CampaignFileRow, ApprovalHistoryRow, RealizationRow, DistributorReceiptRow, ClaimEventRow, ClaimItemStatus, UserRole, CampaignStatus, DistributorScope } from "@/types/database";
 
@@ -62,6 +63,12 @@ export type OpenChildClaimInfo = {
   id: string;
   skp_number: string | null;
   status: CampaignStatus;
+};
+
+/** Satu klaim turunan milik akun yang login, untuk daftar "Klaim Saya" di induk (Fase 3). */
+export type MyChildClaimInfo = OpenChildClaimInfo & {
+  claim_amount: number | null;
+  created_at: string;
 };
 
 type CampaignFileWithUploader = CampaignFileRow & {
@@ -204,6 +211,7 @@ export default async function CampaignDetailPage({ params }: Props) {
             is_national: campaign.is_national,
             parent_campaign_id: campaign.parent_campaign_id ?? null,
             claim_owner_id: campaign.claim_owner_id ?? null,
+            status: campaign.status,
           },
           {
             id: user.id,
@@ -220,13 +228,15 @@ export default async function CampaignDetailPage({ params }: Props) {
 
   // ── SKP Nasional Fase 2: klaim turunan ────────────────────────────────
   // Turunan: tautan ke induk, No surat & lampiran surat induk, nama pemilik.
-  // Induk (dibuka distributor): klaim turunannya sendiri yang belum diajukan,
-  // agar tombol "Buat Klaim" berganti menjadi tautan ke klaim itu.
+  // Induk (dibuka distributor): semua klaim turunannya sendiri (Fase 3) untuk
+  // daftar "Klaim Saya"; yang belum diajukan menonaktifkan tombol "Buat Klaim"
+  // dan ditautkan dari sana.
   const isNationalChild = !!campaign.parent_campaign_id;
   let nationalParent: NationalParentInfo | null = null;
   let nationalParentFiles: CampaignFileRow[] = [];
   let claimOwnerName: string | null = null;
   let myOpenChildClaim: OpenChildClaimInfo | null = null;
+  let myChildClaims: MyChildClaimInfo[] = [];
 
   if (isNationalChild) {
     // RLS: distributor pemilik turunan melihat induknya (akses "view") dan
@@ -251,16 +261,16 @@ export default async function CampaignDetailPage({ params }: Props) {
     nationalParentFiles = (parentFilesRaw ?? []) as CampaignFileRow[];
     claimOwnerName = ownerRaw?.full_name ?? null;
   } else if (campaign.is_national && userRole === "distributor") {
-    const { data: openChild } = await supabase
+    // RLS: hanya turunan milik akun ini yang terlihat, termasuk yang dibatalkan.
+    const { data: myChildrenRaw } = await supabase
       .from("campaigns")
-      .select("id, skp_number, status")
+      .select("id, skp_number, status, claim_amount, created_at")
       .eq("parent_campaign_id", campaign.id)
       .eq("claim_owner_id", user.id)
-      .in("status", ["approved", "ongoing"])
-      .order("child_seq", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    myOpenChildClaim = (openChild ?? null) as OpenChildClaimInfo | null;
+      .order("child_seq", { ascending: true });
+    myChildClaims = (myChildrenRaw ?? []) as MyChildClaimInfo[];
+    myOpenChildClaim =
+      [...myChildClaims].reverse().find((c) => isOpenChildClaimStatus(c.status)) ?? null;
   }
 
   const files = (filesRaw ?? []) as CampaignFileRow[];
@@ -551,6 +561,7 @@ export default async function CampaignDetailPage({ params }: Props) {
       nationalParentFiles={nationalParentFiles}
       claimOwnerName={claimOwnerName}
       myOpenChildClaim={myOpenChildClaim}
+      myChildClaims={myChildClaims}
       departments={departments ?? []}
       brands={brands ?? []}
       regions={regions ?? []}

@@ -97,7 +97,11 @@ export default async function CampaignsPage({
     .order("created_at", { ascending: false });
 
   if (isDistributor) {
-    campaignQuery = campaignQuery.in("status", DISTRIBUTOR_VISIBLE_CAMPAIGN_STATUSES);
+    // Klaim turunan SKP nasional yang dibatalkan tetap terlihat pemiliknya
+    // (SKP Nasional Fase 3) — satu-satunya baris Dibatalkan di jendela RLS.
+    campaignQuery = campaignQuery.or(
+      `status.in.(${DISTRIBUTOR_VISIBLE_CAMPAIGN_STATUSES.join(",")}),and(status.eq.cancelled,parent_campaign_id.not.is.null)`
+    );
   }
 
   const { data: campaigns } = await campaignQuery;
@@ -120,8 +124,8 @@ export default async function CampaignsPage({
     : (campaigns ?? []);
 
   // SKP yang hanya boleh dilihat (Pusat perusahaan induk melihat SKP anak
-  // perusahaan, dan SKP induk nasional untuk semua akun): tombol aksi di
-  // daftar disembunyikan untuk ID ini.
+  // perusahaan, SKP induk nasional untuk semua akun, dan klaim turunan yang
+  // dibatalkan): tombol aksi di daftar disembunyikan untuk ID ini.
   const readOnlyCampaignIds: string[] = [];
   if (isDistributor && profile) {
     for (const c of campaigns ?? []) {
@@ -135,6 +139,7 @@ export default async function CampaignsPage({
           is_national: c.is_national,
           parent_campaign_id: c.parent_campaign_id ?? null,
           claim_owner_id: c.claim_owner_id ?? null,
+          status: c.status,
         },
         { ...profile, id: user.id }
       );

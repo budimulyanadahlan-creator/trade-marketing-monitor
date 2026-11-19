@@ -5,6 +5,12 @@ import {
   type MakeNationalActivity,
   type MakeNationalTarget,
 } from "./national-skp";
+import {
+  OPEN_CHILD_CLAIM_STATUSES,
+  cancelChildClaimError,
+  isOpenChildClaimStatus,
+  type CancelChildClaimTarget,
+} from "./national-skp";
 
 const admin = { role: "admin" };
 const superadmin = { role: "superadmin" };
@@ -231,5 +237,94 @@ describe("isNationalChild & tanda terima", () => {
       NATIONAL_SKP_MESSAGES.childNoReceipt
     );
     expect(nationalReceiptError({ is_national: false, parent_campaign_id: null })).toBeNull();
+  });
+});
+
+// ============================================================
+// Fase 3: klaim berulang dan pembatalan
+// ============================================================
+
+describe("isOpenChildClaimStatus — klaim turunan yang belum diajukan", () => {
+  it("Disetujui dan Berjalan menghalangi klaim baru", () => {
+    expect(isOpenChildClaimStatus("approved")).toBe(true);
+    expect(isOpenChildClaimStatus("ongoing")).toBe(true);
+    expect([...OPEN_CHILD_CLAIM_STATUSES].sort()).toEqual(["approved", "ongoing"]);
+  });
+
+  it("Klaim Diajukan ke atas dan Dibatalkan tidak menghalangi", () => {
+    for (const status of ["claim_submitted", "claim_verified", "ready_to_pay", "paid", "completed", "cancelled"]) {
+      expect(isOpenChildClaimStatus(status)).toBe(false);
+    }
+  });
+});
+
+describe("cancelChildClaimError", () => {
+  const OWNER = "user-owner";
+  const owner = { id: OWNER, role: "distributor", is_active: true };
+  const turunan = (over: Partial<CancelChildClaimTarget> = {}): CancelChildClaimTarget => ({
+    parent_campaign_id: "skp-induk",
+    claim_owner_id: OWNER,
+    status: "approved",
+    ...over,
+  });
+
+  it("pemilik boleh membatalkan turunan Disetujui tanpa realisasi", () => {
+    expect(cancelChildClaimError(owner, turunan(), 0)).toBeNull();
+  });
+
+  it("admin/superadmin boleh membatalkan turunan akun lain dengan syarat yang sama", () => {
+    for (const role of ["admin", "superadmin"]) {
+      const actor = { id: "admin-1", role, is_active: true };
+      expect(cancelChildClaimError(actor, turunan(), 0)).toBeNull();
+      expect(cancelChildClaimError(actor, turunan(), 1)).toBe(NATIONAL_SKP_MESSAGES.cancelHasRealization);
+      expect(cancelChildClaimError(actor, turunan({ status: "claim_submitted" }), 0)).toBe(
+        NATIONAL_SKP_MESSAGES.cancelAlreadySubmitted
+      );
+    }
+  });
+
+  it("akun distributor lain dan role internal lain ditolak", () => {
+    expect(cancelChildClaimError({ id: "user-rekan", role: "distributor", is_active: true }, turunan(), 0)).toBe(
+      NATIONAL_SKP_MESSAGES.cancelNotOwner
+    );
+    for (const role of ["finance", "manager", "user"]) {
+      expect(cancelChildClaimError({ id: OWNER, role, is_active: true }, turunan(), 0)).toBe(
+        NATIONAL_SKP_MESSAGES.cancelNotOwner
+      );
+    }
+  });
+
+  it("akun nonaktif ditolak", () => {
+    expect(cancelChildClaimError({ ...owner, is_active: false }, turunan(), 0)).toBe(
+      NATIONAL_SKP_MESSAGES.childInactive
+    );
+  });
+
+  it("SKP biasa dan SKP induk bukan klaim turunan", () => {
+    expect(cancelChildClaimError(owner, turunan({ parent_campaign_id: null }), 0)).toBe(
+      NATIONAL_SKP_MESSAGES.cancelNotChild
+    );
+  });
+
+  it("ditolak bila sudah ada realisasi", () => {
+    expect(cancelChildClaimError(owner, turunan(), 1)).toBe(NATIONAL_SKP_MESSAGES.cancelHasRealization);
+    // Berjalan = Finance sudah mencatat realisasi
+    expect(cancelChildClaimError(owner, turunan({ status: "ongoing" }), 0)).toBe(
+      NATIONAL_SKP_MESSAGES.cancelHasRealization
+    );
+  });
+
+  it("ditolak bila sudah diajukan", () => {
+    for (const status of ["claim_submitted", "claim_verified", "ready_to_pay", "paid", "completed"]) {
+      expect(cancelChildClaimError(owner, turunan({ status }), 0)).toBe(
+        NATIONAL_SKP_MESSAGES.cancelAlreadySubmitted
+      );
+    }
+  });
+
+  it("klaim yang sudah dibatalkan tidak dibatalkan dua kali", () => {
+    expect(cancelChildClaimError(owner, turunan({ status: "cancelled" }), 0)).toBe(
+      NATIONAL_SKP_MESSAGES.cancelAlreadyCancelled
+    );
   });
 });

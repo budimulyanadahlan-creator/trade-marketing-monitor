@@ -7,6 +7,7 @@ vi.mock("@/lib/supabase/server", () => ({
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 import {
+  cancelChildClaimAction,
   createChildClaimAction,
   makeNationalAction,
   unmakeNationalAction,
@@ -357,5 +358,153 @@ describe("unmakeNationalAction — klaim turunan mengunci tanda nasional", () =>
       error: NATIONAL_SKP_MESSAGES.hasChildClaims,
     });
     expect(campaignsTable.update).not.toHaveBeenCalled();
+  });
+});
+
+// ============================================================
+// Fase 3: Batalkan Klaim (klaim turunan)
+// ============================================================
+
+type Child = {
+  id: string;
+  status: string;
+  parent_campaign_id: string | null;
+  claim_owner_id: string | null;
+};
+
+const CHILD: Child = {
+  id: "turunan-1",
+  status: "approved",
+  parent_campaign_id: "induk-1",
+  claim_owner_id: "dist-1",
+};
+
+function setupCancelMocks({
+  userId = "dist-1",
+  role = "distributor",
+  isActive = true,
+  child = CHILD as Child | null,
+  realizations = 0,
+  rpcResult = { data: null, error: null } as {
+    data: null;
+    error: { message: string; code?: string } | null;
+  },
+} = {}) {
+  const mockClient = {
+    auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: userId } } }) },
+    from: vi.fn().mockImplementation((table: string) => {
+      if (table === "users") return chain({ data: { role, is_active: isActive } });
+      if (table === "campaigns") return chain({ data: child });
+      if (table === "realizations") return chain({ count: realizations, error: null });
+      throw new Error(`tabel tak terduga: ${table}`);
+    }),
+  };
+  const rpc = vi.fn().mockResolvedValue(rpcResult);
+  vi.mocked(createClient).mockResolvedValue(mockClient as never);
+  vi.mocked(createAdminClient).mockReturnValue({ rpc } as never);
+  return { rpc };
+}
+
+describe("cancelChildClaimAction", () => {
+  it("pemilik membatalkan klaim turunannya yang belum diajukan", async () => {
+    const { rpc } = setupCancelMocks();
+
+    expect(await cancelChildClaimAction("turunan-1")).toEqual({ success: true });
+    // Pelaku selalu akun yang login — tidak pernah dari input.
+    expect(rpc).toHaveBeenCalledWith("cancel_national_child_claim", {
+      p_child_id: "turunan-1",
+      p_actor_id: "dist-1",
+    });
+    expect(revalidatePath).toHaveBeenCalledWith("/campaigns");
+    expect(revalidatePath).toHaveBeenCalledWith("/campaigns/turunan-1");
+    expect(revalidatePath).toHaveBeenCalledWith("/campaigns/induk-1");
+  });
+
+  it("admin dan superadmin membatalkan klaim turunan akun lain", async () => {
+    for (const role of ["admin", "superadmin"]) {
+      const { rpc } = setupCancelMocks({ userId: "admin-1", role });
+      expect(await cancelChildClaimAction("turunan-1")).toEqual({ success: true });
+      expect(rpc).toHaveBeenCalledWith("cancel_national_child_claim", {
+        p_child_id: "turunan-1",
+        p_actor_id: "admin-1",
+      });
+    }
+  });
+
+  it("akun distributor lain dan role internal lain ditolak tanpa menulis", async () => {
+    let mocks = setupCancelMocks({ userId: "dist-2" });
+    expect(await cancelChildClaimAction("turunan-1")).toEqual({
+      error: NATIONAL_SKP_MESSAGES.cancelNotOwner,
+    });
+    expect(mocks.rpc).not.toHaveBeenCalled();
+
+    for (const role of ["finance", "manager", "user"]) {
+      mocks = setupCancelMocks({ role });
+      expect(await cancelChildClaimAction("turunan-1")).toEqual({
+        error: NATIONAL_SKP_MESSAGES.cancelNotOwner,
+      });
+      expect(mocks.rpc).not.toHaveBeenCalled();
+    }
+  });
+
+  it("akun nonaktif ditolak", async () => {
+    const { rpc } = setupCancelMocks({ isActive: false });
+    expect(await cancelChildClaimAction("turunan-1")).toEqual({ error: "Akun tidak aktif" });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("klaim yang tidak terlihat akun (RLS) → tidak ditemukan", async () => {
+    const { rpc } = setupCancelMocks({ child: null });
+    expect(await cancelChildClaimAction("turunan-1")).toEqual({ error: "Klaim tidak ditemukan" });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("SKP biasa bukan klaim turunan", async () => {
+    const { rpc } = setupCancelMocks({
+      child: { ...CHILD, parent_campaign_id: null, claim_owner_id: null },
+      role: "admin",
+    });
+    expect(await cancelChildClaimAction("turunan-1")).toEqual({
+      error: NATIONAL_SKP_MESSAGES.cancelNotChild,
+    });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("ditolak bila sudah ada realisasi atau sudah diajukan", async () => {
+    let mocks = setupCancelMocks({ realizations: 1 });
+    expect(await cancelChildClaimAction("turunan-1")).toEqual({
+      error: NATIONAL_SKP_MESSAGES.cancelHasRealization,
+    });
+    expect(mocks.rpc).not.toHaveBeenCalled();
+
+    mocks = setupCancelMocks({ child: { ...CHILD, status: "ongoing" } });
+    expect(await cancelChildClaimAction("turunan-1")).toEqual({
+      error: NATIONAL_SKP_MESSAGES.cancelHasRealization,
+    });
+
+    mocks = setupCancelMocks({ child: { ...CHILD, status: "claim_submitted" } });
+    expect(await cancelChildClaimAction("turunan-1")).toEqual({
+      error: NATIONAL_SKP_MESSAGES.cancelAlreadySubmitted,
+    });
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+
+  it("penolakan database diteruskan sebagai pesan ramah; error teknis tidak bocor", async () => {
+    setupCancelMocks({
+      rpcResult: {
+        data: null,
+        error: { code: "P0001", message: NATIONAL_SKP_MESSAGES.cancelHasRealization },
+      },
+    });
+    expect(await cancelChildClaimAction("turunan-1")).toEqual({
+      error: NATIONAL_SKP_MESSAGES.cancelHasRealization,
+    });
+
+    setupCancelMocks({
+      rpcResult: { data: null, error: { code: "42883", message: "function does not exist" } },
+    });
+    expect((await cancelChildClaimAction("turunan-1")).error).toBe(
+      "Klaim gagal dibatalkan — coba lagi sebentar lagi"
+    );
   });
 });

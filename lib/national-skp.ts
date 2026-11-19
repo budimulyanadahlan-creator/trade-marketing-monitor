@@ -38,6 +38,13 @@ export const NATIONAL_SKP_MESSAGES = {
   childOpenClaimExists:
     "Selesaikan atau batalkan klaim Anda yang belum diajukan sebelum membuat klaim baru",
   childNoReceipt: "Klaim SKP Nasional tidak memakai tanda terima",
+  cancelNotChild: "Hanya klaim atas SKP Nasional yang dapat dibatalkan lewat tombol ini",
+  cancelNotOwner: "Hanya pemilik klaim atau admin yang dapat membatalkan klaim ini",
+  cancelHasRealization:
+    "Klaim tidak dapat dibatalkan karena sudah punya realisasi — hubungi Finance",
+  cancelAlreadySubmitted:
+    "Klaim yang sudah diajukan tidak dapat dibatalkan di sini — gunakan Batalkan Pengajuan selama klaim belum disetujui",
+  cancelAlreadyCancelled: "Klaim ini sudah dibatalkan",
 } as const;
 
 export type NationalActor = { role: string };
@@ -213,5 +220,58 @@ export function nationalReceiptError(
 ): string | null {
   if (campaign.is_national) return NATIONAL_SKP_MESSAGES.parentActivity;
   if (campaign.parent_campaign_id) return NATIONAL_SKP_MESSAGES.childNoReceipt;
+  return null;
+}
+
+// ============================================================
+// Klaim berulang dan pembatalan (Fase 3)
+//
+// Satu akun boleh menagih SKP induk yang sama berkali-kali, tetapi hanya
+// punya satu klaim turunan yang belum diajukan pada satu waktu. Klaim yang
+// salah buat dibatalkan oleh pemiliknya (atau admin) selama belum ada
+// realisasi dan belum diajukan; baris, dokumen, dan nomor urutnya tetap ada.
+// Padanan di database: migrasi 076 (fungsi cancel_national_child_claim dan
+// trigger penjaga peralihan status Dibatalkan).
+// ============================================================
+
+/** Status klaim turunan yang belum diajukan — menghalangi klaim baru akun itu. */
+export const OPEN_CHILD_CLAIM_STATUSES = ["approved", "ongoing"] as const;
+
+/** true = klaim turunan berstatus ini masih "belum diajukan". */
+export function isOpenChildClaimStatus(status: string): boolean {
+  return (OPEN_CHILD_CLAIM_STATUSES as readonly string[]).includes(status);
+}
+
+export type CancelChildClaimActor = { id: string; role: string; is_active: boolean };
+
+export type CancelChildClaimTarget = {
+  parent_campaign_id?: string | null;
+  claim_owner_id?: string | null;
+  status: string;
+};
+
+/**
+ * Pesan error jika klaim turunan tidak boleh dibatalkan oleh akun ini, atau
+ * null jika boleh. Hanya pemilik atau admin/superadmin, hanya saat berstatus
+ * Disetujui dan belum punya realisasi (`realizationCount` = jumlah catatan
+ * realisasi pada klaim itu).
+ */
+export function cancelChildClaimError(
+  actor: CancelChildClaimActor,
+  child: CancelChildClaimTarget,
+  realizationCount: number
+): string | null {
+  const m = NATIONAL_SKP_MESSAGES;
+  if (!actor.is_active) return m.childInactive;
+  if (!child.parent_campaign_id) return m.cancelNotChild;
+
+  const isOwner =
+    actor.role === "distributor" && !!child.claim_owner_id && child.claim_owner_id === actor.id;
+  if (!isOwner && !isAdminRole(actor.role)) return m.cancelNotOwner;
+
+  if (child.status === "cancelled") return m.cancelAlreadyCancelled;
+  // Berjalan = Finance sudah mencatat realisasi.
+  if (child.status === "ongoing" || realizationCount > 0) return m.cancelHasRealization;
+  if (child.status !== "approved") return m.cancelAlreadySubmitted;
   return null;
 }

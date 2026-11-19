@@ -73,8 +73,9 @@ begin
   if public.distributor_campaign_access(turunan, owner_orphan) is not null then raise exception 'GAGAL: pemilik tanpa perusahaan tidak boleh lihat turunan'; end if;
   if public.distributor_campaign_access(turunan, nobody)     is not null then raise exception 'GAGAL: non-distributor harus null pada turunan'; end if;
 
-  -- jendela status
-  foreach s in array array['draft', 'cancelled'] loop
+  -- jendela status ('cancelled' diuji di tes 076: sejak migrasi 076 turunan
+  -- yang dibatalkan tetap terlihat pemiliknya, hanya lihat)
+  foreach s in array array['draft'] loop
     c := jsonb_populate_record(turunan, jsonb_build_object('status', s));
     if public.distributor_campaign_access(c, owner_wcj) is not null then raise exception 'GAGAL: turunan berstatus % tidak boleh terlihat', s; end if;
   end loop;

@@ -456,3 +456,38 @@ describe("distributorCampaignAccess — klaim turunan SKP nasional", () => {
     expect(distributorClaimActionError(viewer({ role: "superadmin", distributor_id: null }), turunan)).toBeNull();
   });
 });
+
+describe("distributorCampaignAccess — klaim turunan yang dibatalkan (Fase 3)", () => {
+  const OWNER = "user-owner";
+  const owner = viewer({ id: OWNER });
+  const batal = skp({
+    distributor_id: EDM,
+    region_id: WCJ,
+    parent_campaign_id: "skp-induk",
+    claim_owner_id: OWNER,
+    status: "cancelled",
+  });
+
+  it("pemilik tetap melihat klaimnya yang dibatalkan, tetapi tidak bisa bertindak", () => {
+    expect(distributorCampaignAccess(batal, owner)).toBe("view");
+    expect(distributorActionDenial(batal, owner)).toBe("claimCancelled");
+    expect(distributorClaimActionError(owner, batal)).toBe(DISTRIBUTOR_GUARD_MESSAGES.claimCancelled);
+  });
+
+  it("akun lain tetap tidak melihat klaim yang dibatalkan", () => {
+    expect(distributorCampaignAccess(batal, viewer({ id: "user-rekan" }))).toBeNull();
+    expect(distributorCampaignAccess(batal, viewer({ id: "user-mms", distributor_id: MMS }))).toBeNull();
+    expect(distributorCampaignAccess(batal, viewer({ id: OWNER, distributor_id: null }))).toBeNull();
+  });
+
+  it("status lain pada turunan tidak mengubah akses pemilik", () => {
+    for (const status of ["approved", "ongoing", "claim_submitted", "paid", "completed"]) {
+      expect(distributorCampaignAccess({ ...batal, status }, owner)).toBe("act");
+    }
+  });
+
+  it("SKP biasa yang dibatalkan tidak terpengaruh aturan ini", () => {
+    // Jendela status SKP biasa disaring RLS + DISTRIBUTOR_VISIBLE_CAMPAIGN_STATUSES.
+    expect(distributorActionDenial(skp({ status: "cancelled" }), cabangEdmWcj)).toBeNull();
+  });
+});
