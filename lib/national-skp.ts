@@ -47,6 +47,7 @@ export const NATIONAL_SKP_MESSAGES = {
   cancelAlreadyCancelled: "Klaim ini sudah dibatalkan",
   childParentClosed: "SKP Nasional ini sudah ditutup — klaim baru tidak dapat dibuat",
   deadlineInvalid: "Tanggal batas klaim tidak valid",
+  regionNotNational: "SKP Nasional harus ber-region National",
   closeNotApproved: "Hanya SKP Nasional berstatus Disetujui yang dapat ditutup",
   alreadyClosed: "SKP Nasional ini sudah ditutup",
   notClosed: "SKP Nasional ini belum ditutup",
@@ -622,4 +623,70 @@ export function transferChildOwnerError(
 /** true = pada status ini pemegang klaim ikut berpindah ke pemilik baru. */
 export function transferMovesClaimHolder(status: string): boolean {
   return status === "claim_submitted";
+}
+
+// ============================================================
+// Centang "Berlaku Nasional" di form SKP (Fase 9)
+//
+// Admin bisa membuat SKP yang sejak awal bertanda nasional: region terkunci ke
+// National, tanpa distributor, dengan batas klaim opsional. SKP itu melewati
+// alur approval biasa dan baru terlihat distributor setelah Disetujui (jendela
+// status di fungsi akses, migrasi 074). Aturan yang sama berlaku saat draft
+// atau SKP ditolak yang bertanda nasional diedit ulang. Role lain tidak pernah
+// menulis kolom nasional.
+// Padanan di database: trigger campaigns_guard_national (074) dan
+// campaigns_guard_national_close (080) — tidak ada migrasi baru.
+// ============================================================
+
+/** true = nama region ini adalah region National. */
+export function isNationalRegionName(regionName: string | null | undefined): boolean {
+  return !!regionName && regionName.trim().toLowerCase() === NATIONAL_REGION_NAME.toLowerCase();
+}
+
+export type NationalFormInput = {
+  /** Centang "Berlaku Nasional"; undefined/null = form tidak mengirim penanda. */
+  is_national?: boolean | null;
+  departmentName?: string | null;
+  regionName?: string | null;
+  /** YYYY-MM-DD; kosong = tanpa batas klaim. */
+  claim_deadline?: string | null;
+};
+
+/**
+ * Pesan error jika form SKP tidak boleh disimpan/diajukan dengan penanda
+ * nasional ini, atau null jika boleh. Tanpa penanda nasional tidak ada yang
+ * diperiksa.
+ */
+export function nationalFormError(actor: NationalActor, input: NationalFormInput): string | null {
+  const m = NATIONAL_SKP_MESSAGES;
+  if (!input.is_national) return null;
+  if (!isAdminRole(actor.role)) return m.notAdmin;
+  if (!isDistributorRequiredDepartment(input.departmentName)) return m.departmentNotVisible;
+  if (!isNationalRegionName(input.regionName)) return m.regionNotNational;
+  if (input.claim_deadline && !isValidDateString(input.claim_deadline)) return m.deadlineInvalid;
+  return null;
+}
+
+export type NationalFormColumns = {
+  is_national?: boolean;
+  distributor_id?: null;
+  claim_deadline?: string | null;
+};
+
+/**
+ * Kolom nasional yang ditulis form SKP ke baris campaigns (digabung di atas
+ * payload biasa). Kosong untuk role selain admin/superadmin dan untuk kiriman
+ * tanpa penanda — kolom nasional baris itu tidak disentuh.
+ */
+export function nationalFormColumns(
+  actor: NationalActor,
+  input: Pick<NationalFormInput, "is_national" | "claim_deadline">
+): NationalFormColumns {
+  if (!isAdminRole(actor.role) || input.is_national == null) return {};
+  if (!input.is_national) return { is_national: false, claim_deadline: null };
+  return {
+    is_national: true,
+    distributor_id: null,
+    claim_deadline: input.claim_deadline || null,
+  };
 }

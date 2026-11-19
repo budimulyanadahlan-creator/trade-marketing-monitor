@@ -31,6 +31,7 @@ import {
   distributorRequiredError,
   isDistributorRequiredDepartment,
 } from "@/lib/campaign-distributor-required";
+import { isNationalRegionName, nationalFormError } from "@/lib/national-skp";
 import type { CampaignFileRow } from "@/types/database";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -57,6 +58,9 @@ interface FormData {
   sales_projection: string;
   start_date: string;
   end_date: string;
+  // SKP Nasional (Fase 9) — hanya bisa diubah admin/superadmin
+  is_national: boolean;
+  claim_deadline: string;
 }
 
 interface PendingFile {
@@ -88,6 +92,8 @@ interface CampaignFormModalProps {
   masterBudgets?: MasterBudgetInfo[];
   /** When set, region dropdown is locked to this single region (Sales dept users). */
   lockedRegionId?: string | null;
+  /** Admin/superadmin: tampilkan centang "Berlaku Nasional" (SKP Nasional Fase 9). */
+  canMarkNational?: boolean;
 }
 
 // ─── Step Indicator ────────────────────────────────────────────────────────
@@ -145,6 +151,7 @@ function Step1({
   brands,
   regions,
   lockedRegionId,
+  canMarkNational,
 }: {
   data: FormData;
   onChange: (patch: Partial<FormData>) => void;
@@ -152,10 +159,26 @@ function Step1({
   brands: { id: string; name: string }[];
   regions: { id: string; name: string }[];
   lockedRegionId?: string | null;
+  canMarkNational: boolean;
 }) {
   const visibleRegions = lockedRegionId
     ? regions.filter((r) => r.id === lockedRegionId)
     : regions;
+  const nationalRegion = regions.find((r) => isNationalRegionName(r.name));
+  const regionLockedNational = canMarkNational && data.is_national;
+  const deptName = departments.find((d) => d.id === data.department_id)?.name;
+
+  function handleNationalToggle(checked: boolean) {
+    onChange(
+      checked
+        ? {
+            is_national: true,
+            region_id: nationalRegion?.id ?? data.region_id,
+            distributor_id: "",
+          }
+        : { is_national: false, claim_deadline: "" }
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -201,11 +224,43 @@ function Step1({
         </Select>
       </div>
 
+      {canMarkNational && (
+        <div className="rounded-md border border-white/10 bg-white/3 px-3 py-2.5 space-y-1">
+          <label htmlFor="c-national" className="flex items-center gap-2 cursor-pointer">
+            <input
+              id="c-national"
+              type="checkbox"
+              className="h-4 w-4 accent-emerald-500"
+              checked={data.is_national}
+              onChange={(e) => handleNationalToggle(e.target.checked)}
+            />
+            <span className="text-sm font-medium text-slate-200">Berlaku Nasional</span>
+          </label>
+          <p className="text-xs text-slate-500">
+            Setelah Disetujui, SKP terlihat oleh semua distributor di semua region. Tiap akun
+            distributor menagih lewat klaim turunannya sendiri.
+          </p>
+          {data.is_national && !nationalRegion && (
+            <p className="text-xs text-rose-400">
+              Region &ldquo;National&rdquo; belum ada di Master Data — tambahkan dulu.
+            </p>
+          )}
+          {data.is_national && data.department_id && !isDistributorRequiredDepartment(deptName) && (
+            <p className="text-xs text-amber-400">
+              SKP Nasional hanya untuk departemen Sales / Trade Marketing.
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="space-y-1.5">
         <Label htmlFor="c-region">
           Region *
           {lockedRegionId && (
             <span className="ml-2 text-xs text-slate-500">(terkunci ke region Anda)</span>
+          )}
+          {regionLockedNational && (
+            <span className="ml-2 text-xs text-slate-500">(terkunci — SKP Nasional)</span>
           )}
         </Label>
         <Select
@@ -213,7 +268,7 @@ function Step1({
           value={data.region_id}
           onChange={(e) => onChange({ region_id: e.target.value })}
           placeholder="— Pilih Region —"
-          disabled={!!lockedRegionId}
+          disabled={!!lockedRegionId || regionLockedNational}
         >
           {visibleRegions.map((r) => (
             <option key={r.id} value={r.id}>
@@ -250,6 +305,8 @@ function Step2({
   /** Sales / Trade Marketing: Distributor wajib (SKP tanpa distributor tidak terlihat distributor). */
   distributorRequired: boolean;
 }) {
+  // SKP nasional tidak punya distributor — kolomnya disembunyikan.
+  const hideDistributor = data.is_national;
   const selectedCategory = categories.find((c) => c.id === data.promotion_category_id);
   const showStoreId = selectedCategory
     ? STORE_ID_CATEGORY_CODES.includes(selectedCategory.account_code)
@@ -369,6 +426,7 @@ function Step2({
         </Select>
       </div>
 
+      {!hideDistributor && (
       <div className="space-y-1.5">
         <Label htmlFor="c-distributor">
           Distributor{distributorRequired && <span className="text-rose-400"> *</span>}
@@ -395,6 +453,7 @@ function Step2({
           </p>
         )}
       </div>
+      )}
 
       <div className="space-y-1.5">
         <Label htmlFor="c-obj">Objective</Label>
@@ -607,6 +666,25 @@ function Step3({
         </div>
       </div>
 
+      {data.is_national && (
+        <div className="space-y-1.5">
+          <Label htmlFor="c-claim-deadline">
+            Batas Klaim
+            <span className="ml-2 text-xs text-slate-500">(opsional)</span>
+          </Label>
+          <Input
+            id="c-claim-deadline"
+            type="date"
+            value={data.claim_deadline}
+            onChange={(e) => onChange({ claim_deadline: e.target.value })}
+          />
+          <p className="text-xs text-slate-500">
+            Pengingat untuk distributor dan Finance — klaim setelah tanggal ini tetap bisa
+            diajukan.
+          </p>
+        </div>
+      )}
+
       {/* File upload */}
       <div className="space-y-2">
         <Label>
@@ -687,12 +765,26 @@ function Step3({
 // function). Ini cuma validasi cepat di client; server tetap sumber kebenaran.
 const MIN_SUBMIT_BUDGET = 10_000;
 
-function validateStep1(data: FormData): string | null {
+function validateStep1(
+  data: FormData,
+  departments: { id: string; name: string }[],
+  regions: { id: string; name: string }[]
+): string | null {
   if (!data.name.trim()) return "Nama campaign harus diisi";
   if (!data.department_id) return "Departemen harus dipilih";
   if (!data.brand_id) return "Brand harus dipilih";
   if (!data.region_id) return "Region harus dipilih";
-  return null;
+  // Harus sama dengan aturan server (resolveNationalForm). Centang hanya bisa
+  // diubah admin/superadmin, jadi pelaku di sini selalu admin.
+  return nationalFormError(
+    { role: "admin" },
+    {
+      is_national: data.is_national,
+      departmentName: departments.find((d) => d.id === data.department_id)?.name,
+      regionName: regions.find((r) => r.id === data.region_id)?.name,
+      claim_deadline: data.claim_deadline,
+    }
+  );
 }
 
 function validateStep2(
@@ -702,7 +794,9 @@ function validateStep2(
   if (!data.channel_id) return "Channel harus dipilih";
   if (!data.promotion_category_id) return "Kategori promosi harus dipilih";
   if (!data.mechanism.trim()) return "Mekanisme harus diisi";
-  // Harus sama dengan aturan server di submitCampaignAction.
+  // Harus sama dengan aturan server di submitCampaignAction. SKP nasional
+  // tidak punya distributor.
+  if (data.is_national) return null;
   const deptName = departments.find((d) => d.id === data.department_id)?.name;
   const distributorError = distributorRequiredError(deptName, data.distributor_id);
   if (distributorError) return distributorError;
@@ -746,6 +840,8 @@ const EMPTY_FORM: FormData = {
   sales_projection: "",
   start_date: "",
   end_date: "",
+  is_national: false,
+  claim_deadline: "",
 };
 
 export function CampaignFormModal({
@@ -763,6 +859,7 @@ export function CampaignFormModal({
   distributors,
   masterBudgets,
   lockedRegionId,
+  canMarkNational = false,
 }: CampaignFormModalProps) {
   const router = useRouter();
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -806,6 +903,15 @@ export function CampaignFormModal({
       clearTimeout(timer);
     };
   }, [open, checkedAAId, checkedCampaignId, numRequestedBudget]);
+
+  // Penanda nasional hanya dikirim oleh admin/superadmin; role lain tidak
+  // pernah mengirimnya sehingga kolom nasional baris itu tidak tersentuh.
+  const nationalFields = canMarkNational
+    ? {
+        is_national: formData.is_national,
+        claim_deadline: formData.is_national ? formData.claim_deadline || null : null,
+      }
+    : {};
 
   const patch = useCallback((p: Partial<FormData>) => {
     setFormData((prev) => ({ ...prev, ...p }));
@@ -868,7 +974,7 @@ export function CampaignFormModal({
   }
 
   async function handleSaveDraft() {
-    const step1Error = validateStep1(formData);
+    const step1Error = validateStep1(formData, departments, regions);
     if (step1Error) {
       setError(step1Error);
       return;
@@ -896,6 +1002,7 @@ export function CampaignFormModal({
         sales_projection: Number(formData.sales_projection.replace(/\D/g, "")) || 0,
         start_date: formData.start_date || null,
         end_date: formData.end_date || null,
+        ...nationalFields,
       });
 
       if (result.error) {
@@ -920,7 +1027,7 @@ export function CampaignFormModal({
 
   async function handleNext() {
     let err: string | null = null;
-    if (step === 1) err = validateStep1(formData);
+    if (step === 1) err = validateStep1(formData, departments, regions);
     else if (step === 2) err = validateStep2(formData, departments);
 
     if (err) {
@@ -937,6 +1044,7 @@ export function CampaignFormModal({
           department_id: formData.department_id,
           brand_id: formData.brand_id,
           region_id: formData.region_id,
+          ...nationalFields,
         });
         if (result.error) {
           setError(result.error);
@@ -953,7 +1061,7 @@ export function CampaignFormModal({
   }
 
   async function handleSubmit() {
-    const step1Error = validateStep1(formData);
+    const step1Error = validateStep1(formData, departments, regions);
     const step2Error = validateStep2(formData, departments);
     const step3Error = validateStep3(formData, pendingFiles, existingFiles);
     const firstError = step1Error ?? step2Error ?? step3Error;
@@ -973,6 +1081,7 @@ export function CampaignFormModal({
           department_id: formData.department_id,
           brand_id: formData.brand_id,
           region_id: formData.region_id,
+          ...nationalFields,
         });
         if (draft.error) {
           setError(draft.error);
@@ -1005,6 +1114,7 @@ export function CampaignFormModal({
         sales_projection: Number(formData.sales_projection.replace(/\D/g, "")) || 0,
         start_date: formData.start_date,
         end_date: formData.end_date,
+        ...nationalFields,
       });
 
       if (result.error) {
@@ -1049,6 +1159,7 @@ export function CampaignFormModal({
               brands={brands}
               regions={regions}
               lockedRegionId={lockedRegionId}
+              canMarkNational={canMarkNational}
             />
           )}
           {step === 2 && (

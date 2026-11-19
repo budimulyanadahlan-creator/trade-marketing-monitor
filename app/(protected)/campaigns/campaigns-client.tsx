@@ -661,8 +661,11 @@ export function CampaignsClient({
           sales_projection: editingCampaign.sales_projection?.toString() ?? "0",
           start_date: editingCampaign.start_date ?? "",
           end_date: editingCampaign.end_date ?? "",
+          is_national: !!editingCampaign.is_national,
+          claim_deadline: editingCampaign.claim_deadline ?? "",
         } : undefined}
         existingFiles={editingCampaign ? editingCampaignFiles : []}
+        canMarkNational={isAdminOrSuperadmin}
         {...masterData}
       />
     </div>

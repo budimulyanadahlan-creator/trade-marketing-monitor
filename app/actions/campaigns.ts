@@ -7,7 +7,12 @@ import type { CampaignStatus, CampaignFileRow } from "@/types/database";
 import { sendSkpSubmittedEmail } from "@/lib/email";
 import { distributorClaimActionError } from "@/lib/distributor-campaign-guard";
 import { distributorRequiredError } from "@/lib/campaign-distributor-required";
-import { nationalReceiptError } from "@/lib/national-skp";
+import {
+  nationalFormColumns,
+  nationalFormError,
+  nationalReceiptError,
+  type NationalFormColumns,
+} from "@/lib/national-skp";
 
 // Budget SKP asli terkecil di sistem (per Agustus 2026) adalah ~Rp168.000 —
 // threshold ini jauh di bawahnya sehingga tidak menolak SKP sah manapun,
@@ -37,6 +42,40 @@ async function requireActiveUser() {
   return { supabase, userId: user.id, profile };
 }
 
+/**
+ * Centang "Berlaku Nasional" di form SKP (SKP Nasional Fase 9): memeriksa
+ * penanda nasional yang dikirim form dan mengembalikan kolom nasional yang
+ * harus ditulis. Hanya admin/superadmin yang boleh mengirim penanda; untuk
+ * role lain kolom nasional baris itu tidak disentuh.
+ */
+async function resolveNationalForm(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  role: string,
+  fields: {
+    is_national?: boolean | null;
+    claim_deadline?: string | null;
+    department_id: string;
+    region_id: string;
+  }
+): Promise<{ error: string | null; columns: NationalFormColumns }> {
+  const actor = { role };
+  if (!fields.is_national) {
+    return { error: null, columns: nationalFormColumns(actor, fields) };
+  }
+
+  const [{ data: dept }, { data: region }] = await Promise.all([
+    supabase.from("departments").select("name").eq("id", fields.department_id).single(),
+    supabase.from("regions").select("name").eq("id", fields.region_id).single(),
+  ]);
+  const error = nationalFormError(actor, {
+    is_national: true,
+    departmentName: dept?.name,
+    regionName: region?.name,
+    claim_deadline: fields.claim_deadline,
+  });
+  return { error, columns: error ? {} : nationalFormColumns(actor, fields) };
+}
+
 // ============================================================
 // SAVE DRAFT
 // ============================================================
@@ -60,6 +99,8 @@ const draftSchema = z.object({
   sales_projection: z.coerce.number().min(0).optional(),
   start_date: z.string().optional().nullable(),
   end_date: z.string().optional().nullable(),
+  is_national: z.boolean().optional().nullable(),
+  claim_deadline: z.string().optional().nullable(),
 });
 
 export type SaveDraftResult = { error?: string; campaignId?: string };
@@ -68,7 +109,7 @@ export async function saveDraftCampaignAction(
   data: z.infer<typeof draftSchema>
 ): Promise<SaveDraftResult> {
   try {
-    const { supabase, userId } = await requireActiveUser();
+    const { supabase, userId, profile } = await requireActiveUser();
 
     const parsed = draftSchema.safeParse(data);
     if (!parsed.success) {
@@ -76,6 +117,9 @@ export async function saveDraftCampaignAction(
     }
 
     const { id, ...fields } = parsed.data;
+
+    const national = await resolveNationalForm(supabase, profile.role, fields);
+    if (national.error) return { error: national.error };
 
     const payload = {
       name: fields.name,
@@ -96,6 +140,8 @@ export async function saveDraftCampaignAction(
       start_date: fields.start_date ?? null,
       end_date: fields.end_date ?? null,
       status: "draft" as CampaignStatus,
+      // SKP nasional: tanpa distributor, batas klaim opsional (Fase 9).
+      ...national.columns,
     };
 
     if (id) {
@@ -147,6 +193,8 @@ const submitSchema = z.object({
   sales_projection: z.coerce.number().min(0).optional().default(0),
   start_date: z.string().min(1, "Tanggal mulai harus diisi"),
   end_date: z.string().min(1, "Tanggal selesai harus diisi"),
+  is_national: z.boolean().optional().nullable(),
+  claim_deadline: z.string().optional().nullable(),
 });
 
 export type SubmitCampaignResult = { error?: string; success?: boolean };
@@ -166,15 +214,18 @@ export async function submitCampaignAction(
 
     // Distributor wajib untuk SKP Sales / Trade Marketing (Fase 5 multi-user
     // distributor): tanpa distributor_id SKP tidak terlihat oleh distributor.
+    // SKP nasional dikecualikan — terlihat semua distributor tanpa distributor.
+    const national = await resolveNationalForm(supabase, profile.role, fields);
+    if (national.error) return { error: national.error };
+
     const { data: campaignDept } = await supabase
       .from("departments")
       .select("name")
       .eq("id", fields.department_id)
       .single();
-    const distributorError = distributorRequiredError(
-      campaignDept?.name,
-      fields.distributor_id
-    );
+    const distributorError = national.columns.is_national
+      ? null
+      : distributorRequiredError(campaignDept?.name, fields.distributor_id);
     if (distributorError) return { error: distributorError };
 
     // Validate that at least one file has been uploaded for this campaign
@@ -222,6 +273,7 @@ export async function submitCampaignAction(
         end_date: fields.end_date,
         status: "submitted" as CampaignStatus,
         submitted_at: new Date().toISOString(),
+        ...national.columns,
       })
       .eq("id", id)
       .eq("created_by", userId);

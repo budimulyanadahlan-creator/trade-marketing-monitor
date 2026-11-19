@@ -406,3 +406,146 @@ describe("createDistributorReceiptAction — SKP induk nasional (SKP Nasional Fa
     expect(insertChain.insert).not.toHaveBeenCalled();
   });
 });
+
+// -------------------------------------------------------
+// Centang "Berlaku Nasional" di form SKP (SKP Nasional Fase 9)
+// -------------------------------------------------------
+
+describe("form SKP — penanda Berlaku Nasional", () => {
+  function setupNational({
+    role = "admin",
+    deptName = "Trade Marketing",
+    regionName = "National",
+  }: { role?: string; deptName?: string; regionName?: string } = {}) {
+    const captured: { payload?: Record<string, unknown> } = {};
+    const campaigns = {
+      insert: vi.fn().mockImplementation((p: unknown) => {
+        captured.payload = p as Record<string, unknown>;
+        return {
+          select: vi.fn().mockReturnThis(),
+          single: vi.fn().mockResolvedValue({ data: { id: uuid }, error: null }),
+        };
+      }),
+      update: vi.fn().mockImplementation((p: unknown) => {
+        captured.payload = p as Record<string, unknown>;
+        return campaigns;
+      }),
+      eq: vi.fn().mockImplementation(() => campaigns),
+      then: (resolve: (v: { error: null }) => void) => resolve({ error: null }),
+    };
+    const mockClient = {
+      auth: {
+        getUser: vi.fn().mockResolvedValue({ data: { user: { id: "user-1" } } }),
+      },
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "users")
+          return makeQueryChain({ role, is_active: true, department_id: null, region_id: null });
+        if (table === "departments") return makeQueryChain({ name: deptName });
+        if (table === "regions") return makeQueryChain({ name: regionName });
+        if (table === "campaign_files") return makeFileCountChain(1);
+        if (table === "campaigns") return campaigns;
+        if (table === "approval_history")
+          return { insert: vi.fn().mockResolvedValue({ error: null }) };
+        return {};
+      }),
+    };
+    (createClient as ReturnType<typeof vi.fn>).mockResolvedValue(mockClient);
+    return { captured, campaigns };
+  }
+
+  const draft = { name: "SKP Nasional", department_id: uuid, brand_id: uuid, region_id: uuid };
+
+  it("draft: admin menyimpan SKP nasional tanpa distributor beserta batas klaim", async () => {
+    const { captured } = setupNational();
+    const result = await saveDraftCampaignAction({
+      ...draft,
+      distributor_id: uuid,
+      is_national: true,
+      claim_deadline: "2026-12-31",
+    });
+    expect(result.error).toBeUndefined();
+    expect(captured.payload).toMatchObject({
+      is_national: true,
+      distributor_id: null,
+      claim_deadline: "2026-12-31",
+      status: "draft",
+    });
+  });
+
+  it("draft: role selain admin ditolak mengirim penanda nasional", async () => {
+    const { campaigns } = setupNational({ role: "user" });
+    const result = await saveDraftCampaignAction({ ...draft, is_national: true });
+    expect(result.error).toBe("Hanya admin yang dapat mengubah tanda SKP Nasional");
+    expect(campaigns.insert).not.toHaveBeenCalled();
+  });
+
+  it("draft: role selain admin tidak pernah menulis kolom nasional", async () => {
+    const { captured } = setupNational({ role: "user" });
+    const result = await saveDraftCampaignAction({ ...draft, is_national: false });
+    expect(result.error).toBeUndefined();
+    expect(captured.payload).not.toHaveProperty("is_national");
+    expect(captured.payload).not.toHaveProperty("claim_deadline");
+  });
+
+  it("draft: SKP nasional ditolak bila region bukan National atau departemen bukan Sales/TM", async () => {
+    const a = setupNational({ regionName: "Jawa Barat" });
+    expect((await saveDraftCampaignAction({ ...draft, is_national: true })).error).toBe(
+      "SKP Nasional harus ber-region National"
+    );
+    expect(a.campaigns.insert).not.toHaveBeenCalled();
+
+    const b = setupNational({ deptName: "Marketing" });
+    expect((await saveDraftCampaignAction({ ...draft, is_national: true })).error).toContain(
+      "Sales / Trade Marketing"
+    );
+    expect(b.campaigns.insert).not.toHaveBeenCalled();
+  });
+
+  it("draft: admin melepas centang saat edit — tanda dicabut dan batas klaim dikosongkan", async () => {
+    const { captured } = setupNational();
+    const result = await saveDraftCampaignAction({
+      ...draft,
+      id: uuid,
+      is_national: false,
+      claim_deadline: "2026-12-31",
+    });
+    expect(result.error).toBeUndefined();
+    expect(captured.payload).toMatchObject({ is_national: false, claim_deadline: null });
+  });
+
+  it("ajukan: SKP nasional Sales/TM lolos tanpa distributor", async () => {
+    const { captured } = setupNational({ deptName: "Sales" });
+    const result = await submitCampaignAction(
+      baseSubmitData({ is_national: true, claim_deadline: "2026-12-31" }) as Parameters<
+        typeof submitCampaignAction
+      >[0]
+    );
+    expect(result.error).toBeUndefined();
+    expect(captured.payload).toMatchObject({
+      is_national: true,
+      distributor_id: null,
+      claim_deadline: "2026-12-31",
+      status: "submitted",
+    });
+  });
+
+  it("ajukan: role selain admin ditolak mengirim penanda nasional", async () => {
+    const { campaigns } = setupNational({ role: "manager", deptName: "Sales" });
+    const result = await submitCampaignAction(
+      baseSubmitData({ is_national: true }) as Parameters<typeof submitCampaignAction>[0]
+    );
+    expect(result.error).toBe("Hanya admin yang dapat mengubah tanda SKP Nasional");
+    expect(campaigns.update).not.toHaveBeenCalled();
+  });
+
+  it("ajukan: batas klaim yang bukan tanggal sah ditolak", async () => {
+    const { campaigns } = setupNational();
+    const result = await submitCampaignAction(
+      baseSubmitData({ is_national: true, claim_deadline: "2026-02-31" }) as Parameters<
+        typeof submitCampaignAction
+      >[0]
+    );
+    expect(result.error).toBe("Tanggal batas klaim tidak valid");
+    expect(campaigns.update).not.toHaveBeenCalled();
+  });
+});

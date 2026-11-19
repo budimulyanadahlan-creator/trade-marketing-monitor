@@ -764,3 +764,102 @@ describe("transferChildOwnerError — alih kepemilikan klaim turunan", () => {
     }
   });
 });
+
+// ============================================================
+// Centang "Berlaku Nasional" di form SKP (Fase 9)
+// ============================================================
+
+import { nationalFormError, nationalFormColumns, isNationalRegionName } from "./national-skp";
+
+describe("nationalFormError — centang Berlaku Nasional di form SKP", () => {
+  const input = {
+    is_national: true,
+    departmentName: "Trade Marketing",
+    regionName: "National",
+    claim_deadline: "2026-12-31",
+  };
+
+  it("admin dan superadmin boleh membuat SKP nasional Sales/TM ber-region National", () => {
+    expect(nationalFormError(admin, input)).toBeNull();
+    expect(nationalFormError(superadmin, { ...input, departmentName: "sales", claim_deadline: null })).toBeNull();
+  });
+
+  it("role lain ditolak mengirim penanda nasional", () => {
+    for (const role of ["user", "manager", "finance", "distributor"]) {
+      expect(nationalFormError({ role }, input)).toBe(NATIONAL_SKP_MESSAGES.notAdmin);
+    }
+  });
+
+  it("tanpa penanda nasional tidak ada yang diperiksa, untuk role apa pun", () => {
+    const plain = { departmentName: "Marketing", regionName: "Jawa Barat", claim_deadline: "bukan-tanggal" };
+    expect(nationalFormError({ role: "user" }, { ...plain, is_national: false })).toBeNull();
+    expect(nationalFormError({ role: "user" }, plain)).toBeNull();
+    expect(nationalFormError(admin, { ...plain, is_national: null })).toBeNull();
+  });
+
+  it("departemen selain Sales/TM ditolak — tidak terlihat distributor", () => {
+    expect(nationalFormError(admin, { ...input, departmentName: "Marketing" })).toBe(
+      NATIONAL_SKP_MESSAGES.departmentNotVisible
+    );
+    expect(nationalFormError(admin, { ...input, departmentName: null })).toBe(
+      NATIONAL_SKP_MESSAGES.departmentNotVisible
+    );
+  });
+
+  it("region selain National ditolak", () => {
+    expect(nationalFormError(admin, { ...input, regionName: "Jawa Barat" })).toBe(
+      NATIONAL_SKP_MESSAGES.regionNotNational
+    );
+    expect(nationalFormError(admin, { ...input, regionName: null })).toBe(
+      NATIONAL_SKP_MESSAGES.regionNotNational
+    );
+    expect(nationalFormError(admin, { ...input, regionName: " national " })).toBeNull();
+  });
+
+  it("batas klaim opsional tetapi harus tanggal yang sah", () => {
+    expect(nationalFormError(admin, { ...input, claim_deadline: "" })).toBeNull();
+    expect(nationalFormError(admin, { ...input, claim_deadline: undefined })).toBeNull();
+    expect(nationalFormError(admin, { ...input, claim_deadline: "2026-02-31" })).toBe(
+      NATIONAL_SKP_MESSAGES.deadlineInvalid
+    );
+  });
+
+  it("isNationalRegionName mengenali region National tanpa peduli huruf dan spasi", () => {
+    expect(isNationalRegionName("National")).toBe(true);
+    expect(isNationalRegionName(" NATIONAL ")).toBe(true);
+    expect(isNationalRegionName("Jawa Barat")).toBe(false);
+    expect(isNationalRegionName(null)).toBe(false);
+  });
+});
+
+describe("nationalFormColumns — kolom nasional yang ditulis form SKP", () => {
+  it("role selain admin tidak pernah menulis kolom nasional", () => {
+    expect(nationalFormColumns({ role: "user" }, { is_national: false })).toEqual({});
+    expect(nationalFormColumns({ role: "manager" }, {})).toEqual({});
+  });
+
+  it("admin tanpa penanda di kiriman (klien lama) tidak menyentuh kolom nasional", () => {
+    expect(nationalFormColumns(admin, {})).toEqual({});
+    expect(nationalFormColumns(admin, { is_national: null, claim_deadline: "2026-12-31" })).toEqual({});
+  });
+
+  it("dicentang: nasional, tanpa distributor, batas klaim tersimpan (kosong = null)", () => {
+    expect(nationalFormColumns(admin, { is_national: true, claim_deadline: "2026-12-31" })).toEqual({
+      is_national: true,
+      distributor_id: null,
+      claim_deadline: "2026-12-31",
+    });
+    expect(nationalFormColumns(superadmin, { is_national: true, claim_deadline: "" })).toEqual({
+      is_national: true,
+      distributor_id: null,
+      claim_deadline: null,
+    });
+  });
+
+  it("centang dilepas: tanda dicabut dan batas klaim dikosongkan, distributor tidak disentuh", () => {
+    expect(nationalFormColumns(admin, { is_national: false, claim_deadline: "2026-12-31" })).toEqual({
+      is_national: false,
+      claim_deadline: null,
+    });
+  });
+});

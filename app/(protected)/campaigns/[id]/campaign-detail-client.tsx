@@ -2662,6 +2662,8 @@ export function CampaignDetailClient({
     sales_projection: campaign.sales_projection ? String(campaign.sales_projection) : "",
     start_date: campaign.start_date ?? "",
     end_date: campaign.end_date ?? "",
+    is_national: !!campaign.is_national,
+    claim_deadline: campaign.claim_deadline ?? "",
   };
 
   return (
@@ -3557,6 +3559,7 @@ export function CampaignDetailClient({
           vendors={vendors}
           distributors={distributors}
           masterBudgets={masterBudgets}
+          canMarkNational={isAdminOrSuperadmin}
         />
       )}
     </div>
