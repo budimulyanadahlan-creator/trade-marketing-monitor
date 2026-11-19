@@ -45,6 +45,12 @@ export const NATIONAL_SKP_MESSAGES = {
   cancelAlreadySubmitted:
     "Klaim yang sudah diajukan tidak dapat dibatalkan di sini — gunakan Batalkan Pengajuan selama klaim belum disetujui",
   cancelAlreadyCancelled: "Klaim ini sudah dibatalkan",
+  childParentClosed: "SKP Nasional ini sudah ditutup — klaim baru tidak dapat dibuat",
+  deadlineInvalid: "Tanggal batas klaim tidak valid",
+  closeNotApproved: "Hanya SKP Nasional berstatus Disetujui yang dapat ditutup",
+  alreadyClosed: "SKP Nasional ini sudah ditutup",
+  notClosed: "SKP Nasional ini belum ditutup",
+  reopenCompleted: "SKP Nasional yang sudah Selesai tidak dapat dibuka kembali",
 } as const;
 
 export type NationalActor = { role: string };
@@ -174,6 +180,8 @@ export type ChildClaimParent = {
   is_national?: boolean | null;
   parent_campaign_id?: string | null;
   skp_number: string | null;
+  /** Terisi = induk sudah ditutup admin (Fase 7). */
+  national_closed_at?: string | null;
 };
 
 /**
@@ -191,6 +199,9 @@ export function createChildClaimError(
   if (!actor.is_active) return m.childInactive;
   if (!actor.distributor_id) return m.childNoCompany;
   if (!parent.is_national || parent.parent_campaign_id) return m.notNational;
+  // Ditutup diperiksa sebelum status: induk tertutup yang sudah Selesai tetap
+  // dijelaskan sebagai "sudah ditutup". Batas klaim tidak pernah menolak.
+  if (parent.national_closed_at) return m.childParentClosed;
   if (parent.status !== "approved") return m.childParentNotApproved;
   if (!parent.skp_number) return m.childParentNoNumber;
   if (openChildClaims > 0) return m.childOpenClaimExists;
@@ -424,4 +435,110 @@ export function activeChildClaimCountByParentId(
     counts[child.parent_campaign_id] = (counts[child.parent_campaign_id] ?? 0) + 1;
   }
   return counts;
+}
+
+// ============================================================
+// Batas klaim, tutup, dan selesai otomatis (Fase 7)
+//
+// "Batas klaim" hanya pengingat: distributor tetap bisa membuat dan mengajukan
+// klaim setelah tanggal itu; Finance diberi keterangan pada klaim yang
+// terlambat. Yang menghentikan klaim baru adalah penutupan oleh admin. Induk
+// yang sudah ditutup menjadi Selesai otomatis begitu tidak ada lagi klaim
+// turunan yang berjalan; selama belum Selesai admin bisa membukanya kembali.
+// Padanan di database: migrasi 080 (kolom, trigger penutupan, trigger selesai
+// otomatis, dan penolakan di create_national_child_claim).
+// ============================================================
+
+/** Status klaim turunan yang tidak lagi menahan induk tertutup untuk selesai. */
+export const SETTLED_CHILD_STATUSES = ["completed", "cancelled"] as const;
+
+/**
+ * true = induk ini harus berstatus Selesai sekarang: bertanda nasional,
+ * Disetujui, sudah ditutup, dan semua klaim turunannya Selesai atau
+ * Dibatalkan (termasuk bila tidak punya turunan). Induk yang belum ditutup
+ * tidak pernah selesai otomatis.
+ */
+export function nationalAutoCompleteDue(
+  parent: { is_national?: boolean | null; status: string; national_closed_at?: string | null },
+  childStatuses: string[]
+): boolean {
+  if (!parent.is_national || parent.status !== "approved" || !parent.national_closed_at) {
+    return false;
+  }
+  return childStatuses.every((s) => (SETTLED_CHILD_STATUSES as readonly string[]).includes(s));
+}
+
+/** Tanggal kalender (YYYY-MM-DD) sebuah saat menurut WIB (UTC+7, tanpa DST). */
+function jakartaDateString(at: Date): string {
+  return new Date(at.getTime() + 7 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+/** true = hari ini (WIB) sudah melewati batas klaim. Hari batas itu sendiri belum terlewat. */
+export function isClaimDeadlinePassed(deadline: string | null | undefined, now: Date): boolean {
+  return !!deadline && jakartaDateString(now) > deadline;
+}
+
+/** true = klaim diajukan pada tanggal (WIB) setelah batas klaim induknya. */
+export function isSubmittedAfterDeadline(
+  deadline: string | null | undefined,
+  claimSubmittedAt: string | null | undefined
+): boolean {
+  if (!deadline || !claimSubmittedAt) return false;
+  const at = new Date(claimSubmittedAt);
+  if (Number.isNaN(at.getTime())) return false;
+  return jakartaDateString(at) > deadline;
+}
+
+function isValidDateString(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const d = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
+}
+
+/**
+ * Pesan error jika batas klaim tidak boleh diisi/diubah, atau null jika boleh.
+ * `deadline` null = mengosongkan batas klaim.
+ */
+export function claimDeadlineError(
+  actor: NationalActor,
+  campaign: { is_national?: boolean | null; parent_campaign_id?: string | null },
+  deadline: string | null
+): string | null {
+  const m = NATIONAL_SKP_MESSAGES;
+  if (!isAdminRole(actor.role)) return m.notAdmin;
+  if (!campaign.is_national || campaign.parent_campaign_id) return m.notNational;
+  if (deadline !== null && !isValidDateString(deadline)) return m.deadlineInvalid;
+  return null;
+}
+
+export type NationalCloseTarget = {
+  is_national?: boolean | null;
+  status: string;
+  national_closed_at?: string | null;
+};
+
+/** Pesan error jika SKP induk tidak boleh ditutup, atau null jika boleh. */
+export function closeNationalError(
+  actor: NationalActor,
+  campaign: NationalCloseTarget
+): string | null {
+  const m = NATIONAL_SKP_MESSAGES;
+  if (!isAdminRole(actor.role)) return m.notAdmin;
+  if (!campaign.is_national) return m.notNational;
+  if (campaign.national_closed_at) return m.alreadyClosed;
+  if (campaign.status !== "approved") return m.closeNotApproved;
+  return null;
+}
+
+/** Pesan error jika SKP induk tidak boleh dibuka kembali, atau null jika boleh. */
+export function reopenNationalError(
+  actor: NationalActor,
+  campaign: NationalCloseTarget
+): string | null {
+  const m = NATIONAL_SKP_MESSAGES;
+  if (!isAdminRole(actor.role)) return m.notAdmin;
+  if (!campaign.is_national) return m.notNational;
+  if (!campaign.national_closed_at) return m.notClosed;
+  if (campaign.status === "completed") return m.reopenCompleted;
+  return null;
 }

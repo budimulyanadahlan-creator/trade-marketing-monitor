@@ -6,8 +6,11 @@ import {
   NATIONAL_REGION_NAME,
   OPEN_CHILD_CLAIM_STATUSES,
   cancelChildClaimError,
+  claimDeadlineError,
+  closeNationalError,
   createChildClaimError,
   makeNationalError,
+  reopenNationalError,
   unmakeNationalError,
 } from "@/lib/national-skp";
 
@@ -223,7 +226,7 @@ export async function createChildClaimAction(parentId: string): Promise<CreateCh
     // terlihat oleh akun ini (Disetujui s.d. Selesai, Sales/TM) yang lolos.
     const { data: parent } = await supabase
       .from("campaigns")
-      .select("id, status, is_national, parent_campaign_id, skp_number")
+      .select("id, status, is_national, parent_campaign_id, skp_number, national_closed_at")
       .eq("id", parentId)
       .single();
 
@@ -344,6 +347,151 @@ export async function cancelChildClaimAction(childId: string): Promise<NationalR
     revalidatePath("/campaigns");
     revalidatePath(`/campaigns/${childId}`);
     if (child.parent_campaign_id) revalidatePath(`/campaigns/${child.parent_campaign_id}`);
+    return { success: true };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Terjadi kesalahan" };
+  }
+}
+
+// ============================================================
+// Batas klaim, tutup, dan buka kembali (SKP Nasional, Fase 7)
+// ============================================================
+
+type NationalParentState = {
+  id: string;
+  status: string;
+  is_national: boolean | null;
+  parent_campaign_id: string | null;
+  national_closed_at: string | null;
+};
+
+async function readNationalParentState(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  campaignId: string
+): Promise<NationalParentState | null> {
+  const { data } = await supabase
+    .from("campaigns")
+    .select("id, status, is_national, parent_campaign_id, national_closed_at")
+    .eq("id", campaignId)
+    .single();
+  return (data ?? null) as NationalParentState | null;
+}
+
+/**
+ * Batas klaim: admin/superadmin mengisi, mengubah, atau mengosongkan (string
+ * kosong / null) tenggat penagihan SKP induk. Hanya pengingat — tidak pernah
+ * menolak pembuatan atau pengajuan klaim. Syaratnya di claimDeadlineError;
+ * database memeriksa ulang lewat trigger migrasi 080.
+ */
+export async function setClaimDeadlineAction(
+  campaignId: string,
+  deadline: string | null
+): Promise<NationalResult> {
+  try {
+    const { supabase, actor, error: authError } = await requireActor();
+    if (!actor) return { error: authError ?? "Unauthorized" };
+
+    const campaign = await readNationalParentState(supabase, campaignId);
+    if (!campaign) return { error: "SKP tidak ditemukan" };
+
+    const value = deadline && deadline.trim() !== "" ? deadline.trim() : null;
+    const ruleError = claimDeadlineError(actor, campaign, value);
+    if (ruleError) return { error: ruleError };
+
+    const { data: updated, error } = await supabase
+      .from("campaigns")
+      .update({ claim_deadline: value })
+      .eq("id", campaignId)
+      .eq("is_national", true)
+      .select("id");
+
+    if (error) return { error: error.message };
+    if (!updated || updated.length === 0) return { error: STALE_MESSAGE };
+
+    revalidatePath("/campaigns");
+    revalidatePath(`/campaigns/${campaignId}`);
+    return { success: true };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Terjadi kesalahan" };
+  }
+}
+
+export type CloseNationalResult = NationalResult & {
+  /** true = induk langsung berstatus Selesai (tidak ada klaim turunan yang berjalan). */
+  completed?: boolean;
+};
+
+/**
+ * Tutup SKP Nasional: tidak ada klaim turunan baru; klaim yang sedang
+ * berjalan tetap diproses. Trigger migrasi 080 mencatat waktu & pelaku dan
+ * menjadikan induk Selesai — langsung bila tidak ada turunan yang berjalan,
+ * atau nanti saat turunan terakhir Selesai/Dibatalkan. Syaratnya di
+ * closeNationalError.
+ */
+export async function closeNationalAction(campaignId: string): Promise<CloseNationalResult> {
+  try {
+    const { supabase, actor, error: authError } = await requireActor();
+    if (!actor) return { error: authError ?? "Unauthorized" };
+
+    const campaign = await readNationalParentState(supabase, campaignId);
+    if (!campaign) return { error: "SKP tidak ditemukan" };
+
+    const ruleError = closeNationalError(actor, campaign);
+    if (ruleError) return { error: ruleError };
+
+    // Syarat diulang di WHERE agar penutupan ganda / perubahan status
+    // bersamaan tidak tertimpa.
+    const { data: updated, error } = await supabase
+      .from("campaigns")
+      .update({ national_closed_at: new Date().toISOString(), national_closed_by: actor.id })
+      .eq("id", campaignId)
+      .eq("is_national", true)
+      .eq("status", "approved")
+      .is("national_closed_at", null)
+      .select("id, status");
+
+    if (error) return { error: error.message };
+    if (!updated || updated.length === 0) return { error: STALE_MESSAGE };
+
+    revalidatePath("/campaigns");
+    revalidatePath(`/campaigns/${campaignId}`);
+    return { success: true, completed: updated[0].status === "completed" };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Terjadi kesalahan" };
+  }
+}
+
+/**
+ * Buka Kembali: induk yang sudah ditutup menerima klaim turunan lagi, selama
+ * belum berstatus Selesai. Syaratnya di reopenNationalError.
+ */
+export async function reopenNationalAction(campaignId: string): Promise<NationalResult> {
+  try {
+    const { supabase, actor, error: authError } = await requireActor();
+    if (!actor) return { error: authError ?? "Unauthorized" };
+
+    const campaign = await readNationalParentState(supabase, campaignId);
+    if (!campaign) return { error: "SKP tidak ditemukan" };
+
+    const ruleError = reopenNationalError(actor, campaign);
+    if (ruleError) return { error: ruleError };
+
+    // Induk bisa menjadi Selesai di detik yang sama (turunan terakhir
+    // diselesaikan Finance) — WHERE menolak pembukaan yang terlambat.
+    const { data: updated, error } = await supabase
+      .from("campaigns")
+      .update({ national_closed_at: null, national_closed_by: null })
+      .eq("id", campaignId)
+      .eq("is_national", true)
+      .neq("status", "completed")
+      .not("national_closed_at", "is", null)
+      .select("id");
+
+    if (error) return { error: error.message };
+    if (!updated || updated.length === 0) return { error: STALE_MESSAGE };
+
+    revalidatePath("/campaigns");
+    revalidatePath(`/campaigns/${campaignId}`);
     return { success: true };
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Terjadi kesalahan" };

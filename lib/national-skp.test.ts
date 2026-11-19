@@ -501,3 +501,182 @@ describe("activeChildClaimCountByParentId", () => {
     ).toEqual({ a: 2, c: 1 });
   });
 });
+
+// ============================================================
+// Batas klaim, tutup, dan selesai otomatis (Fase 7)
+// ============================================================
+
+import {
+  claimDeadlineError,
+  closeNationalError,
+  isClaimDeadlinePassed,
+  isSubmittedAfterDeadline,
+  nationalAutoCompleteDue,
+  reopenNationalError,
+} from "./national-skp";
+
+describe("nationalAutoCompleteDue — syarat selesai otomatis", () => {
+  const tertutup = {
+    is_national: true,
+    status: "approved",
+    national_closed_at: "2026-11-20T03:00:00Z",
+  };
+
+  it("induk tertutup selesai saat semua turunannya Selesai atau Dibatalkan", () => {
+    expect(nationalAutoCompleteDue(tertutup, ["completed", "cancelled", "completed"])).toBe(true);
+  });
+
+  it("induk tertutup tanpa turunan langsung selesai", () => {
+    expect(nationalAutoCompleteDue(tertutup, [])).toBe(true);
+  });
+
+  it("belum selesai selama masih ada turunan yang berjalan", () => {
+    for (const status of [
+      "approved",
+      "ongoing",
+      "claim_submitted",
+      "claim_verified",
+      "ready_to_pay",
+      "paid",
+    ]) {
+      expect(nationalAutoCompleteDue(tertutup, ["completed", status])).toBe(false);
+    }
+  });
+
+  it("induk yang belum ditutup tidak pernah selesai otomatis", () => {
+    const terbuka = { ...tertutup, national_closed_at: null };
+    expect(nationalAutoCompleteDue(terbuka, [])).toBe(false);
+    expect(nationalAutoCompleteDue(terbuka, ["completed", "cancelled"])).toBe(false);
+  });
+
+  it("hanya induk nasional berstatus Disetujui", () => {
+    expect(nationalAutoCompleteDue({ ...tertutup, is_national: false }, [])).toBe(false);
+    expect(nationalAutoCompleteDue({ ...tertutup, status: "completed" }, [])).toBe(false);
+    expect(nationalAutoCompleteDue({ ...tertutup, status: "cancelled" }, [])).toBe(false);
+  });
+});
+
+describe("batas klaim — pengingat, bukan pemblokir", () => {
+  it("terlewat mulai sehari setelah tanggal batas, menurut tanggal WIB", () => {
+    // 2026-11-30 23:30 WIB = 16:30 UTC → masih hari batas.
+    expect(isClaimDeadlinePassed("2026-11-30", new Date("2026-11-30T16:30:00Z"))).toBe(false);
+    // 2026-12-01 00:30 WIB = 2026-11-30 17:30 UTC → sudah lewat.
+    expect(isClaimDeadlinePassed("2026-11-30", new Date("2026-11-30T17:30:00Z"))).toBe(true);
+    expect(isClaimDeadlinePassed("2026-11-30", new Date("2026-11-15T03:00:00Z"))).toBe(false);
+  });
+
+  it("tanpa batas klaim tidak pernah terlewat", () => {
+    expect(isClaimDeadlinePassed(null, new Date("2030-01-01T00:00:00Z"))).toBe(false);
+    expect(isClaimDeadlinePassed(undefined, new Date("2030-01-01T00:00:00Z"))).toBe(false);
+  });
+
+  it("klaim diajukan setelah batas: tanggal pengajuan WIB melewati batas", () => {
+    expect(isSubmittedAfterDeadline("2026-11-30", "2026-11-30T16:59:00Z")).toBe(false);
+    expect(isSubmittedAfterDeadline("2026-11-30", "2026-11-30T17:01:00Z")).toBe(true);
+    expect(isSubmittedAfterDeadline("2026-11-30", "2026-12-05T02:00:00Z")).toBe(true);
+  });
+
+  it("belum diajukan atau tanpa batas klaim → bukan terlambat", () => {
+    expect(isSubmittedAfterDeadline("2026-11-30", null)).toBe(false);
+    expect(isSubmittedAfterDeadline(null, "2026-12-05T02:00:00Z")).toBe(false);
+  });
+
+  it("batas klaim tidak pernah menolak pembuatan klaim", () => {
+    const cabang = { role: "distributor", is_active: true, distributor_id: "co-edm" };
+    const induk = {
+      status: "approved",
+      is_national: true,
+      parent_campaign_id: null,
+      skp_number: "0049/WWI/11/2026",
+      claim_deadline: "2020-01-01",
+      national_closed_at: null,
+    };
+    expect(createChildClaimError(cabang, induk, 0)).toBeNull();
+  });
+});
+
+describe("claimDeadlineError — mengisi batas klaim", () => {
+  const admin = { role: "admin" };
+  const induk = { is_national: true, parent_campaign_id: null };
+
+  it("admin/superadmin boleh mengisi, mengubah, dan mengosongkan", () => {
+    expect(claimDeadlineError(admin, induk, "2026-12-31")).toBeNull();
+    expect(claimDeadlineError({ role: "superadmin" }, induk, "2026-12-31")).toBeNull();
+    expect(claimDeadlineError(admin, induk, null)).toBeNull();
+  });
+
+  it("role lain ditolak", () => {
+    for (const role of ["finance", "manager", "user", "distributor"]) {
+      expect(claimDeadlineError({ role }, induk, "2026-12-31")).toBe(NATIONAL_SKP_MESSAGES.notAdmin);
+    }
+  });
+
+  it("hanya pada SKP induk nasional", () => {
+    expect(claimDeadlineError(admin, { is_national: false }, "2026-12-31")).toBe(
+      NATIONAL_SKP_MESSAGES.notNational
+    );
+    expect(
+      claimDeadlineError(admin, { is_national: false, parent_campaign_id: "induk" }, "2026-12-31")
+    ).toBe(NATIONAL_SKP_MESSAGES.notNational);
+  });
+
+  it("tanggal harus berformat YYYY-MM-DD dan nyata", () => {
+    for (const bad of ["31-12-2026", "2026-13-01", "2026-02-30", "besok", ""]) {
+      expect(claimDeadlineError(admin, induk, bad)).toBe(NATIONAL_SKP_MESSAGES.deadlineInvalid);
+    }
+  });
+});
+
+describe("closeNationalError / reopenNationalError — tutup dan buka kembali", () => {
+  const admin = { role: "admin" };
+  const terbuka = { is_national: true, status: "approved", national_closed_at: null };
+  const tertutup = { ...terbuka, national_closed_at: "2026-11-20T03:00:00Z" };
+
+  it("admin/superadmin menutup induk nasional Disetujui yang masih terbuka", () => {
+    expect(closeNationalError(admin, terbuka)).toBeNull();
+    expect(closeNationalError({ role: "superadmin" }, terbuka)).toBeNull();
+  });
+
+  it("tutup ditolak: bukan admin, bukan nasional, bukan Disetujui, sudah ditutup", () => {
+    expect(closeNationalError({ role: "finance" }, terbuka)).toBe(NATIONAL_SKP_MESSAGES.notAdmin);
+    expect(closeNationalError(admin, { ...terbuka, is_national: false })).toBe(
+      NATIONAL_SKP_MESSAGES.notNational
+    );
+    expect(closeNationalError(admin, { ...terbuka, status: "draft" })).toBe(
+      NATIONAL_SKP_MESSAGES.closeNotApproved
+    );
+    expect(closeNationalError(admin, tertutup)).toBe(NATIONAL_SKP_MESSAGES.alreadyClosed);
+  });
+
+  it("admin/superadmin membuka kembali induk tertutup yang belum Selesai", () => {
+    expect(reopenNationalError(admin, tertutup)).toBeNull();
+    expect(reopenNationalError({ role: "superadmin" }, tertutup)).toBeNull();
+  });
+
+  it("buka kembali ditolak: bukan admin, belum ditutup, sudah Selesai", () => {
+    expect(reopenNationalError({ role: "finance" }, tertutup)).toBe(NATIONAL_SKP_MESSAGES.notAdmin);
+    expect(reopenNationalError({ role: "distributor" }, tertutup)).toBe(
+      NATIONAL_SKP_MESSAGES.notAdmin
+    );
+    expect(reopenNationalError(admin, terbuka)).toBe(NATIONAL_SKP_MESSAGES.notClosed);
+    expect(reopenNationalError(admin, { ...tertutup, status: "completed" })).toBe(
+      NATIONAL_SKP_MESSAGES.reopenCompleted
+    );
+  });
+
+  it("induk tertutup menolak klaim turunan baru", () => {
+    const cabang = { role: "distributor", is_active: true, distributor_id: "co-edm" };
+    const induk = {
+      status: "approved",
+      is_national: true,
+      parent_campaign_id: null,
+      skp_number: "0049/WWI/11/2026",
+      national_closed_at: "2026-11-20T03:00:00Z",
+    };
+    expect(createChildClaimError(cabang, induk, 0)).toBe(NATIONAL_SKP_MESSAGES.childParentClosed);
+    // Induk tertutup yang sudah Selesai: alasannya tetap "sudah ditutup".
+    expect(createChildClaimError(cabang, { ...induk, status: "completed" }, 0)).toBe(
+      NATIONAL_SKP_MESSAGES.childParentClosed
+    );
+  });
+});

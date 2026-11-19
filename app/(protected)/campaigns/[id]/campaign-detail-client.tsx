@@ -38,13 +38,18 @@ import {
   Lock,
   ArrowLeftRight,
   Globe,
+  CalendarClock,
+  LockOpen,
 } from "lucide-react";
 import { Select } from "@/components/ui/select";
 import { transferClaimHolderAction } from "@/app/actions/claim-holder";
 import {
   cancelChildClaimAction,
+  closeNationalAction,
   createChildClaimAction,
   makeNationalAction,
+  reopenNationalAction,
+  setClaimDeadlineAction,
   unmakeNationalAction,
 } from "@/app/actions/national-skp";
 import { toast } from "sonner";
@@ -89,6 +94,7 @@ import type {
   ClaimItemVerificationInfo,
   MyChildClaimInfo,
   NationalChildClaimRow,
+  NationalClaimDeadlineInfo,
   NationalParentInfo,
   OpenChildClaimInfo,
 } from "./page";
@@ -173,6 +179,13 @@ interface Props {
   nationalBudget: NationalBudgetSummary | null;
   /** Peringatan kelebihan klaim hanya untuk admin, superadmin, dan Finance. */
   canSeeOverClaimWarning: boolean;
+  /**
+   * Batas klaim (Fase 7): milik SKP induk ini, atau milik induknya bila ini
+   * klaim turunan. Pengingat saja; `passed` dihitung di server (tanggal WIB).
+   */
+  nationalClaimDeadline: NationalClaimDeadlineInfo | null;
+  /** Klaim turunan ini diajukan setelah batas klaim induknya. */
+  claimSubmittedLate: boolean;
   departments: { id: string; name: string }[];
   brands: { id: string; name: string }[];
   regions: { id: string; name: string }[];
@@ -1918,6 +1931,176 @@ function NationalToggleDialog({
 }
 
 // ============================================================
+// Batas klaim (SKP Nasional, Fase 7) — admin/superadmin. Pengingat saja:
+// tidak pernah menolak pembuatan atau pengajuan klaim.
+// ============================================================
+
+function ClaimDeadlineDialog({
+  campaignId,
+  current,
+  open,
+  onOpenChange,
+}: {
+  campaignId: string;
+  current: string | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [isPending, startTransition] = useTransition();
+  const [value, setValue] = useState(current ?? "");
+
+  function save(next: string | null) {
+    startTransition(async () => {
+      const result = await setClaimDeadlineAction(campaignId, next);
+      if (result.error) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success(next ? "Batas klaim disimpan" : "Batas klaim dikosongkan");
+      onOpenChange(false);
+    });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !isPending && onOpenChange(o)}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Batas Klaim</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="claim-deadline">Tanggal batas klaim</Label>
+            <Input
+              id="claim-deadline"
+              type="date"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              disabled={isPending}
+            />
+          </div>
+          <p className="text-xs text-slate-500">
+            Tenggat penagihan sesuai surat. Hanya pengingat: distributor tetap bisa membuat dan
+            mengajukan klaim setelah tanggal ini, dan Finance melihat keterangan pada klaim yang
+            terlambat. Untuk menghentikan klaim baru, gunakan &quot;Tutup SKP Nasional&quot;.
+          </p>
+        </div>
+        <DialogFooter>
+          {current && (
+            <Button
+              variant="outline"
+              className="sm:mr-auto"
+              onClick={() => save(null)}
+              disabled={isPending}
+            >
+              Kosongkan
+            </Button>
+          )}
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isPending}>
+            Batal
+          </Button>
+          <Button onClick={() => save(value)} disabled={isPending || !value || value === current}>
+            {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+            Simpan
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ============================================================
+// Tutup / Buka Kembali SKP Nasional (Fase 7) — admin/superadmin
+// ============================================================
+
+function NationalCloseDialog({
+  campaignId,
+  mode,
+  runningClaimCount,
+  open,
+  onOpenChange,
+}: {
+  campaignId: string;
+  mode: "close" | "reopen";
+  /** Klaim turunan yang belum Selesai / Dibatalkan. */
+  runningClaimCount: number;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [isPending, startTransition] = useTransition();
+
+  function handleConfirm() {
+    startTransition(async () => {
+      if (mode === "close") {
+        const result = await closeNationalAction(campaignId);
+        if (result.error) {
+          toast.error(result.error);
+          return;
+        }
+        toast.success(
+          result.completed
+            ? "SKP Nasional ditutup dan langsung berstatus Selesai"
+            : "SKP Nasional ditutup — klaim yang berjalan tetap diproses"
+        );
+      } else {
+        const result = await reopenNationalAction(campaignId);
+        if (result.error) {
+          toast.error(result.error);
+          return;
+        }
+        toast.success("SKP Nasional dibuka kembali — distributor dapat membuat klaim lagi");
+      }
+      onOpenChange(false);
+    });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !isPending && onOpenChange(o)}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>
+            {mode === "close" ? "Tutup SKP Nasional" : "Buka Kembali SKP Nasional"}
+          </DialogTitle>
+        </DialogHeader>
+        {mode === "close" ? (
+          <div className="space-y-2 text-sm text-slate-400">
+            <p>
+              Distributor <span className="text-slate-200">tidak bisa lagi membuat klaim baru</span>{" "}
+              atas SKP ini. Klaim yang sudah dibuat tetap diproses sampai selesai.
+            </p>
+            {runningClaimCount > 0 ? (
+              <p>
+                Masih ada <span className="text-slate-200">{runningClaimCount} klaim berjalan</span>.
+                SKP ini otomatis berstatus Selesai begitu semuanya Selesai atau Dibatalkan; sebelum
+                itu Anda masih bisa membukanya kembali.
+              </p>
+            ) : (
+              <p className="text-amber-300">
+                Tidak ada klaim yang sedang berjalan, jadi SKP ini langsung berstatus Selesai dan
+                tidak dapat dibuka kembali.
+              </p>
+            )}
+          </div>
+        ) : (
+          <p className="text-sm text-slate-400">
+            Distributor dapat kembali membuat klaim atas SKP ini. SKP tidak akan berstatus Selesai
+            otomatis sampai Anda menutupnya lagi.
+          </p>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isPending}>
+            Batal
+          </Button>
+          <Button onClick={handleConfirm} disabled={isPending}>
+            {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+            {mode === "close" ? "Tutup SKP Nasional" : "Buka Kembali"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ============================================================
 // Klaim Turunan + ringkasan budget di SKP induk (SKP Nasional, Fase 5) —
 // hanya role internal. Angkanya dihitung nationalBudgetSummary di server.
 // ============================================================
@@ -1997,6 +2180,14 @@ function NationalChildClaimsSection({
                       >
                         {claim.skp_number ?? "Tanpa nomor"}
                       </Link>
+                      {claim.submittedLate && (
+                        <span
+                          className="ml-2 inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-300"
+                          title="Diajukan setelah batas klaim"
+                        >
+                          Lewat batas
+                        </span>
+                      )}
                     </td>
                     <td className="py-2.5 pr-4">{claim.distributorName ?? "—"}</td>
                     <td className="py-2.5 pr-4">{claim.ownerName ?? "—"}</td>
@@ -2134,6 +2325,8 @@ export function CampaignDetailClient({
   nationalChildClaims,
   nationalBudget,
   canSeeOverClaimWarning,
+  nationalClaimDeadline,
+  claimSubmittedLate,
   departments,
   brands,
   regions,
@@ -2160,8 +2353,13 @@ export function CampaignDetailClient({
   // Buat Klaim (Fase 2): akun distributor pada induk nasional Disetujui.
   // Selama akun masih punya klaim turunan yang belum diajukan (Fase 3),
   // tombol dinonaktifkan dan diberi tautan ke klaim itu.
+  // Induk yang sudah ditutup admin (Fase 7) tidak menerima klaim baru.
+  const isNationalClosed = isNational && !!campaign.national_closed_at;
   const canCreateChildClaim =
-    userRole === "distributor" && isNational && campaign.status === "approved";
+    userRole === "distributor" &&
+    isNational &&
+    campaign.status === "approved" &&
+    !isNationalClosed;
   const [isCreatingClaim, startCreateClaim] = useTransition();
   function handleCreateChildClaim() {
     startCreateClaim(async () => {
@@ -2176,6 +2374,22 @@ export function CampaignDetailClient({
     });
   }
   const canUnmakeNational = isAdminOrSuperadmin && isNational;
+
+  // Batas klaim, tutup, dan buka kembali (Fase 7) — admin/superadmin. Server
+  // memeriksa ulang (claimDeadlineError, closeNationalError, reopenNationalError).
+  const canSetClaimDeadline = isAdminOrSuperadmin && isNational;
+  const canCloseNational =
+    isAdminOrSuperadmin && isNational && campaign.status === "approved" && !isNationalClosed;
+  const canReopenNational =
+    isAdminOrSuperadmin && isNationalClosed && campaign.status !== "completed";
+  const [deadlineOpen, setDeadlineOpen] = useState(false);
+  const [closeDialog, setCloseDialog] = useState<"close" | "reopen" | null>(null);
+  const runningChildClaimCount = nationalChildClaims.filter(
+    (c) => c.status !== "completed" && c.status !== "cancelled"
+  ).length;
+  // "Diajukan setelah batas klaim": bahan pertimbangan Finance, bukan penolakan.
+  const showSubmittedLateNotice =
+    claimSubmittedLate && ["finance", "admin", "superadmin"].includes(userRole);
 
   // Pantauan budget (Fase 5). Distributor tidak melihat nilai terpakai induk;
   // peringatan kelebihan klaim hanya untuk admin, superadmin, dan Finance.
@@ -2405,6 +2619,24 @@ export function CampaignDetailClient({
               Batalkan Nasional
             </Button>
           )}
+          {canSetClaimDeadline && (
+            <Button size="sm" variant="outline" onClick={() => setDeadlineOpen(true)}>
+              <CalendarClock className="h-4 w-4" />
+              Batas Klaim
+            </Button>
+          )}
+          {canCloseNational && (
+            <Button size="sm" variant="outline" onClick={() => setCloseDialog("close")}>
+              <Lock className="h-4 w-4" />
+              Tutup SKP Nasional
+            </Button>
+          )}
+          {canReopenNational && (
+            <Button size="sm" variant="outline" onClick={() => setCloseDialog("reopen")}>
+              <LockOpen className="h-4 w-4" />
+              Buka Kembali
+            </Button>
+          )}
           {canDownloadPdf && (
             <Button asChild size="sm" variant="outline">
               <a href={`/api/skp-pdf/${campaign.id}`} download>
@@ -2436,6 +2668,35 @@ export function CampaignDetailClient({
                     : "SKP ini berlaku untuk semua distributor. Untuk menagih, tekan \"Buat Klaim\": Marmot membuat klaim milik akun Anda, tempat Anda mengunggah dokumen, mengisi checklist, dan mengajukan nominal."
                   : "SKP ini berlaku untuk semua distributor. Anda dapat membaca ketentuan dan mengunduh PDF-nya tanpa tanda terima; realisasi, checklist, dan dokumen klaim tidak dicatat langsung di SKP ini."
                 : "SKP ini terlihat oleh semua akun distributor di semua perusahaan dan region. Realisasi, checklist, dokumen klaim, dan tanda terima tidak dicatat di SKP ini — aktivitas klaim dilakukan di klaim turunan per akun distributor."}
+            </p>
+            {nationalClaimDeadline && (
+              <p className="text-xs mt-1.5 text-violet-200">
+                Batas klaim:{" "}
+                <span className="font-medium">{formatDate(nationalClaimDeadline.date)}</span>
+                {nationalClaimDeadline.passed && (
+                  <span className="font-medium text-amber-300"> · Batas klaim terlewat</span>
+                )}
+                {nationalClaimDeadline.passed && canCreateChildClaim
+                  ? " — Anda tetap dapat membuat dan mengajukan klaim."
+                  : ""}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Induk sudah ditutup admin (Fase 7): tidak ada klaim baru, klaim berjalan tetap diproses */}
+      {isNationalClosed && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-5 py-3 flex items-start gap-3">
+          <Lock className="h-4 w-4 text-amber-300 mt-0.5 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-amber-200">SKP Nasional ini sudah ditutup</p>
+            <p className="text-xs text-amber-300/80 mt-0.5">
+              {userRole === "distributor"
+                ? "Klaim baru tidak dapat dibuat lagi. Klaim Anda yang sudah dibuat tetap diproses sampai selesai."
+                : campaign.status === "completed"
+                  ? `Ditutup ${formatDate(campaign.national_closed_at!)}. Semua klaim turunannya sudah Selesai atau Dibatalkan, jadi SKP ini berstatus Selesai.`
+                  : `Ditutup ${formatDate(campaign.national_closed_at!)}: tidak menerima klaim turunan baru. Klaim yang berjalan tetap diproses, dan SKP ini otomatis berstatus Selesai begitu semuanya Selesai atau Dibatalkan.`}
             </p>
           </div>
         </div>
@@ -2534,6 +2795,31 @@ export function CampaignDetailClient({
                 : userRole === "distributor"
                   ? "Unggah dokumen dan isi checklist di sini; setelah Finance mencatat realisasi, ajukan nominal klaim Anda. Klaim ini tidak memakai tanda terima."
                   : "Alur klaim berjalan di sini seperti SKP biasa. Nilai SKP dan komitmen budget hanya ada di SKP induk."}
+            </p>
+            {nationalClaimDeadline && !isCancelledChild && (
+              <p className="text-xs mt-1.5 text-violet-200">
+                Batas klaim:{" "}
+                <span className="font-medium">{formatDate(nationalClaimDeadline.date)}</span>
+                {nationalClaimDeadline.passed && (
+                  <span className="font-medium text-amber-300"> · Batas klaim terlewat</span>
+                )}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Klaim terlambat (Fase 7): keterangan untuk Finance/admin, tidak memblokir */}
+      {showSubmittedLateNotice && nationalClaimDeadline && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-5 py-3 flex items-start gap-3">
+          <CalendarClock className="h-4 w-4 text-amber-300 mt-0.5 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-amber-200">Diajukan setelah batas klaim</p>
+            <p className="text-xs text-amber-300/80 mt-0.5">
+              Klaim ini diajukan
+              {campaign.claim_submitted_at ? ` ${formatDate(campaign.claim_submitted_at)}` : ""},
+              setelah batas klaim SKP induk ({formatDate(nationalClaimDeadline.date)}). Batas klaim
+              hanya pengingat — klaim tetap dapat diverifikasi.
             </p>
           </div>
         </div>
@@ -2901,6 +3187,25 @@ export function CampaignDetailClient({
           regionName={campaign.region?.name ?? null}
           open
           onOpenChange={(o) => !o && setNationalDialog(null)}
+        />
+      )}
+
+      {canSetClaimDeadline && deadlineOpen && (
+        <ClaimDeadlineDialog
+          campaignId={campaign.id}
+          current={campaign.claim_deadline ?? null}
+          open
+          onOpenChange={(o) => !o && setDeadlineOpen(false)}
+        />
+      )}
+
+      {(canCloseNational || canReopenNational) && closeDialog && (
+        <NationalCloseDialog
+          campaignId={campaign.id}
+          mode={closeDialog}
+          runningClaimCount={runningChildClaimCount}
+          open
+          onOpenChange={(o) => !o && setCloseDialog(null)}
         />
       )}
 

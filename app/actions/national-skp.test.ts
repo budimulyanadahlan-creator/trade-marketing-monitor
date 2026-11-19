@@ -50,7 +50,7 @@ type Counts = Partial<
 /** Rantai query serba guna: semua method mengembalikan rantai, hasil lewat await / single. */
 function chain(result: unknown) {
   const c: Record<string, unknown> = {};
-  for (const m of ["select", "eq", "in", "is", "not", "ilike", "update", "limit"]) {
+  for (const m of ["select", "eq", "neq", "in", "is", "not", "ilike", "update", "limit"]) {
     c[m] = vi.fn().mockReturnValue(c);
   }
   c.single = vi.fn().mockResolvedValue(result);
@@ -207,6 +207,7 @@ describe("unmakeNationalAction", () => {
 // ============================================================
 
 type Parent = {
+  national_closed_at?: string | null;
   id: string;
   status: string;
   is_national: boolean;
@@ -506,5 +507,191 @@ describe("cancelChildClaimAction", () => {
     expect((await cancelChildClaimAction("turunan-1")).error).toBe(
       "Klaim gagal dibatalkan — coba lagi sebentar lagi"
     );
+  });
+});
+
+// ============================================================
+// Batas klaim, tutup, dan buka kembali (Fase 7)
+// ============================================================
+
+import {
+  closeNationalAction,
+  reopenNationalAction,
+  setClaimDeadlineAction,
+} from "./national-skp";
+
+type NationalParentRow = {
+  id: string;
+  status: string;
+  is_national: boolean;
+  parent_campaign_id: string | null;
+  national_closed_at: string | null;
+};
+
+const OPEN_PARENT: NationalParentRow = {
+  id: "induk-1",
+  status: "approved",
+  is_national: true,
+  parent_campaign_id: null,
+  national_closed_at: null,
+};
+
+function setupCloseMocks({
+  role = "admin",
+  campaign = OPEN_PARENT as NationalParentRow | null,
+  updatedRows = [{ id: "induk-1", status: "approved" }] as { id: string; status: string }[],
+  updateError = null as { message: string } | null,
+} = {}) {
+  const campaignWrite = chain({ data: updatedRows, error: updateError });
+  const campaignsTable = {
+    select: vi.fn().mockReturnValue(chain({ data: campaign })),
+    update: vi.fn().mockReturnValue(campaignWrite),
+  };
+  const mockClient = {
+    auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: "admin-1" } } }) },
+    from: vi.fn().mockImplementation((table: string) => {
+      if (table === "users") return chain({ data: { role, is_active: true } });
+      if (table === "campaigns") return campaignsTable;
+      throw new Error(`tabel tak terduga: ${table}`);
+    }),
+  };
+  vi.mocked(createClient).mockResolvedValue(mockClient as never);
+  return { campaignsTable, campaignWrite };
+}
+
+describe("createChildClaimAction — induk tertutup", () => {
+  it("induk yang sudah ditutup menolak klaim baru tanpa memanggil database layanan", async () => {
+    const { rpc } = setupChildMocks({
+      parent: { ...PARENT, national_closed_at: "2026-11-20T03:00:00Z" },
+    });
+    expect(await createChildClaimAction("induk-1")).toEqual({
+      error: NATIONAL_SKP_MESSAGES.childParentClosed,
+    });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+});
+
+describe("setClaimDeadlineAction", () => {
+  it("admin mengisi batas klaim pada induk nasional", async () => {
+    const { campaignsTable, campaignWrite } = setupCloseMocks();
+
+    expect(await setClaimDeadlineAction("induk-1", "2026-12-31")).toEqual({ success: true });
+    expect(campaignsTable.update).toHaveBeenCalledWith({ claim_deadline: "2026-12-31" });
+    expect(campaignWrite.eq).toHaveBeenCalledWith("id", "induk-1");
+    expect(campaignWrite.eq).toHaveBeenCalledWith("is_national", true);
+    expect(revalidatePath).toHaveBeenCalledWith("/campaigns/induk-1");
+  });
+
+  it("string kosong mengosongkan batas klaim", async () => {
+    const { campaignsTable } = setupCloseMocks();
+    expect(await setClaimDeadlineAction("induk-1", "")).toEqual({ success: true });
+    expect(campaignsTable.update).toHaveBeenCalledWith({ claim_deadline: null });
+  });
+
+  it("role lain, SKP bukan nasional, dan tanggal ngawur ditolak tanpa menulis", async () => {
+    let mocks = setupCloseMocks({ role: "finance" });
+    expect(await setClaimDeadlineAction("induk-1", "2026-12-31")).toEqual({
+      error: NATIONAL_SKP_MESSAGES.notAdmin,
+    });
+    expect(mocks.campaignsTable.update).not.toHaveBeenCalled();
+
+    mocks = setupCloseMocks({ campaign: { ...OPEN_PARENT, is_national: false } });
+    expect(await setClaimDeadlineAction("induk-1", "2026-12-31")).toEqual({
+      error: NATIONAL_SKP_MESSAGES.notNational,
+    });
+    expect(mocks.campaignsTable.update).not.toHaveBeenCalled();
+
+    mocks = setupCloseMocks();
+    expect(await setClaimDeadlineAction("induk-1", "31/12/2026")).toEqual({
+      error: NATIONAL_SKP_MESSAGES.deadlineInvalid,
+    });
+    expect(mocks.campaignsTable.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("closeNationalAction", () => {
+  it("admin menutup induk: waktu dan pelaku dicatat, hanya bila masih terbuka & Disetujui", async () => {
+    const { campaignsTable, campaignWrite } = setupCloseMocks();
+
+    expect(await closeNationalAction("induk-1")).toEqual({ success: true, completed: false });
+    expect(campaignsTable.update).toHaveBeenCalledWith({
+      national_closed_at: expect.any(String),
+      national_closed_by: "admin-1",
+    });
+    expect(campaignWrite.eq).toHaveBeenCalledWith("id", "induk-1");
+    expect(campaignWrite.eq).toHaveBeenCalledWith("is_national", true);
+    expect(campaignWrite.eq).toHaveBeenCalledWith("status", "approved");
+    expect(campaignWrite.is).toHaveBeenCalledWith("national_closed_at", null);
+    expect(revalidatePath).toHaveBeenCalledWith("/campaigns");
+    expect(revalidatePath).toHaveBeenCalledWith("/campaigns/induk-1");
+  });
+
+  it("melaporkan induk yang langsung Selesai karena tidak ada klaim berjalan", async () => {
+    setupCloseMocks({ updatedRows: [{ id: "induk-1", status: "completed" }] });
+    expect(await closeNationalAction("induk-1")).toEqual({ success: true, completed: true });
+  });
+
+  it("role lain, sudah ditutup, dan bukan Disetujui ditolak tanpa menulis", async () => {
+    let mocks = setupCloseMocks({ role: "finance" });
+    expect(await closeNationalAction("induk-1")).toEqual({ error: NATIONAL_SKP_MESSAGES.notAdmin });
+    expect(mocks.campaignsTable.update).not.toHaveBeenCalled();
+
+    mocks = setupCloseMocks({
+      campaign: { ...OPEN_PARENT, national_closed_at: "2026-11-20T03:00:00Z" },
+    });
+    expect(await closeNationalAction("induk-1")).toEqual({
+      error: NATIONAL_SKP_MESSAGES.alreadyClosed,
+    });
+    expect(mocks.campaignsTable.update).not.toHaveBeenCalled();
+
+    mocks = setupCloseMocks({ campaign: { ...OPEN_PARENT, status: "draft" } });
+    expect(await closeNationalAction("induk-1")).toEqual({
+      error: NATIONAL_SKP_MESSAGES.closeNotApproved,
+    });
+    expect(mocks.campaignsTable.update).not.toHaveBeenCalled();
+  });
+
+  it("SKP tidak ditemukan dan perubahan bersamaan", async () => {
+    setupCloseMocks({ campaign: null });
+    expect(await closeNationalAction("induk-1")).toEqual({ error: "SKP tidak ditemukan" });
+
+    setupCloseMocks({ updatedRows: [] });
+    expect(await closeNationalAction("induk-1")).toEqual({
+      error: "SKP sudah berubah — muat ulang halaman lalu coba lagi",
+    });
+  });
+});
+
+describe("reopenNationalAction", () => {
+  const CLOSED = { ...OPEN_PARENT, national_closed_at: "2026-11-20T03:00:00Z" };
+
+  it("admin membuka kembali induk tertutup yang belum Selesai", async () => {
+    const { campaignsTable, campaignWrite } = setupCloseMocks({ campaign: CLOSED });
+
+    expect(await reopenNationalAction("induk-1")).toEqual({ success: true });
+    expect(campaignsTable.update).toHaveBeenCalledWith({
+      national_closed_at: null,
+      national_closed_by: null,
+    });
+    expect(campaignWrite.eq).toHaveBeenCalledWith("id", "induk-1");
+    expect(campaignWrite.eq).toHaveBeenCalledWith("is_national", true);
+    expect(campaignWrite.neq).toHaveBeenCalledWith("status", "completed");
+    expect(campaignWrite.not).toHaveBeenCalledWith("national_closed_at", "is", null);
+  });
+
+  it("role lain, belum ditutup, dan sudah Selesai ditolak tanpa menulis", async () => {
+    let mocks = setupCloseMocks({ role: "manager", campaign: CLOSED });
+    expect(await reopenNationalAction("induk-1")).toEqual({ error: NATIONAL_SKP_MESSAGES.notAdmin });
+    expect(mocks.campaignsTable.update).not.toHaveBeenCalled();
+
+    mocks = setupCloseMocks();
+    expect(await reopenNationalAction("induk-1")).toEqual({ error: NATIONAL_SKP_MESSAGES.notClosed });
+    expect(mocks.campaignsTable.update).not.toHaveBeenCalled();
+
+    mocks = setupCloseMocks({ campaign: { ...CLOSED, status: "completed" } });
+    expect(await reopenNationalAction("induk-1")).toEqual({
+      error: NATIONAL_SKP_MESSAGES.reopenCompleted,
+    });
+    expect(mocks.campaignsTable.update).not.toHaveBeenCalled();
   });
 });

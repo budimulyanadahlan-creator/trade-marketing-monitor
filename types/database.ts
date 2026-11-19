@@ -184,6 +184,11 @@ export type CampaignRow = {
   claim_owner_id: string | null;
   /** Nomor urut klaim turunan per induk (akhiran -K01, -K02, …). */
   child_seq: number | null;
+  /** Batas klaim SKP induk nasional (migrasi 080) — pengingat, bukan pemblokir. */
+  claim_deadline: string | null;
+  /** Terisi = SKP induk nasional sudah ditutup admin: tidak menerima klaim turunan baru. */
+  national_closed_at: string | null;
+  national_closed_by: string | null;
   /** No surat (migrasi 035); hanya di SKP biasa/induk, selalu null di turunan. */
   reference_number?: string | null;
   updated_at: string;
@@ -778,8 +783,11 @@ export type Database = {
       };
       campaigns: {
         Row: CampaignRow;
-        Insert: Omit<CampaignRow, "id" | "created_at" | "updated_at" | "actual_spent" | "submitted_at" | "skp_number" | "aa_reference_number" | "claim_amount" | "claim_submitted_at" | "claim_submitted_by" | "paid_at" | "paid_note" | "is_national" | "parent_campaign_id" | "claim_owner_id" | "child_seq"> & {
+        Insert: Omit<CampaignRow, "id" | "created_at" | "updated_at" | "actual_spent" | "submitted_at" | "skp_number" | "aa_reference_number" | "claim_amount" | "claim_submitted_at" | "claim_submitted_by" | "paid_at" | "paid_note" | "is_national" | "parent_campaign_id" | "claim_owner_id" | "child_seq" | "claim_deadline" | "national_closed_at" | "national_closed_by"> & {
           id?: string;
+          claim_deadline?: string | null;
+          national_closed_at?: string | null;
+          national_closed_by?: string | null;
           is_national?: boolean;
           parent_campaign_id?: string | null;
           claim_owner_id?: string | null;

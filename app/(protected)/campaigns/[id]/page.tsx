@@ -7,8 +7,10 @@ import {
   type DistributorCampaignAccess,
 } from "@/lib/distributor-campaign-guard";
 import {
+  isClaimDeadlinePassed,
   isClaimedChildStatus,
   isOpenChildClaimStatus,
+  isSubmittedAfterDeadline,
   nationalBudgetSummary,
   type NationalBudgetSummary,
 } from "@/lib/national-skp";
@@ -61,7 +63,17 @@ export type NationalParentInfo = {
   skp_number: string | null;
   reference_number: string | null;
   status: CampaignStatus;
+  /** Batas klaim dan penutupan induk (Fase 7). */
+  claim_deadline: string | null;
+  national_closed_at: string | null;
 };
+
+/**
+ * Batas klaim yang berlaku di halaman ini (Fase 7): milik SKP induk itu
+ * sendiri, atau milik induknya bila halaman ini klaim turunan. `passed`
+ * dihitung di server menurut tanggal WIB. Hanya pengingat.
+ */
+export type NationalClaimDeadlineInfo = { date: string; passed: boolean };
 
 /** Klaim turunan milik akun yang login yang belum diajukan, pada sebuah induk. */
 export type OpenChildClaimInfo = {
@@ -89,6 +101,8 @@ export type NationalChildClaimRow = {
   distributorName: string | null;
   ownerName: string | null;
   regionName: string | null;
+  /** Diajukan setelah batas klaim induk (Fase 7). */
+  submittedLate: boolean;
 };
 
 type NationalChildRaw = {
@@ -97,6 +111,7 @@ type NationalChildRaw = {
   status: CampaignStatus;
   claim_amount: number | null;
   actual_spent: number | null;
+  claim_submitted_at: string | null;
   claim_owner_id: string | null;
   distributor: { name: string } | null;
   region: { name: string } | null;
@@ -275,7 +290,7 @@ export default async function CampaignDetailPage({ params }: Props) {
     const [{ data: parentRaw }, { data: parentFilesRaw }, { data: ownerRaw }] = await Promise.all([
       supabase
         .from("campaigns")
-        .select("id, name, skp_number, reference_number, status")
+        .select("id, name, skp_number, reference_number, status, claim_deadline, national_closed_at")
         .eq("id", campaign.parent_campaign_id!)
         .maybeSingle(),
       supabase
@@ -321,7 +336,7 @@ export default async function CampaignDetailPage({ params }: Props) {
     const { data: childrenRaw } = await admin
       .from("campaigns")
       .select(
-        "id, skp_number, status, claim_amount, actual_spent, claim_owner_id, distributor:distributors(name), region:regions(name)"
+        "id, skp_number, status, claim_amount, actual_spent, claim_submitted_at, claim_owner_id, distributor:distributors(name), region:regions(name)"
       )
       .eq("parent_campaign_id", campaign.id)
       .order("child_seq", { ascending: true });
@@ -345,6 +360,9 @@ export default async function CampaignDetailPage({ params }: Props) {
       distributorName: c.distributor?.name ?? null,
       ownerName: c.claim_owner_id ? (ownerNameById.get(c.claim_owner_id) ?? null) : null,
       regionName: c.region?.name ?? null,
+      submittedLate:
+        isClaimedChildStatus(c.status) &&
+        isSubmittedAfterDeadline(campaign.claim_deadline, c.claim_submitted_at),
     }));
     nationalBudget = nationalBudgetSummary(campaign.requested_budget, children);
   } else if (isNationalChild && canSeeOverClaimWarning && isClaimedChildStatus(campaign.status)) {
@@ -364,6 +382,21 @@ export default async function CampaignDetailPage({ params }: Props) {
       nationalBudget = nationalBudgetSummary(parentBudgetRaw.requested_budget, siblingsRaw ?? []);
     }
   }
+
+  // ── SKP Nasional Fase 7: batas klaim ──────────────────────────────────
+  // Induk: batas klaimnya sendiri. Turunan: batas klaim induknya, plus
+  // keterangan "Diajukan setelah batas klaim" untuk Finance/admin. Pengingat
+  // saja — tidak ada aksi yang ditolak karenanya.
+  const deadlineDate = campaign.is_national
+    ? (campaign.claim_deadline ?? null)
+    : (nationalParent?.claim_deadline ?? null);
+  const nationalClaimDeadline: NationalClaimDeadlineInfo | null = deadlineDate
+    ? { date: deadlineDate, passed: isClaimDeadlinePassed(deadlineDate, new Date()) }
+    : null;
+  const claimSubmittedLate =
+    isNationalChild &&
+    isClaimedChildStatus(campaign.status) &&
+    isSubmittedAfterDeadline(nationalParent?.claim_deadline, campaign.claim_submitted_at);
 
   // Distributor tidak melihat nilai terpakai SKP induk (gabungan realisasi
   // semua cabang) — angkanya tidak dikirim ke klien.
@@ -663,6 +696,8 @@ export default async function CampaignDetailPage({ params }: Props) {
       nationalChildClaims={nationalChildClaims}
       nationalBudget={nationalBudget}
       canSeeOverClaimWarning={canSeeOverClaimWarning}
+      nationalClaimDeadline={nationalClaimDeadline}
+      claimSubmittedLate={claimSubmittedLate}
       departments={departments ?? []}
       brands={brands ?? []}
       regions={regions ?? []}
