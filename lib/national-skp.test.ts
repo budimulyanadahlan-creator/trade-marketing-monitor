@@ -680,3 +680,87 @@ describe("closeNationalError / reopenNationalError — tutup dan buka kembali", 
     );
   });
 });
+
+// ============================================================
+// Alih kepemilikan klaim turunan (Fase 8)
+// ============================================================
+
+import { isChildOwnerCandidate, transferChildOwnerError, transferMovesClaimHolder } from "./national-skp";
+
+describe("transferChildOwnerError — alih kepemilikan klaim turunan", () => {
+  const admin = { role: "admin" };
+  const child = {
+    parent_campaign_id: "parent-1",
+    claim_owner_id: "owner-1",
+    distributor_id: "dist-edm",
+  };
+  const candidate = {
+    id: "owner-2",
+    role: "distributor",
+    is_active: true,
+    distributor_id: "dist-edm",
+  };
+
+  it("admin dan superadmin boleh mengalihkan ke akun distributor aktif seperusahaan", () => {
+    expect(transferChildOwnerError(admin, child, candidate, 0)).toBeNull();
+    expect(transferChildOwnerError({ role: "superadmin" }, child, candidate, 0)).toBeNull();
+  });
+
+  it("role lain ditolak, termasuk pemilik sendiri dan Finance", () => {
+    for (const role of ["distributor", "finance", "manager", "user"]) {
+      expect(transferChildOwnerError({ role }, child, candidate, 0)).toBe(
+        NATIONAL_SKP_MESSAGES.transferNotAdmin
+      );
+    }
+  });
+
+  it("hanya untuk klaim turunan", () => {
+    expect(
+      transferChildOwnerError(admin, { ...child, parent_campaign_id: null }, candidate, 0)
+    ).toBe(NATIONAL_SKP_MESSAGES.transferNotChild);
+  });
+
+  it("akun tujuan harus ada, distributor, aktif, dan dari perusahaan turunan", () => {
+    const m = NATIONAL_SKP_MESSAGES;
+    expect(transferChildOwnerError(admin, child, null, 0)).toBe(m.transferCandidateNotFound);
+    expect(transferChildOwnerError(admin, child, { ...candidate, role: "finance" }, 0)).toBe(
+      m.transferCandidateNotDistributor
+    );
+    expect(transferChildOwnerError(admin, child, { ...candidate, is_active: false }, 0)).toBe(
+      m.transferCandidateInactive
+    );
+    expect(
+      transferChildOwnerError(admin, child, { ...candidate, distributor_id: "dist-mms" }, 0)
+    ).toBe(m.transferCandidateOtherCompany);
+    expect(transferChildOwnerError(admin, child, { ...candidate, distributor_id: null }, 0)).toBe(
+      m.transferCandidateOtherCompany
+    );
+  });
+
+  it("pemilik saat ini bukan tujuan yang sah", () => {
+    expect(transferChildOwnerError(admin, child, { ...candidate, id: "owner-1" }, 0)).toBe(
+      NATIONAL_SKP_MESSAGES.transferSameOwner
+    );
+  });
+
+  it("ditolak bila akun tujuan punya turunan lain yang belum diajukan atas induk yang sama", () => {
+    expect(transferChildOwnerError(admin, child, candidate, 1)).toBe(
+      NATIONAL_SKP_MESSAGES.transferCandidateHasOpenClaim
+    );
+  });
+
+  it("isChildOwnerCandidate: daftar kandidat = distributor aktif seperusahaan selain pemilik", () => {
+    expect(isChildOwnerCandidate(candidate, child)).toBe(true);
+    expect(isChildOwnerCandidate({ ...candidate, id: "owner-1" }, child)).toBe(false);
+    expect(isChildOwnerCandidate({ ...candidate, is_active: false }, child)).toBe(false);
+    expect(isChildOwnerCandidate({ ...candidate, role: "admin" }, child)).toBe(false);
+    expect(isChildOwnerCandidate({ ...candidate, distributor_id: "dist-mms" }, child)).toBe(false);
+  });
+
+  it("pemegang klaim ikut berpindah hanya pada status Klaim Diajukan", () => {
+    expect(transferMovesClaimHolder("claim_submitted")).toBe(true);
+    for (const s of ["approved", "ongoing", "claim_verified", "ready_to_pay", "paid", "completed", "cancelled"]) {
+      expect(transferMovesClaimHolder(s)).toBe(false);
+    }
+  });
+});

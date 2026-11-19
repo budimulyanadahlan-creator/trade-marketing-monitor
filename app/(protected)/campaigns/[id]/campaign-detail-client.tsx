@@ -50,6 +50,7 @@ import {
   makeNationalAction,
   reopenNationalAction,
   setClaimDeadlineAction,
+  transferChildOwnerAction,
   unmakeNationalAction,
 } from "@/app/actions/national-skp";
 import { toast } from "sonner";
@@ -135,6 +136,13 @@ type ClaimEventWithActor = ClaimEventRow & {
 /** Akun distributor yang boleh dipilih sebagai pemegang klaim baru (Fase 10). */
 export type ClaimHolderOption = { id: string; full_name: string };
 
+/**
+ * Kandidat pemilik baru klaim turunan (SKP Nasional Fase 8). `hasOpenClaim` =
+ * akun itu masih punya klaim lain yang belum diajukan atas induk yang sama,
+ * sehingga tidak bisa dipilih.
+ */
+export type ChildOwnerOption = { id: string; full_name: string; hasOpenClaim: boolean };
+
 interface Props {
   campaign: CampaignWithJoins;
   files: CampaignFileRow[];
@@ -149,6 +157,11 @@ interface Props {
    * SKP berstatus Klaim Diajukan (Fase 10).
    */
   claimHolderCandidates: ClaimHolderOption[];
+  /**
+   * Kandidat pemilik baru klaim turunan — hanya terisi untuk admin/superadmin
+   * pada klaim turunan (SKP Nasional Fase 8).
+   */
+  childOwnerCandidates: ChildOwnerOption[];
   aaBudgetInfo: AABudgetInfo | null;
   isEditable: boolean;
   userRole: UserRole;
@@ -1250,6 +1263,117 @@ function SubmitKlaimDialog({
 }
 
 // ============================================================
+// Alihkan Kepemilikan klaim turunan (SKP Nasional, Fase 8) — admin
+// ============================================================
+
+function TransferChildOwnerDialog({
+  campaignId,
+  currentOwnerName,
+  movesHolder,
+  candidates,
+  open,
+  onOpenChange,
+}: {
+  campaignId: string;
+  currentOwnerName: string | null;
+  /** Klaim sedang berstatus Klaim Diajukan: pemegang klaim ikut berpindah. */
+  movesHolder: boolean;
+  candidates: ChildOwnerOption[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [newOwnerId, setNewOwnerId] = useState("");
+  const [isPending, startTransition] = useTransition();
+  const selectable = candidates.filter((c) => !c.hasOpenClaim);
+  const blocked = candidates.filter((c) => c.hasOpenClaim);
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newOwnerId) {
+      toast.error("Pilih pemilik klaim baru");
+      return;
+    }
+
+    startTransition(async () => {
+      const result = await transferChildOwnerAction(campaignId, newOwnerId);
+      if (result.error) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success("Kepemilikan klaim berhasil dialihkan");
+      setNewOwnerId("");
+      onOpenChange(false);
+    });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !isPending && onOpenChange(o)}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Alihkan Kepemilikan Klaim</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <p className="text-sm text-slate-400">
+            Pemilik saat ini:{" "}
+            <span className="text-slate-200">{currentOwnerName ?? "—"}</span>. Pemilik lama tidak
+            lagi bisa mengerjakan klaim ini; pemilik baru melanjutkannya. Status, region, dokumen,
+            dan verifikasi Finance tidak berubah.
+            {movesHolder ? " Pemegang klaim ikut berpindah ke pemilik baru." : ""}
+          </p>
+
+          {selectable.length === 0 ? (
+            <p className="text-sm text-amber-300">
+              Tidak ada akun distributor aktif lain dari perusahaan klaim ini yang bisa dipilih.
+            </p>
+          ) : (
+            <div className="space-y-1.5">
+              <Label htmlFor="new-child-owner">Pemilik Baru</Label>
+              <Select
+                id="new-child-owner"
+                value={newOwnerId}
+                onChange={(e) => setNewOwnerId(e.target.value)}
+                placeholder="Pilih akun distributor"
+              >
+                {selectable.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.full_name}
+                  </option>
+                ))}
+              </Select>
+              <p className="text-xs text-slate-500">
+                Hanya akun aktif dari perusahaan distributor klaim ini.
+              </p>
+            </div>
+          )}
+
+          {blocked.length > 0 && (
+            <p className="text-xs text-slate-500">
+              Tidak bisa dipilih karena masih punya klaim lain yang belum diajukan atas SKP Nasional
+              ini: {blocked.map((c) => c.full_name).join(", ")}.
+            </p>
+          )}
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+              disabled={isPending}
+            >
+              Batal
+            </Button>
+            <Button type="submit" disabled={isPending || !newOwnerId}>
+              {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              Alihkan
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ============================================================
 // Transfer Claim Holder Dialog (Fase 10)
 // ============================================================
 
@@ -1743,6 +1867,7 @@ const claimEventIconMap: Record<string, React.ReactNode> = {
   item_revision_requested: <TriangleAlert className="h-3.5 w-3.5 text-amber-400" />,
   holder_transferred: <ArrowLeftRight className="h-3.5 w-3.5 text-sky-400" />,
   child_cancelled: <XCircle className="h-3.5 w-3.5 text-rose-400" />,
+  owner_transferred: <ArrowLeftRight className="h-3.5 w-3.5 text-sky-400" />,
 };
 
 const claimEventLabelMap: Record<string, string> = {
@@ -1754,6 +1879,7 @@ const claimEventLabelMap: Record<string, string> = {
   item_revision_requested: "Revisi Diminta",
   holder_transferred: "Pemegang Klaim Dialihkan",
   child_cancelled: "Klaim Dibatalkan",
+  owner_transferred: "Kepemilikan Klaim Dialihkan",
 };
 
 function ClaimHistorySection({ events }: { events: ClaimEventWithActor[] }) {
@@ -1800,7 +1926,7 @@ function ClaimHistorySection({ events }: { events: ClaimEventWithActor[] }) {
                   {entry.note ? ` — ${entry.note}` : ""}
                 </p>
               )}
-              {entry.action === "holder_transferred" && (
+              {(entry.action === "holder_transferred" || entry.action === "owner_transferred") && (
                 <p className="mt-1 text-sm text-slate-400">
                   {entry.from_user?.full_name ?? "—"} → {entry.to_user?.full_name ?? "—"}
                 </p>
@@ -2312,6 +2438,7 @@ export function CampaignDetailClient({
   claimAmountVerification,
   claimEvents,
   claimHolderCandidates,
+  childOwnerCandidates,
   aaBudgetInfo,
   isEditable,
   userRole,
@@ -2446,9 +2573,15 @@ export function CampaignDetailClient({
     ["admin", "superadmin"].includes(userRole) &&
     campaign.status === "claim_submitted" &&
     !!campaign.distributor_id &&
-    // Klaim turunan dikunci ke pemiliknya; alih kepemilikan menyusul (Fase 8).
+    // Klaim turunan dikunci ke pemiliknya: pemegang berpindah bersama
+    // pemilik lewat "Alihkan kepemilikan" (Fase 8), bukan lewat tombol ini.
     !isNationalChild;
   const [transferHolderOpen, setTransferHolderOpen] = useState(false);
+
+  // SKP Nasional Fase 8: admin/superadmin mengalihkan kepemilikan klaim
+  // turunan pada status apa pun. Server memeriksa ulang (transferChildOwnerError).
+  const canTransferChildOwner = isAdminOrSuperadmin && isNationalChild;
+  const [transferOwnerOpen, setTransferOwnerOpen] = useState(false);
 
   const canSubmitKlaim =
     ["distributor", "admin", "superadmin"].includes(userRole) &&
@@ -3016,7 +3149,27 @@ export function CampaignDetailClient({
             label="Distributor"
             value={isNational ? "Semua distributor (SKP Nasional)" : campaign.distributor?.name}
           />
-          {isNationalChild && <DetailRow label="Pemilik Klaim" value={claimOwnerName} />}
+          {isNationalChild && (
+            <DetailRow
+              label="Pemilik Klaim"
+              value={
+                <div className="flex flex-wrap items-center gap-3">
+                  <span>{claimOwnerName ?? "—"}</span>
+                  {canTransferChildOwner && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setTransferOwnerOpen(true)}
+                    >
+                      <ArrowLeftRight className="h-3.5 w-3.5" />
+                      Alihkan kepemilikan
+                    </Button>
+                  )}
+                </div>
+              }
+            />
+          )}
           {(campaign.claim_submitted_by || canTransferHolder) && (
             <DetailRow
               label="Pemegang Klaim"
@@ -3216,6 +3369,17 @@ export function CampaignDetailClient({
           isOwner={isChildClaimOwner}
           open={cancelChildOpen}
           onOpenChange={setCancelChildOpen}
+        />
+      )}
+
+      {canTransferChildOwner && (
+        <TransferChildOwnerDialog
+          campaignId={campaign.id}
+          currentOwnerName={claimOwnerName}
+          movesHolder={campaign.status === "claim_submitted"}
+          candidates={childOwnerCandidates}
+          open={transferOwnerOpen}
+          onOpenChange={setTransferOwnerOpen}
         />
       )}
 

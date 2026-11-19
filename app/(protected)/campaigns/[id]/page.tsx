@@ -7,6 +7,8 @@ import {
   type DistributorCampaignAccess,
 } from "@/lib/distributor-campaign-guard";
 import {
+  OPEN_CHILD_CLAIM_STATUSES,
+  isChildOwnerCandidate,
   isClaimDeadlinePassed,
   isClaimedChildStatus,
   isOpenChildClaimStatus,
@@ -14,7 +16,7 @@ import {
   nationalBudgetSummary,
   type NationalBudgetSummary,
 } from "@/lib/national-skp";
-import { CampaignDetailClient } from "./campaign-detail-client";
+import { CampaignDetailClient, type ChildOwnerOption } from "./campaign-detail-client";
 import type { CampaignRow, CampaignFileRow, ApprovalHistoryRow, RealizationRow, DistributorReceiptRow, ClaimEventRow, ClaimItemStatus, UserRole, CampaignStatus, DistributorScope } from "@/types/database";
 
 export type ClaimDocumentFile = {
@@ -432,7 +434,8 @@ export default async function CampaignDetailPage({ params }: Props) {
     (userRole === "admin" || userRole === "superadmin") &&
     campaign.status === "claim_submitted" &&
     campaign.distributor_id &&
-    // Klaim turunan dikunci ke pemiliknya; alih kepemilikan menyusul (Fase 8).
+    // Klaim turunan dikunci ke pemiliknya: pemegang berpindah bersama pemilik
+    // lewat "Alihkan kepemilikan" (Fase 8).
     !isNationalChild
   ) {
     const { data: candidateUsers } = await supabase
@@ -450,6 +453,49 @@ export default async function CampaignDetailPage({ params }: Props) {
     claimHolderCandidates = (candidateUsers ?? [])
       .filter((u) => isClaimHolderCandidate({ ...u, distributor_id: u.distributor_id ?? null }, claim))
       .map((u) => ({ id: u.id, full_name: u.full_name }));
+  }
+
+  // SKP Nasional Fase 8: kandidat pemilik baru untuk tombol "Alihkan
+  // kepemilikan" — hanya admin/superadmin, pada klaim turunan berstatus apa
+  // pun. Akun distributor aktif dari perusahaan turunan selain pemilik saat
+  // ini; yang masih punya klaim lain belum diajukan atas induk yang sama
+  // ditandai tidak bisa dipilih. Server action memeriksa ulang aturan yang sama.
+  let childOwnerCandidates: ChildOwnerOption[] = [];
+  if (
+    (userRole === "admin" || userRole === "superadmin") &&
+    isNationalChild &&
+    campaign.distributor_id
+  ) {
+    const [{ data: ownerCandidateUsers }, { data: openSiblingsRaw }] = await Promise.all([
+      supabase
+        .from("users")
+        .select("id, full_name, role, is_active, distributor_id")
+        .eq("role", "distributor")
+        .eq("distributor_id", campaign.distributor_id)
+        .eq("is_active", true)
+        .order("full_name"),
+      supabase
+        .from("campaigns")
+        .select("claim_owner_id")
+        .eq("parent_campaign_id", campaign.parent_campaign_id!)
+        .neq("id", campaign.id)
+        .in("status", [...OPEN_CHILD_CLAIM_STATUSES]),
+    ]);
+    const ownersWithOpenClaim = new Set(
+      (openSiblingsRaw ?? []).map((c) => c.claim_owner_id).filter((v): v is string => !!v)
+    );
+    const target = {
+      parent_campaign_id: campaign.parent_campaign_id ?? null,
+      claim_owner_id: campaign.claim_owner_id ?? null,
+      distributor_id: campaign.distributor_id,
+    };
+    childOwnerCandidates = (ownerCandidateUsers ?? [])
+      .filter((u) => isChildOwnerCandidate({ ...u, distributor_id: u.distributor_id ?? null }, target))
+      .map((u) => ({
+        id: u.id,
+        full_name: u.full_name,
+        hasOpenClaim: ownersWithOpenClaim.has(u.id),
+      }));
   }
 
   // Claim checklist data. "user" is included from Phase 2 onward so the SKP
@@ -683,6 +729,7 @@ export default async function CampaignDetailPage({ params }: Props) {
       claimAmountVerification={claimAmountVerification}
       claimEvents={claimEvents}
       claimHolderCandidates={claimHolderCandidates}
+      childOwnerCandidates={childOwnerCandidates}
       aaBudgetInfo={aaBudgetInfo}
       isEditable={isEditable}
       userRole={userRole}

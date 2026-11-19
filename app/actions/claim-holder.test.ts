@@ -267,3 +267,23 @@ describe("transferClaimHolderAction", () => {
     );
   });
 });
+
+describe("transferClaimHolderAction — klaim turunan SKP nasional (Fase 8)", () => {
+  it("ditolak tanpa menulis: pemegang klaim turunan berpindah bersama pemiliknya", async () => {
+    const { campaignUpdate } = setupMocks({
+      campaign: {
+        id: "camp-1",
+        name: "Promo – klaim Ani",
+        status: "claim_submitted",
+        distributor_id: "co-edm",
+        claim_submitted_by: "user-a",
+        parent_campaign_id: "induk-1",
+      },
+    });
+
+    expect(await transferClaimHolderAction("camp-1", "user-b")).toEqual({
+      error: "Pemegang klaim SKP Nasional mengikuti pemilik klaim — gunakan Alihkan kepemilikan",
+    });
+    expect(campaignUpdate).not.toHaveBeenCalled();
+  });
+});

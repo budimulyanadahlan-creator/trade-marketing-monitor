@@ -11,6 +11,7 @@ import {
   createChildClaimError,
   makeNationalError,
   reopenNationalError,
+  transferChildOwnerError,
   unmakeNationalError,
 } from "@/lib/national-skp";
 
@@ -492,6 +493,105 @@ export async function reopenNationalAction(campaignId: string): Promise<National
 
     revalidatePath("/campaigns");
     revalidatePath(`/campaigns/${campaignId}`);
+    return { success: true };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Terjadi kesalahan" };
+  }
+}
+
+// ============================================================
+// Alih kepemilikan klaim turunan (SKP Nasional, Fase 8)
+// ============================================================
+
+const CHILD_TRANSFER_FAILED = "Kepemilikan klaim gagal dialihkan — coba lagi sebentar lagi";
+
+/**
+ * Alihkan Kepemilikan: admin/superadmin memindahkan klaim turunan ke akun
+ * distributor aktif lain dari perusahaan yang sama, pada status apa pun.
+ * Pemilik lama kehilangan akses bertindak, pemilik baru mendapatkannya; region
+ * turunan tidak berubah. Saat klaim berstatus Klaim Diajukan, pemegang klaim
+ * ikut berpindah — status SKP dan verifikasi per item tidak disentuh.
+ *
+ * Syaratnya di transferChildOwnerError (lib/national-skp.ts). Ditulis lewat
+ * fungsi database transfer_national_child_owner (migrasi 081), yang mengunci
+ * baris klaim dan induknya, memeriksa ulang semua aturan, memindahkan pemilik
+ * (+ pemegang), dan mencatat riwayat dalam satu transaksi. `p_expected_owner_id`
+ * menolak pengalihan bila pemilik sudah berubah sejak halaman dimuat.
+ */
+export async function transferChildOwnerAction(
+  childId: string,
+  newOwnerId: string
+): Promise<NationalResult> {
+  try {
+    const { supabase, actor, error: authError } = await requireActor();
+    if (!actor) return { error: authError ?? "Unauthorized" };
+
+    const { data: childRaw } = await supabase
+      .from("campaigns")
+      .select("id, status, parent_campaign_id, claim_owner_id, distributor_id")
+      .eq("id", childId)
+      .single();
+    if (!childRaw) return { error: "Klaim tidak ditemukan" };
+    const child = childRaw as {
+      id: string;
+      status: string;
+      parent_campaign_id: string | null;
+      claim_owner_id: string | null;
+      distributor_id: string | null;
+    };
+
+    const { data: candidate } = await supabase
+      .from("users")
+      .select("id, role, is_active, distributor_id")
+      .eq("id", newOwnerId)
+      .maybeSingle();
+
+    let candidateOpenClaims = 0;
+    if (child.parent_campaign_id && candidate) {
+      const { count, error: countError } = await supabase
+        .from("campaigns")
+        .select("id", { count: "exact", head: true })
+        .eq("parent_campaign_id", child.parent_campaign_id)
+        .eq("claim_owner_id", candidate.id)
+        .neq("id", childId)
+        .in("status", [...OPEN_CHILD_CLAIM_STATUSES]);
+      if (countError) return { error: countError.message };
+      candidateOpenClaims = count ?? 0;
+    }
+
+    const ruleError = transferChildOwnerError(
+      actor,
+      child,
+      candidate
+        ? {
+            id: candidate.id,
+            role: candidate.role as string,
+            is_active: !!candidate.is_active,
+            distributor_id: (candidate.distributor_id ?? null) as string | null,
+          }
+        : null,
+      candidateOpenClaims
+    );
+    if (ruleError) return { error: ruleError };
+
+    const { error } = await createAdminClient().rpc("transfer_national_child_owner", {
+      p_child_id: childId,
+      p_actor_id: actor.id,
+      p_new_owner_id: newOwnerId,
+      p_expected_owner_id: child.claim_owner_id,
+    });
+
+    if (error) {
+      // P0001 = penolakan aturan dari fungsi database (pesannya sudah ramah,
+      // mis. pemilik baru saja dialihkan admin lain). Selain itu error teknis.
+      if (error.code === "P0001" && error.message) return { error: error.message };
+      console.error("[transferChildOwnerAction] rpc error:", error);
+      return { error: CHILD_TRANSFER_FAILED };
+    }
+
+    revalidatePath("/campaigns");
+    revalidatePath(`/campaigns/${childId}`);
+    if (child.parent_campaign_id) revalidatePath(`/campaigns/${child.parent_campaign_id}`);
     return { success: true };
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Terjadi kesalahan" };

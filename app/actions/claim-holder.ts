@@ -37,10 +37,19 @@ export async function transferClaimHolderAction(
 
     const { data: campaign } = await supabase
       .from("campaigns")
-      .select("id, name, status, distributor_id, claim_submitted_by")
+      .select("id, name, status, distributor_id, claim_submitted_by, parent_campaign_id")
       .eq("id", campaignId)
       .single();
     if (!campaign) return { error: "SKP tidak ditemukan" };
+
+    // Klaim turunan SKP nasional dikunci ke pemiliknya (claim_owner_id):
+    // pemegang yang berbeda dari pemilik tidak akan bisa bertindak. Pemegang
+    // berpindah bersama pemilik lewat transferChildOwnerAction (Fase 8).
+    if (campaign.parent_campaign_id) {
+      return {
+        error: "Pemegang klaim SKP Nasional mengikuti pemilik klaim — gunakan Alihkan kepemilikan",
+      };
+    }
 
     const { data: candidate } = await supabase
       .from("users")

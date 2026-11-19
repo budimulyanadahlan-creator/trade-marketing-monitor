@@ -51,6 +51,15 @@ export const NATIONAL_SKP_MESSAGES = {
   alreadyClosed: "SKP Nasional ini sudah ditutup",
   notClosed: "SKP Nasional ini belum ditutup",
   reopenCompleted: "SKP Nasional yang sudah Selesai tidak dapat dibuka kembali",
+  transferNotAdmin: "Hanya admin yang dapat mengalihkan kepemilikan klaim",
+  transferNotChild: "Hanya klaim atas SKP Nasional yang kepemilikannya dapat dialihkan",
+  transferCandidateNotFound: "Akun pemilik baru tidak ditemukan",
+  transferCandidateNotDistributor: "Pemilik baru harus akun distributor",
+  transferCandidateInactive: "Akun pemilik baru tidak aktif",
+  transferCandidateOtherCompany: "Pemilik baru harus dari perusahaan distributor klaim ini",
+  transferSameOwner: "Akun tersebut sudah menjadi pemilik klaim ini",
+  transferCandidateHasOpenClaim:
+    "Akun tujuan masih punya klaim lain yang belum diajukan atas SKP Nasional yang sama — selesaikan atau batalkan dulu klaim itu",
 } as const;
 
 export type NationalActor = { role: string };
@@ -541,4 +550,76 @@ export function reopenNationalError(
   if (!campaign.national_closed_at) return m.notClosed;
   if (campaign.status === "completed") return m.reopenCompleted;
   return null;
+}
+
+// ============================================================
+// Alih kepemilikan klaim turunan (Fase 8)
+//
+// Admin memindahkan klaim turunan ke akun distributor aktif lain dari
+// perusahaan yang sama, pada status apa pun — agar klaim tidak macet saat staf
+// cabang berganti. Pemilik lama kehilangan akses bertindak, pemilik baru
+// mendapatkannya; region dan perusahaan turunan tidak berubah. Akun tujuan
+// tidak boleh sedang punya klaim lain yang belum diajukan atas induk yang sama
+// (aturan "satu klaim terbuka per akun per induk" tetap berlaku). Saat klaim
+// berstatus Klaim Diajukan, pemegang klaim ikut berpindah supaya pemilik baru
+// bisa menanggapi revisi Finance.
+// Padanan di database: migrasi 081 (fungsi transfer_national_child_owner).
+// ============================================================
+
+export type ChildOwnerCandidate = {
+  id: string;
+  role: string;
+  is_active: boolean;
+  distributor_id: string | null;
+};
+
+export type TransferChildOwnerTarget = {
+  parent_campaign_id?: string | null;
+  claim_owner_id?: string | null;
+  /** Perusahaan klaim turunan. */
+  distributor_id: string | null;
+};
+
+/** true = akun ini boleh dipilih sebagai pemilik baru klaim turunan ini. */
+export function isChildOwnerCandidate(
+  candidate: ChildOwnerCandidate,
+  child: TransferChildOwnerTarget
+): boolean {
+  return (
+    candidate.role === "distributor" &&
+    candidate.is_active &&
+    !!child.distributor_id &&
+    candidate.distributor_id === child.distributor_id &&
+    candidate.id !== child.claim_owner_id
+  );
+}
+
+/**
+ * Pesan error jika kepemilikan klaim turunan tidak boleh dialihkan, atau null
+ * jika boleh. `candidateOpenClaims` = jumlah klaim turunan akun tujuan atas
+ * induk yang sama yang belum diajukan (status Disetujui atau Berjalan).
+ */
+export function transferChildOwnerError(
+  actor: NationalActor,
+  child: TransferChildOwnerTarget,
+  candidate: ChildOwnerCandidate | null,
+  candidateOpenClaims: number
+): string | null {
+  const m = NATIONAL_SKP_MESSAGES;
+  if (!isAdminRole(actor.role)) return m.transferNotAdmin;
+  if (!child.parent_campaign_id) return m.transferNotChild;
+  if (!candidate) return m.transferCandidateNotFound;
+  if (candidate.role !== "distributor") return m.transferCandidateNotDistributor;
+  if (!candidate.is_active) return m.transferCandidateInactive;
+  if (!child.distributor_id || candidate.distributor_id !== child.distributor_id) {
+    return m.transferCandidateOtherCompany;
+  }
+  if (candidate.id === child.claim_owner_id) return m.transferSameOwner;
+  if (candidateOpenClaims > 0) return m.transferCandidateHasOpenClaim;
+  return null;
+}
+
+/** true = pada status ini pemegang klaim ikut berpindah ke pemilik baru. */
+export function transferMovesClaimHolder(status: string): boolean {
+  return status === "claim_submitted";
 }

@@ -695,3 +695,178 @@ describe("reopenNationalAction", () => {
     expect(mocks.campaignsTable.update).not.toHaveBeenCalled();
   });
 });
+
+// ============================================================
+// Alih kepemilikan klaim turunan (Fase 8)
+// ============================================================
+
+import { transferChildOwnerAction } from "./national-skp";
+
+type TransferChild = Child & { distributor_id: string | null };
+
+const TRANSFER_CHILD: TransferChild = {
+  id: "turunan-1",
+  status: "claim_submitted",
+  parent_campaign_id: "induk-1",
+  claim_owner_id: "dist-1",
+  distributor_id: "perusahaan-1",
+};
+
+const NEW_OWNER = {
+  id: "dist-2",
+  role: "distributor",
+  is_active: true,
+  distributor_id: "perusahaan-1",
+};
+
+function setupTransferMocks({
+  role = "admin",
+  isActive = true,
+  child = TRANSFER_CHILD as TransferChild | null,
+  candidate = NEW_OWNER as typeof NEW_OWNER | null,
+  candidateOpenClaims = 0,
+  rpcResult = { data: null, error: null } as {
+    data: null;
+    error: { message: string; code?: string } | null;
+  },
+} = {}) {
+  let usersCall = 0;
+  const openClaimsCount = chain({ count: candidateOpenClaims, error: null });
+  const mockClient = {
+    auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: "admin-1" } } }) },
+    from: vi.fn().mockImplementation((table: string) => {
+      if (table === "users") {
+        // Panggilan pertama = profil pelaku, kedua = akun tujuan.
+        usersCall += 1;
+        return usersCall === 1
+          ? chain({ data: { role, is_active: isActive } })
+          : chain({ data: candidate });
+      }
+      if (table === "campaigns") {
+        return {
+          select: vi.fn().mockImplementation((_cols: string, opts?: { head?: boolean }) =>
+            opts?.head ? openClaimsCount : chain({ data: child })
+          ),
+        };
+      }
+      throw new Error(`tabel tak terduga: ${table}`);
+    }),
+  };
+  const rpc = vi.fn().mockResolvedValue(rpcResult);
+  vi.mocked(createClient).mockResolvedValue(mockClient as never);
+  vi.mocked(createAdminClient).mockReturnValue({ rpc } as never);
+  return { rpc, openClaimsCount };
+}
+
+describe("transferChildOwnerAction", () => {
+  it("admin mengalihkan kepemilikan lewat fungsi database, dikunci ke pemilik lama", async () => {
+    const { rpc, openClaimsCount } = setupTransferMocks();
+
+    expect(await transferChildOwnerAction("turunan-1", "dist-2")).toEqual({ success: true });
+
+    expect(rpc).toHaveBeenCalledWith("transfer_national_child_owner", {
+      p_child_id: "turunan-1",
+      p_actor_id: "admin-1",
+      p_new_owner_id: "dist-2",
+      p_expected_owner_id: "dist-1",
+    });
+    // Klaim terbuka akun tujuan dihitung atas induk yang sama.
+    expect(openClaimsCount.eq).toHaveBeenCalledWith("parent_campaign_id", "induk-1");
+    expect(openClaimsCount.eq).toHaveBeenCalledWith("claim_owner_id", "dist-2");
+    expect(openClaimsCount.in).toHaveBeenCalledWith("status", ["approved", "ongoing"]);
+    expect(revalidatePath).toHaveBeenCalledWith("/campaigns");
+    expect(revalidatePath).toHaveBeenCalledWith("/campaigns/turunan-1");
+    expect(revalidatePath).toHaveBeenCalledWith("/campaigns/induk-1");
+  });
+
+  it("berlaku pada status apa pun", async () => {
+    for (const status of [
+      "approved",
+      "ongoing",
+      "claim_verified",
+      "ready_to_pay",
+      "paid",
+      "completed",
+      "cancelled",
+    ]) {
+      const { rpc } = setupTransferMocks({ child: { ...TRANSFER_CHILD, status } });
+      expect(await transferChildOwnerAction("turunan-1", "dist-2")).toEqual({ success: true });
+      expect(rpc).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("role selain admin/superadmin dan akun nonaktif ditolak tanpa menulis", async () => {
+    for (const role of ["distributor", "finance", "manager", "user"]) {
+      const { rpc } = setupTransferMocks({ role });
+      expect(await transferChildOwnerAction("turunan-1", "dist-2")).toEqual({
+        error: NATIONAL_SKP_MESSAGES.transferNotAdmin,
+      });
+      expect(rpc).not.toHaveBeenCalled();
+    }
+    const { rpc } = setupTransferMocks({ isActive: false });
+    expect(await transferChildOwnerAction("turunan-1", "dist-2")).toEqual({
+      error: "Akun tidak aktif",
+    });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("klaim tidak ditemukan dan SKP biasa ditolak", async () => {
+    setupTransferMocks({ child: null });
+    expect(await transferChildOwnerAction("turunan-1", "dist-2")).toEqual({
+      error: "Klaim tidak ditemukan",
+    });
+
+    const { rpc } = setupTransferMocks({
+      child: { ...TRANSFER_CHILD, parent_campaign_id: null, claim_owner_id: null },
+    });
+    expect(await transferChildOwnerAction("turunan-1", "dist-2")).toEqual({
+      error: NATIONAL_SKP_MESSAGES.transferNotChild,
+    });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("akun tujuan yang tidak sah ditolak tanpa menulis", async () => {
+    const m = NATIONAL_SKP_MESSAGES;
+    const cases: [typeof NEW_OWNER | null, string][] = [
+      [null, m.transferCandidateNotFound],
+      [{ ...NEW_OWNER, role: "finance" }, m.transferCandidateNotDistributor],
+      [{ ...NEW_OWNER, is_active: false }, m.transferCandidateInactive],
+      [{ ...NEW_OWNER, distributor_id: "perusahaan-2" }, m.transferCandidateOtherCompany],
+      [{ ...NEW_OWNER, id: "dist-1" }, m.transferSameOwner],
+    ];
+    for (const [candidate, message] of cases) {
+      const { rpc } = setupTransferMocks({ candidate });
+      expect(await transferChildOwnerAction("turunan-1", candidate?.id ?? "dist-x")).toEqual({
+        error: message,
+      });
+      expect(rpc).not.toHaveBeenCalled();
+    }
+  });
+
+  it("ditolak bila akun tujuan masih punya klaim yang belum diajukan atas induk yang sama", async () => {
+    const { rpc } = setupTransferMocks({ candidateOpenClaims: 1 });
+    expect(await transferChildOwnerAction("turunan-1", "dist-2")).toEqual({
+      error: NATIONAL_SKP_MESSAGES.transferCandidateHasOpenClaim,
+    });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("penolakan database diteruskan sebagai pesan ramah; error teknis tidak bocor", async () => {
+    setupTransferMocks({
+      rpcResult: {
+        data: null,
+        error: { code: "P0001", message: NATIONAL_SKP_MESSAGES.transferCandidateHasOpenClaim },
+      },
+    });
+    expect(await transferChildOwnerAction("turunan-1", "dist-2")).toEqual({
+      error: NATIONAL_SKP_MESSAGES.transferCandidateHasOpenClaim,
+    });
+
+    setupTransferMocks({
+      rpcResult: { data: null, error: { code: "42883", message: "function does not exist" } },
+    });
+    expect((await transferChildOwnerAction("turunan-1", "dist-2")).error).toBe(
+      "Kepemilikan klaim gagal dialihkan — coba lagi sebentar lagi"
+    );
+  });
+});

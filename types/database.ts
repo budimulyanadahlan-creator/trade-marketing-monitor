@@ -275,7 +275,10 @@ export type ClaimEventAction =
   | "item_revision_requested"
   | "holder_transferred"
   // Klaim turunan SKP nasional dibatalkan pemilik/admin (migrasi 076).
-  | "child_cancelled";
+  | "child_cancelled"
+  // Kepemilikan klaim turunan dialihkan admin (migrasi 081); pemilik
+  // lama/baru di from_user_id/to_user_id.
+  | "owner_transferred";
 
 export type ClaimEventRow = {
   id: string;
@@ -1649,6 +1652,15 @@ export type Database = {
       };
       cancel_national_child_claim: {
         Args: { p_child_id: string; p_actor_id: string };
+        Returns: undefined;
+      };
+      transfer_national_child_owner: {
+        Args: {
+          p_child_id: string;
+          p_actor_id: string;
+          p_new_owner_id: string;
+          p_expected_owner_id: string | null;
+        };
         Returns: undefined;
       };
       create_marketing_asset: {
