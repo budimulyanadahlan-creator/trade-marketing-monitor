@@ -150,19 +150,24 @@ export default async function CampaignsPage({
   // Klaim turunan SKP nasional (Fase 2): nama SKP induk dan akun pemilik
   // untuk ditampilkan di bawah nama baris turunan. Nama induk diambil dari
   // daftar yang sama (induk terlihat oleh siapa pun yang melihat turunannya);
-  // nama pemilik hanya untuk role internal — distributor hanya melihat
-  // turunannya sendiri.
+  // nama pemilik untuk role internal dan untuk akun pusat distributor yang
+  // memantau klaim akun lain (Fase 4, `viewOnly`) — pada klaim milik sendiri
+  // nama pemilik tidak ditampilkan.
   const childClaimInfoByCampaignId: Record<
     string,
-    { parentName: string | null; ownerName: string | null }
+    { parentName: string | null; ownerName: string | null; viewOnly: boolean }
   > = {};
   const childClaims = (campaigns ?? []).filter((c) => c.parent_campaign_id);
   if (childClaims.length > 0) {
     const nameById = new Map((campaigns ?? []).map((c) => [c.id, c.name]));
     const ownerNameById = new Map<string, string>();
-    if (!isDistributor) {
+    {
       const ownerIds = [
-        ...new Set(childClaims.map((c) => c.claim_owner_id).filter((id): id is string => !!id)),
+        ...new Set(
+          childClaims
+            .map((c) => c.claim_owner_id)
+            .filter((id): id is string => !!id && !(isDistributor && id === user.id))
+        ),
       ];
       if (ownerIds.length > 0) {
         const { data: owners } = await supabase
@@ -176,6 +181,7 @@ export default async function CampaignsPage({
       childClaimInfoByCampaignId[c.id] = {
         parentName: nameById.get(c.parent_campaign_id!) ?? null,
         ownerName: c.claim_owner_id ? (ownerNameById.get(c.claim_owner_id) ?? null) : null,
+        viewOnly: isDistributor && c.claim_owner_id !== user.id,
       };
     }
   }

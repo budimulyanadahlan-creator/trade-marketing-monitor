@@ -14,7 +14,7 @@ import {
   claimHolderActionError,
   distributorClaimActionError,
 } from "@/lib/distributor-campaign-guard";
-import { nationalParentActivityError } from "@/lib/national-skp";
+import { claimSubmittedCreatorId, nationalParentActivityError } from "@/lib/national-skp";
 import type { CampaignStatus, DistributorScope } from "@/types/database";
 
 async function requireActiveUser() {
@@ -285,11 +285,22 @@ export async function submitKlaimAction(
     }
 
     try {
+      // Klaim turunan SKP nasional: pembuat turunan adalah distributor itu
+      // sendiri, jadi email ditujukan ke pembuat SKP induk (Fase 4).
+      let parentCampaign: { created_by: string | null } | null = null;
+      if (campaign.parent_campaign_id) {
+        const { data: parentRaw } = await createAdminClient()
+          .from("campaigns")
+          .select("created_by")
+          .eq("id", campaign.parent_campaign_id)
+          .maybeSingle();
+        parentCampaign = parentRaw ?? null;
+      }
       await notifyClaimSubmitted({
         campaignId,
         campaignName: campaign.name,
         claimAmount: parsed.data.claimAmount,
-        creatorId: campaign.created_by,
+        creatorId: claimSubmittedCreatorId(campaign, parentCampaign),
         submittedAt,
       });
     } catch (notifyErr) {
@@ -492,7 +503,8 @@ async function notifyClaimSubmitted(opts: {
   campaignId: string;
   campaignName: string;
   claimAmount: number;
-  creatorId: string;
+  /** Pembuat SKP (atau pembuat SKP induk untuk klaim turunan); null = hanya Finance. */
+  creatorId: string | null;
   submittedAt: string;
 }) {
   const adminClient = createAdminClient();
@@ -503,7 +515,9 @@ async function notifyClaimSubmitted(opts: {
       .select("id, full_name")
       .eq("role", "finance")
       .eq("is_active", true),
-    adminClient.from("users").select("id, full_name").eq("id", opts.creatorId).single(),
+    opts.creatorId
+      ? adminClient.from("users").select("id, full_name").eq("id", opts.creatorId).single()
+      : Promise.resolve({ data: null as { id: string; full_name: string } | null }),
   ]);
 
   const nameById = new Map<string, string>();

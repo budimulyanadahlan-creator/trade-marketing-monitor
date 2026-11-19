@@ -11,6 +11,7 @@ import {
   isOpenChildClaimStatus,
   type CancelChildClaimTarget,
 } from "./national-skp";
+import { claimSubmittedCreatorId, isPaidToastRecipient } from "./national-skp";
 
 const admin = { role: "admin" };
 const superadmin = { role: "superadmin" };
@@ -326,5 +327,52 @@ describe("cancelChildClaimError", () => {
     expect(cancelChildClaimError(owner, turunan({ status: "cancelled" }), 0)).toBe(
       NATIONAL_SKP_MESSAGES.cancelAlreadyCancelled
     );
+  });
+});
+
+describe("claimSubmittedCreatorId — penerima email klaim diajukan (Fase 4)", () => {
+  it("SKP biasa → pembuat SKP itu", () => {
+    expect(claimSubmittedCreatorId({ created_by: "asm", parent_campaign_id: null }, null)).toBe("asm");
+  });
+
+  it("klaim turunan → pembuat SKP induk, bukan pembuat turunan", () => {
+    expect(
+      claimSubmittedCreatorId(
+        { created_by: "distributor-pemilik", parent_campaign_id: "induk" },
+        { created_by: "admin-pembuat-induk" }
+      )
+    ).toBe("admin-pembuat-induk");
+  });
+
+  it("klaim turunan yang induknya tidak terbaca → tidak ada pembuat (hanya Finance)", () => {
+    expect(
+      claimSubmittedCreatorId({ created_by: "distributor-pemilik", parent_campaign_id: "induk" }, null)
+    ).toBeNull();
+  });
+});
+
+describe("isPaidToastRecipient — toast realtime dibayar (Fase 4)", () => {
+  const pusat = { id: "u-pusat", role: "distributor", distributor_id: "edm" };
+  const cabang = { id: "u-cabang", role: "distributor", distributor_id: "edm" };
+
+  it("SKP biasa → semua akun distributor perusahaan SKP", () => {
+    const skp = { distributor_id: "edm", parent_campaign_id: null, claim_owner_id: null };
+    expect(isPaidToastRecipient(skp, pusat)).toBe(true);
+    expect(isPaidToastRecipient(skp, cabang)).toBe(true);
+    expect(isPaidToastRecipient(skp, { ...cabang, distributor_id: "mms" })).toBe(false);
+    expect(isPaidToastRecipient(skp, { ...cabang, distributor_id: null })).toBe(false);
+    expect(isPaidToastRecipient({ ...skp, distributor_id: null }, { ...cabang, distributor_id: null })).toBe(false);
+  });
+
+  it("klaim turunan → hanya pemilik, bukan pusat atau rekan seperusahaan", () => {
+    const turunan = { distributor_id: "edm", parent_campaign_id: "induk", claim_owner_id: "u-cabang" };
+    expect(isPaidToastRecipient(turunan, cabang)).toBe(true);
+    expect(isPaidToastRecipient(turunan, pusat)).toBe(false);
+    expect(isPaidToastRecipient(turunan, { ...cabang, id: "u-cabang-2" })).toBe(false);
+  });
+
+  it("role selain distributor tidak pernah menerima toast ini", () => {
+    const skp = { distributor_id: "edm", parent_campaign_id: null, claim_owner_id: null };
+    expect(isPaidToastRecipient(skp, { id: "u-fin", role: "finance", distributor_id: "edm" })).toBe(false);
   });
 });

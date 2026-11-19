@@ -189,3 +189,48 @@ describe("resolveDistributorRecipientIds — penyaringan umum", () => {
     expect(resolveDistributorRecipientIds(orphan, candidates, "after_claim")).toEqual([]);
   });
 });
+
+describe("resolveDistributorRecipientIds — klaim turunan SKP nasional (Fase 4)", () => {
+  const turunanMms: NotificationCampaign = {
+    distributor_id: MMS,
+    distributor_parent_id: EDM,
+    region_id: WCJ,
+    claim_submitted_by: "mms-cabang-wcj",
+    claim_owner_id: "mms-cabang-wcj",
+  };
+
+  it("revisi/disetujui/dibayar → pemilik + Pusat perusahaan + Pusat induk", () => {
+    expect(sorted(resolveDistributorRecipientIds(turunanMms, candidates, "after_claim"))).toEqual(
+      sorted(["mms-cabang-wcj", "mms-pusat", "edm-pusat"])
+    );
+  });
+
+  it("pemegang klaim kosong (pengajuan dibatalkan) → tetap ke pemilik, bukan Cabang seregion", () => {
+    const tanpaPemegang = { ...turunanMms, claim_submitted_by: null };
+    for (const stage of ["after_claim", "before_claim"] as const) {
+      expect(sorted(resolveDistributorRecipientIds(tanpaPemegang, candidates, stage))).toEqual(
+        sorted(["mms-cabang-wcj", "mms-pusat", "edm-pusat"])
+      );
+    }
+  });
+
+  it("turunan milik akun Pusat → Pusat itu sekali + Pusat induk", () => {
+    const milikPusat = { ...turunanMms, region_id: null, claim_submitted_by: "mms-pusat", claim_owner_id: "mms-pusat" };
+    expect(sorted(resolveDistributorRecipientIds(milikPusat, candidates, "after_claim"))).toEqual(
+      sorted(["mms-pusat", "edm-pusat"])
+    );
+  });
+
+  it("turunan EDM → pemilik + Pusat EDM saja; anak perusahaan tidak dikirimi", () => {
+    const turunanEdm: NotificationCampaign = {
+      distributor_id: EDM,
+      distributor_parent_id: null,
+      region_id: WCJ,
+      claim_submitted_by: "edm-cabang-wcj",
+      claim_owner_id: "edm-cabang-wcj",
+    };
+    expect(sorted(resolveDistributorRecipientIds(turunanEdm, candidates, "after_claim"))).toEqual(
+      sorted(["edm-cabang-wcj", "edm-pusat"])
+    );
+  });
+});

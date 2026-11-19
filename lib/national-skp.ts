@@ -275,3 +275,45 @@ export function cancelChildClaimError(
   if (child.status !== "approved") return m.cancelAlreadySubmitted;
   return null;
 }
+
+// ============================================================
+// Notifikasi klaim turunan (Fase 4)
+//
+// Pembuat klaim turunan adalah akun distributor pemiliknya sendiri, jadi
+// email "klaim diajukan" ditujukan ke pembuat SKP induk. Toast realtime
+// "dibayar" hanya untuk pemilik: akun pusat ikut menerima event baris turunan
+// (RLS memberinya akses lihat) tetapi klaim itu bukan miliknya.
+// ============================================================
+
+/**
+ * Akun internal yang dikirimi email "klaim diajukan" selain Finance: pembuat
+ * SKP untuk SKP biasa, pembuat SKP induk untuk klaim turunan. null = tidak ada
+ * (induk tidak terbaca) — email tetap ke Finance.
+ */
+export function claimSubmittedCreatorId(
+  campaign: { created_by: string | null; parent_campaign_id?: string | null },
+  parent: { created_by: string | null } | null | undefined
+): string | null {
+  if (campaign.parent_campaign_id) return parent?.created_by ?? null;
+  return campaign.created_by ?? null;
+}
+
+/**
+ * true = akun ini mendapat toast realtime "Klaim SKP Anda telah dibayar".
+ * SKP biasa: semua akun distributor perusahaan SKP. Klaim turunan: hanya
+ * pemiliknya.
+ */
+export function isPaidToastRecipient(
+  campaign: {
+    distributor_id: string | null;
+    parent_campaign_id?: string | null;
+    claim_owner_id?: string | null;
+  },
+  viewer: { id: string; role: string; distributor_id: string | null }
+): boolean {
+  if (viewer.role !== "distributor") return false;
+  if (campaign.parent_campaign_id) {
+    return !!campaign.claim_owner_id && campaign.claim_owner_id === viewer.id;
+  }
+  return !!viewer.distributor_id && campaign.distributor_id === viewer.distributor_id;
+}

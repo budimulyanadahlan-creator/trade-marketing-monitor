@@ -2386,11 +2386,28 @@ export function CampaignDetailClient({
               ) : (
                 "SKP induk tidak dapat ditampilkan untuk akun Anda. "
               )}
-              {isCancelledChild
+              {isCancelledChild || distributorReadOnly
                 ? ""
                 : userRole === "distributor"
                   ? "Unggah dokumen dan isi checklist di sini; setelah Finance mencatat realisasi, ajukan nominal klaim Anda. Klaim ini tidak memakai tanda terima."
                   : "Alur klaim berjalan di sini seperti SKP biasa. Nilai SKP dan komitmen budget hanya ada di SKP induk."}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Hanya lihat: akun pusat memantau klaim turunan akun lain (Fase 4) */}
+      {distributorReadOnly && isNationalChild && !isChildClaimOwner && (
+        <div className="rounded-xl border border-sky-500/30 bg-sky-500/10 px-5 py-3 flex items-start gap-3">
+          <Eye className="h-4 w-4 text-sky-300 mt-0.5 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-sky-200">
+              Hanya lihat — klaim milik {claimOwnerName ?? "akun lain"}
+            </p>
+            <p className="text-xs text-sky-300/80 mt-0.5">
+              Klaim ini dikerjakan oleh akun pemiliknya
+              {campaign.distributor?.name ? ` (${campaign.distributor.name})` : ""}; tombol aksi
+              disembunyikan.
             </p>
           </div>
         </div>

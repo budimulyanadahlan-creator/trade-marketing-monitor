@@ -68,7 +68,8 @@ begin
 
   -- akun lain tidak melihat
   if public.distributor_campaign_access(turunan, rekan_wcj)  is not null then raise exception 'GAGAL: cabang seperusahaan seregion bukan pemilik tidak boleh lihat turunan'; end if;
-  if public.distributor_campaign_access(turunan, pusat_edm)  is not null then raise exception 'GAGAL: pusat belum boleh lihat turunan (Fase 4)'; end if;
+  -- sejak migrasi 077 (Fase 4) pusat perusahaan turunan melihatnya, hanya lihat
+  if public.distributor_campaign_access(turunan, pusat_edm) = 'act' then raise exception 'GAGAL: pusat tidak boleh bertindak atas turunan akun lain'; end if;
   if public.distributor_campaign_access(turunan, cabang_mms) is not null then raise exception 'GAGAL: perusahaan lain tidak boleh lihat turunan'; end if;
   if public.distributor_campaign_access(turunan, owner_orphan) is not null then raise exception 'GAGAL: pemilik tanpa perusahaan tidak boleh lihat turunan'; end if;
   if public.distributor_campaign_access(turunan, nobody)     is not null then raise exception 'GAGAL: non-distributor harus null pada turunan'; end if;

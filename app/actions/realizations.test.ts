@@ -115,6 +115,8 @@ type SetupOptions = {
   financeUsers?: { id: string; full_name: string }[];
   creatorProfile?: { id: string; full_name: string } | null;
   authUsers?: { id: string; email: string | undefined }[];
+  /** SKP induk yang dibaca admin client saat klaim turunan diajukan. */
+  parentCampaign?: { created_by: string | null } | null;
 };
 
 function setupMocks({
@@ -139,6 +141,7 @@ function setupMocks({
     { id: "fin-1", email: "fin1@example.com" },
     { id: "creator-1", email: "creator1@example.com" },
   ],
+  parentCampaign = null,
 }: SetupOptions = {}) {
   const campaignsChain = makeCampaignsChain(campaign, updateError);
   const claimEventsChain = { insert: vi.fn().mockResolvedValue({ error: null }) };
@@ -167,11 +170,17 @@ function setupMocks({
   const usersAdminChain = makeUsersAdminChain(financeUsers, creatorProfile);
   const claimItemVerificationsAdminChain = makeThenableAdminChain({ data: [] });
   const claimRequirementsAdminChain = makeThenableAdminChain({ data: [] });
+  const parentCampaignAdminChain = {
+    select: vi.fn().mockReturnThis(),
+    eq: vi.fn().mockReturnThis(),
+    maybeSingle: vi.fn().mockResolvedValue({ data: parentCampaign }),
+  };
   const mockAdminClient = {
     from: vi.fn().mockImplementation((table: string) => {
       if (table === "users") return usersAdminChain;
       if (table === "claim_item_verifications") return claimItemVerificationsAdminChain;
       if (table === "claim_requirements") return claimRequirementsAdminChain;
+      if (table === "campaigns") return parentCampaignAdminChain;
       return {};
     }),
     auth: {
@@ -189,6 +198,8 @@ function setupMocks({
     mockAdminClient,
     claimEventsChain,
     claimItemVerificationsAdminChain,
+    usersAdminChain,
+    parentCampaignAdminChain,
   };
 }
 
@@ -1519,10 +1530,54 @@ describe("klaim turunan SKP nasional — hanya pemilik yang bertindak", () => {
     expect(mocks.campaignsChain.update).not.toHaveBeenCalled();
   });
 
-  it("pusat perusahaan yang sama pun tidak bertindak atas turunan akun lain", async () => {
+  it("email klaim diajukan untuk turunan → Finance + pembuat SKP induk, bukan pembuat turunan (Fase 4)", async () => {
+    const { usersAdminChain, parentCampaignAdminChain } = setupMocks({
+      userId: "dist-1",
+      userScope: "cabang",
+      userRegionId: "region-wcj",
+      campaign: turunan,
+      parentCampaign: { created_by: "admin-induk" },
+      creatorProfile: { id: "admin-induk", full_name: "Admin Induk" },
+      authUsers: [
+        { id: "fin-1", email: "fin1@example.com" },
+        { id: "admin-induk", email: "admin-induk@example.com" },
+        { id: "dist-1", email: "dist1@example.com" },
+      ],
+    });
+    expect(await submitKlaimAction("camp-1", 500000)).toEqual({ success: true });
+
+    expect(parentCampaignAdminChain.eq).toHaveBeenCalledWith("id", "induk-1");
+    expect(usersAdminChain.eq).toHaveBeenCalledWith("id", "admin-induk");
+    expect(usersAdminChain.eq).not.toHaveBeenCalledWith("id", "dist-1");
+    const to = vi.mocked(sendClaimSubmittedEmail).mock.calls[0][0].to;
+    expect(to).toEqual(
+      expect.arrayContaining([
+        { email: "fin1@example.com", name: "Finance One" },
+        { email: "admin-induk@example.com", name: "Admin Induk" },
+      ])
+    );
+    expect(to).toHaveLength(2);
+  });
+
+  it("email klaim diajukan untuk turunan yang induknya tidak terbaca → hanya Finance", async () => {
+    const { usersAdminChain } = setupMocks({
+      userId: "dist-1",
+      userScope: "cabang",
+      userRegionId: "region-wcj",
+      campaign: turunan,
+      parentCampaign: null,
+    });
+    expect(await submitKlaimAction("camp-1", 500000)).toEqual({ success: true });
+    expect(usersAdminChain.single).not.toHaveBeenCalled();
+    expect(vi.mocked(sendClaimSubmittedEmail).mock.calls[0][0].to).toEqual([
+      { email: "fin1@example.com", name: "Finance One" },
+    ]);
+  });
+
+  it("pusat perusahaan yang sama hanya melihat — tidak bertindak atas turunan akun lain", async () => {
     const mocks = setupMocks({ userId: "dist-pusat", userScope: "pusat", campaign: turunan });
     expect(await submitKlaimAction("camp-1", 500000)).toEqual({
-      error: DISTRIBUTOR_GUARD_MESSAGES.notClaimOwner,
+      error: DISTRIBUTOR_GUARD_MESSAGES.childClaimViewOnly,
     });
     expect(mocks.campaignsChain.update).not.toHaveBeenCalled();
   });

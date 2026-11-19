@@ -12,6 +12,11 @@
  * - **Sebelum klaim diajukan**: akun Cabang perusahaan SKP di region SKP +
  *   akun Pusat perusahaan SKP + akun Pusat induk.
  *
+ * - **Klaim turunan SKP nasional** (SKP Nasional Fase 4): pemilik klaim
+ *   (`claim_owner_id`) + akun Pusat perusahaan turunan + akun Pusat induk, pada
+ *   tahap apa pun. Aturan Cabang seregion tidak dipakai — cabang lain tidak
+ *   melihat turunan itu.
+ *
  * Akun nonaktif dan non-distributor tidak pernah menjadi penerima. Scope null
  * (akun lama) diperlakukan sebagai Cabang, sama seperti modul akses.
  */
@@ -37,6 +42,8 @@ export type NotificationCampaign = {
   region_id: string | null;
   /** Pemegang klaim. */
   claim_submitted_by: string | null;
+  /** Pemilik klaim turunan SKP nasional; kosong untuk SKP biasa. */
+  claim_owner_id?: string | null;
 };
 
 /** Murni: id penerima tanpa duplikat, urut sesuai daftar kandidat. */
@@ -60,8 +67,10 @@ export function resolveDistributorRecipientIds(
     !!campaign.region_id &&
     c.region_id === campaign.region_id;
 
-  const holder = campaign.claim_submitted_by;
-  const useHolder = stage === "after_claim" && !!holder;
+  // Klaim turunan: kuncinya pemilik, pada tahap apa pun.
+  const owner = campaign.claim_owner_id ?? null;
+  const holder = owner ?? campaign.claim_submitted_by;
+  const useHolder = !!owner || (stage === "after_claim" && !!holder);
 
   const ids = new Set<string>();
   for (const c of eligible) {
@@ -91,7 +100,7 @@ export async function getDistributorNotificationRecipients(
 ): Promise<EmailRecipient[]> {
   const { data: campaign } = await adminClient
     .from("campaigns")
-    .select("distributor_id, region_id, claim_submitted_by, distributor:distributors(parent_distributor_id)")
+    .select("distributor_id, region_id, claim_submitted_by, claim_owner_id, distributor:distributors(parent_distributor_id)")
     .eq("id", campaignId)
     .maybeSingle();
   if (!campaign?.distributor_id) return [];
@@ -103,6 +112,7 @@ export async function getDistributorNotificationRecipients(
     region_id: campaign.region_id ?? null,
     claim_submitted_by:
       opts.holderOverride !== undefined ? opts.holderOverride : (campaign.claim_submitted_by ?? null),
+    claim_owner_id: campaign.claim_owner_id ?? null,
   };
 
   const companyIds = [target.distributor_id, target.distributor_parent_id].filter(

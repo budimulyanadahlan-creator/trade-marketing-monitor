@@ -491,3 +491,64 @@ describe("distributorCampaignAccess — klaim turunan yang dibatalkan (Fase 3)",
     expect(distributorActionDenial(skp({ status: "cancelled" }), cabangEdmWcj)).toBeNull();
   });
 });
+
+describe("distributorCampaignAccess — akun pusat dan klaim turunan (Fase 4)", () => {
+  const OWNER = "user-owner";
+  const turunanEdm = skp({
+    distributor_id: EDM,
+    region_id: WCJ,
+    parent_campaign_id: "skp-induk",
+    claim_owner_id: OWNER,
+  });
+  const turunanMms = skp({
+    distributor_id: MMS,
+    distributor_parent_id: EDM,
+    region_id: WCJ,
+    parent_campaign_id: "skp-induk",
+    claim_owner_id: "user-mms-cabang",
+  });
+  const turunanBir = { ...turunanMms, distributor_id: BIR, claim_owner_id: "user-bir-cabang" };
+  const pusatEdmUser = viewer({ id: "user-pusat-edm", distributor_scope: "pusat", region_id: null });
+  const pusatMmsUser = viewer({ id: "user-pusat-mms", distributor_id: MMS, distributor_scope: "pusat", region_id: null });
+
+  it("pusat melihat turunan cabang perusahaannya di semua region, tanpa bertindak", () => {
+    expect(distributorCampaignAccess(turunanEdm, pusatEdmUser)).toBe("view");
+    expect(distributorCampaignAccess({ ...turunanEdm, region_id: EJB }, pusatEdmUser)).toBe("view");
+    expect(distributorActionDenial(turunanEdm, pusatEdmUser)).toBe("childClaimViewOnly");
+    expect(distributorClaimActionError(pusatEdmUser, turunanEdm)).toBe(
+      DISTRIBUTOR_GUARD_MESSAGES.childClaimViewOnly
+    );
+  });
+
+  it("pusat perusahaan induk melihat turunan anak perusahaan, tanpa bertindak", () => {
+    expect(distributorCampaignAccess(turunanMms, pusatEdmUser)).toBe("view");
+    expect(distributorCampaignAccess(turunanBir, pusatEdmUser)).toBe("view");
+  });
+
+  it("akun anak perusahaan tidak melihat turunan induk maupun anak lain", () => {
+    expect(distributorCampaignAccess(turunanEdm, pusatMmsUser)).toBeNull();
+    expect(distributorCampaignAccess(turunanBir, pusatMmsUser)).toBeNull();
+    expect(distributorCampaignAccess(turunanMms, pusatMmsUser)).toBe("view");
+  });
+
+  it("pusat perusahaan yang tidak berhubungan tidak melihat turunan", () => {
+    const pusatAjs = viewer({ id: "user-pusat-ajs", distributor_id: AJS, distributor_scope: "pusat" });
+    expect(distributorCampaignAccess(turunanEdm, pusatAjs)).toBeNull();
+    expect(distributorCampaignAccess(turunanMms, pusatAjs)).toBeNull();
+  });
+
+  it("cabang perusahaan induk tidak mendapat hak lihat turunan anak perusahaan", () => {
+    expect(distributorCampaignAccess(turunanMms, viewer({ id: "user-edm-cabang" }))).toBeNull();
+  });
+
+  it("pusat yang menjadi pemilik tetap bertindak atas klaimnya sendiri", () => {
+    const milikPusat = { ...turunanEdm, region_id: NATIONAL, claim_owner_id: "user-pusat-edm" };
+    expect(distributorCampaignAccess(milikPusat, pusatEdmUser)).toBe("act");
+    expect(distributorClaimActionError(pusatEdmUser, milikPusat)).toBeNull();
+  });
+
+  it("pusat tetap melihat turunan yang dibatalkan (hanya lihat)", () => {
+    expect(distributorCampaignAccess({ ...turunanEdm, status: "cancelled" }, pusatEdmUser)).toBe("view");
+    expect(distributorCampaignAccess({ ...turunanMms, status: "cancelled" }, pusatEdmUser)).toBe("view");
+  });
+});

@@ -20,14 +20,15 @@
  *   distributor berperusahaan → **hanya lihat**, di semua region. Tidak pernah
  *   bertindak — klaim dikerjakan di klaim turunan.
  * - Klaim turunan SKP nasional (`parent_campaign_id`, SKP Nasional Fase 2):
- *   hanya pemiliknya (`claim_owner_id`) yang melihat dan bertindak. Aturan
- *   perusahaan/region TIDAK dipakai — rekan seperusahaan seregion pun tidak
- *   melihatnya. Turunan yang dibatalkan (`status` = cancelled, Fase 3) tetap
- *   terlihat oleh pemiliknya, tetapi **hanya lihat**.
+ *   hanya pemiliknya (`claim_owner_id`) yang bertindak. Aturan region TIDAK
+ *   dipakai — rekan cabang seperusahaan seregion pun tidak melihatnya.
+ *   Turunan yang dibatalkan (`status` = cancelled, Fase 3) tetap terlihat,
+ *   tetapi **hanya lihat**. Akun `pusat` perusahaan turunan dan `pusat`
+ *   perusahaan induknya (Fase 4) → **hanya lihat**, di semua region.
  * - Admin/superadmin selalu boleh bertindak (fallback).
  *
  * Padanannya di database: fungsi `distributor_campaign_access` (migrasi 067,
- * diperbarui 069; versi per baris SKP di migrasi 074, klaim turunan di 075, turunan dibatalkan di 076)
+ * diperbarui 069; versi per baris SKP di migrasi 074, klaim turunan di 075, turunan dibatalkan di 076, akses pusat ke turunan di 077)
  * yang dipakai semua policy RLS tabel terkait klaim. Status dan departemen
  * SKP (Sales/TM, Disetujui s.d. Selesai) disaring oleh RLS +
  * DISTRIBUTOR_VISIBLE_CAMPAIGN_STATUSES, bukan oleh modul ini — kecuali
@@ -45,6 +46,7 @@ export const DISTRIBUTOR_GUARD_MESSAGES = {
   parentViewOnly: "Hanya lihat — SKP anak perusahaan",
   nationalViewOnly: "SKP Nasional hanya dapat dilihat — klaim tidak diajukan langsung di SKP ini",
   notClaimOwner: "Klaim ini milik akun lain — hanya pemilik klaim yang dapat membukanya",
+  childClaimViewOnly: "Hanya lihat — klaim milik akun lain",
   claimCancelled: "Klaim ini sudah dibatalkan — hanya dapat dilihat",
 } as const;
 
@@ -108,7 +110,16 @@ export function distributorActionDenial(
   if (campaign.parent_campaign_id) {
     const isOwner =
       !!viewer.id && !!campaign.claim_owner_id && campaign.claim_owner_id === viewer.id;
-    if (!isOwner) return "notClaimOwner";
+    if (!isOwner) {
+      // Pusat perusahaan turunan / pusat perusahaan induknya: hanya lihat (Fase 4).
+      const isPusatOfCompany =
+        viewer.distributor_scope === "pusat" &&
+        !!campaign.distributor_id &&
+        (campaign.distributor_id === viewer.distributor_id ||
+          (!!campaign.distributor_parent_id &&
+            campaign.distributor_parent_id === viewer.distributor_id));
+      return isPusatOfCompany ? "childClaimViewOnly" : "notClaimOwner";
+    }
     // Dibatalkan: jejaknya tetap terlihat pemilik, tanpa aksi (Fase 3).
     return campaign.status === "cancelled" ? "claimCancelled" : null;
   }
@@ -138,7 +149,12 @@ export function distributorCampaignAccess(
 ): DistributorCampaignAccess {
   const denial = distributorActionDenial(campaign, viewer);
   if (denial === null) return "act";
-  if (denial === "parentViewOnly" || denial === "nationalViewOnly" || denial === "claimCancelled") {
+  if (
+    denial === "parentViewOnly" ||
+    denial === "nationalViewOnly" ||
+    denial === "childClaimViewOnly" ||
+    denial === "claimCancelled"
+  ) {
     return "view";
   }
   return null;

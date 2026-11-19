@@ -71,7 +71,10 @@ interface Props {
    * Klaim turunan SKP nasional (Fase 2): nama SKP induk dan akun pemiliknya,
    * ditampilkan di bawah nama baris turunan.
    */
-  childClaimInfoByCampaignId?: Record<string, { parentName: string | null; ownerName: string | null }>;
+  childClaimInfoByCampaignId?: Record<
+    string,
+    { parentName: string | null; ownerName: string | null; viewOnly?: boolean }
+  >;
 }
 
 export function CampaignsClient({
@@ -327,6 +330,17 @@ export function CampaignsClient({
                           <span className="inline-flex items-center gap-1 rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-xs font-medium text-violet-300">
                             <Globe className="h-3 w-3" />
                             Klaim Nasional
+                          </span>
+                        )}
+                        {childClaimInfoByCampaignId[campaign.id]?.viewOnly && (
+                          // Akun pusat memantau klaim akun lain (Fase 4).
+                          <span
+                            className="inline-flex items-center rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-xs font-medium text-sky-300"
+                            title={`Hanya lihat — klaim milik ${
+                              childClaimInfoByCampaignId[campaign.id]?.ownerName ?? "akun lain"
+                            }`}
+                          >
+                            Hanya lihat
                           </span>
                         )}
                       </div>

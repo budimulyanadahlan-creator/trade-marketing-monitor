@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { formatIDR } from "@/lib/utils";
+import { isPaidToastRecipient } from "@/lib/national-skp";
 import type { UserRole } from "@/types/database";
 
 // Statuses that represent intermediate approval levels (awaiting next approver)
@@ -43,6 +44,8 @@ type CampaignPayload = {
   actual_spent: number;
   requested_budget: number;
   claim_amount: number | null;
+  parent_campaign_id: string | null;
+  claim_owner_id: string | null;
 };
 
 export function RealtimeNotifications({
@@ -158,12 +161,12 @@ export function RealtimeNotifications({
                 });
               }
 
-              // Notify the related distributor when their claim is marked as paid
+              // Notify the related distributor when their claim is marked as paid.
+              // Klaim turunan SKP nasional: hanya pemiliknya — akun pusat ikut
+              // menerima event ini tetapi klaim itu bukan miliknya.
               if (
-                role === "distributor" &&
                 campaign.status === "paid" &&
-                distributorId != null &&
-                campaign.distributor_id === distributorId
+                isPaidToastRecipient(campaign, { id: userId, role, distributor_id: distributorId })
               ) {
                 toast.success("Klaim SKP Anda telah dibayar", {
                   description:
