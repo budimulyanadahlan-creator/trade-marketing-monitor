@@ -103,6 +103,11 @@ export default async function CampaignsPage({
     campaignQuery = campaignQuery.or(
       `status.in.(${DISTRIBUTOR_VISIBLE_CAMPAIGN_STATUSES.join(",")}),and(status.eq.cancelled,parent_campaign_id.not.is.null)`
     );
+  } else if (!["finance", "admin", "superadmin"].includes(profile?.role ?? "")) {
+    // ASM, manajer, dan role internal lain hanya melihat SKP induk nasional;
+    // baris klaim turunan hanya untuk antrean Finance/admin (SKP Nasional
+    // Fase 6). Rekap klaimnya tetap terbaca di halaman induk.
+    campaignQuery = campaignQuery.is("parent_campaign_id", null);
   }
 
   const { data: campaigns } = await campaignQuery;

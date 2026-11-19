@@ -21,6 +21,7 @@ import {
   type DrilldownRealizationInput,
 } from "./monitoring-budget";
 import type { CampaignStatus } from "@/types/database";
+import { withoutNationalChildren } from "./national-skp-report";
 
 const CATEGORIES = [
   { id: "tp1", name: "Display", type: "TP" as const, account_code: "TP1" },
@@ -557,5 +558,65 @@ describe("resolveMonitoringMode", () => {
     expect(resolveMonitoringMode(undefined)).toBe("komitmen");
     expect(resolveMonitoringMode("komitmen")).toBe("komitmen");
     expect(resolveMonitoringMode("apapun")).toBe("komitmen");
+  });
+});
+
+// SKP Nasional Fase 6: satu SKP induk (region National, Rp10 jt) dengan dua
+// klaim turunan cabang (Rp0, region cabang) — bentuk data setelah penyaring
+// `parent_campaign_id is null` di lib/monitoring-budget-data.ts.
+describe("SKP nasional di Monitoring Budget", () => {
+  const rows = [
+    { ...campaign("tp1", 10_000_000, "2026-10-05", "approved", "National"), parent_campaign_id: null },
+    { ...campaign("tp1", 0, "2026-10-05", "paid", "East Java & Bali"), parent_campaign_id: "p1" },
+    { ...campaign("tp1", 0, "2026-10-05", "ongoing", "West Kalimantan"), parent_campaign_id: "p1" },
+    { ...campaign("tp1", 2_000_000, "2026-11-10", "approved", "Greater Jakarta"), parent_campaign_id: null },
+  ];
+  const committed = withoutNationalChildren(rows);
+
+  it("mode komitmen: nilai induk terhitung sekali dan masuk kelompok Nasional", () => {
+    const agg = aggregateMonitoringBudget({
+      fiscalYear: 2026,
+      quarter: 3,
+      categories: CATEGORIES,
+      budgets: [],
+      campaigns: committed,
+    });
+    expect(agg.grandTotal.total).toBe(12_000_000);
+    expect(agg.tpRows[0].months).toEqual([10_000_000, 2_000_000, 0]);
+    expect(agg.grandTotal.regionActuals).toEqual(
+      actualsFor({ Nasional: 10_000_000, "Greater Jakarta": 2_000_000 })
+    );
+    // catatan "region Nasional" menghitung induk saja, bukan tiap klaim turunan
+    expect(summarizeNasionalRegion(committed, 2026, 3)).toEqual({ count: 1, total: 10_000_000 });
+  });
+
+  it("mode komitmen: total sama dengan atau tanpa baris turunan, tetapi hitungan SKP tidak", () => {
+    const withChildren = aggregateMonitoringBudget({
+      fiscalYear: 2026,
+      quarter: 3,
+      categories: CATEGORIES,
+      budgets: [],
+      campaigns: rows,
+    });
+    expect(withChildren.grandTotal.total).toBe(12_000_000);
+    expect(committed).toHaveLength(2);
+  });
+
+  it("mode realisasi: invoice klaim turunan terhitung sekali, induk tidak menambah apa pun", () => {
+    const agg = aggregateMonitoringBudgetRealisasi({
+      fiscalYear: 2026,
+      quarter: 3,
+      categories: CATEGORIES,
+      budgets: [],
+      // invoice hanya ada di klaim turunan; induk menolak realisasi
+      realizations: [
+        realization("tp1", 1_000_000, "2026-10-20", "paid"),
+        realization("tp1", 2_500_000, "2026-11-03", "ongoing"),
+        realization("tp1", 400_000, "2026-11-15", "cancelled"),
+      ],
+      campaigns: committed,
+    });
+    expect(agg.tpRows[0].months).toEqual([1_000_000, 2_500_000, 0]);
+    expect(agg.grandTotal.total).toBe(3_500_000);
   });
 });

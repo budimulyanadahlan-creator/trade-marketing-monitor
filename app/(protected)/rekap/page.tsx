@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { hideNationalParentSpend, mergeChildRealizations } from "@/lib/national-skp-report";
 import { DISTRIBUTOR_VISIBLE_CAMPAIGN_STATUSES } from "@/lib/campaign-status";
 import type { UserRole, CampaignStatus } from "@/types/database";
 import { RekapClient } from "./rekap-client";
@@ -22,6 +23,8 @@ export type RekapCampaign = {
   name: string;
   skp_number: string | null;
   status: CampaignStatus;
+  is_national: boolean | null;
+  parent_campaign_id: string | null;
   requested_budget: number;
   actual_spent: number;
   sales_projection: number;
@@ -46,7 +49,8 @@ export type RekapCampaign = {
 const ALLOWED_ROLES: UserRole[] = ["admin", "finance", "superadmin", "distributor"];
 
 const CAMPAIGN_SELECT = `
-  id, name, skp_number, status, requested_budget, actual_spent, sales_projection,
+  id, name, skp_number, status, is_national, parent_campaign_id,
+  requested_budget, actual_spent, sales_projection,
   mechanism, objective, store_id, start_date, end_date, submitted_at, created_at,
   department:departments(name),
   brand:brands(name),
@@ -122,9 +126,38 @@ export default async function RekapPage({
     if (actionApprovalId) query = query.eq("action_approval_id", actionApprovalId);
     if (dateFrom) query = query.gte("start_date", dateFrom);
     if (dateTo) query = query.lte("start_date", dateTo);
+
+    // SKP nasional = satu baris (induk) dengan realisasi gabungan; baris klaim
+    // turunan tidak ditampilkan (SKP Nasional Fase 6).
+    query = query.is("parent_campaign_id", null);
   }
 
-  const { data: campaigns } = await query;
+  const { data: rawCampaigns } = await query;
+  let campaigns = (rawCampaigns ?? []) as unknown as RekapCampaign[];
+
+  if (isDistributor) {
+    // Distributor melihat induk + klaim turunan yang boleh dilihatnya (RLS);
+    // realisasi gabungan induk adalah angka semua cabang, jadi tidak dikirim.
+    campaigns = hideNationalParentSpend(campaigns);
+  } else {
+    // Invoice realisasi ada di klaim turunan — digabung ke baris induk agar
+    // "Jml Inv." sesuai realisasi gabungannya. Hak layanan, seperti tabel
+    // Klaim Turunan di halaman induk; induknya sendiri sudah lolos RLS.
+    const nationalParentIds = campaigns.filter((c) => c.is_national).map((c) => c.id);
+    if (nationalParentIds.length > 0) {
+      const { data: children } = await createAdminClient()
+        .from("campaigns")
+        .select("parent_campaign_id, realizations(id, invoice_number, amount, realization_date)")
+        .in("parent_campaign_id", nationalParentIds);
+      campaigns = mergeChildRealizations(
+        campaigns,
+        (children ?? []) as unknown as {
+          parent_campaign_id: string | null;
+          realizations: RekapCampaign["realizations"] | null;
+        }[]
+      );
+    }
+  }
 
   const [
     { data: departments },
@@ -152,7 +185,7 @@ export default async function RekapPage({
 
   return (
     <RekapClient
-      campaigns={(campaigns ?? []) as unknown as RekapCampaign[]}
+      campaigns={campaigns}
       departments={departments ?? []}
       brands={brands ?? []}
       regions={regions ?? []}

@@ -24,6 +24,8 @@ export default async function ActionApprovalsPage() {
           "id, name, action_approval_id, requested_budget, status, brand:brands(name), region:regions(name)"
         )
         .not("action_approval_id", "is", null)
+        // Klaim turunan SKP nasional (Rp0) bukan komitmen AA — hanya induknya.
+        .is("parent_campaign_id", null)
         .order("created_at", { ascending: false }),
     ]);
 

@@ -16,6 +16,7 @@ interface CampaignRow {
   id: string;
   requested_budget: number | null;
   status: string;
+  parent_campaign_id?: string | null;
 }
 
 function makeAAChain(aa: { target_budget: number } | null) {
@@ -35,6 +36,11 @@ function makeCampaignsChain(rows: CampaignRow[]) {
     eq: vi.fn(() => chain),
     in: vi.fn((_col: string, statuses: string[]) => {
       filtered = filtered.filter((r) => statuses.includes(r.status));
+      return chain;
+    }),
+    // .is("parent_campaign_id", null) — klaim turunan SKP nasional dikeluarkan
+    is: vi.fn((col: "parent_campaign_id", value: null) => {
+      filtered = filtered.filter((r) => (r[col] ?? null) === value);
       return chain;
     }),
     neq: vi.fn((_col: string, id: string) => {
@@ -81,6 +87,27 @@ beforeEach(() => {
 });
 
 describe("checkAABudgetExceededAction", () => {
+  it("SKP nasional: komitmen AA hanya dari nilai induk, berapa pun jumlah klaim turunannya", async () => {
+    // induk Rp600 + tiga baris turunan; sisa AA = 1000 − 600 = 400
+    const { adminClient } = setupMocks({
+      targetBudget: 1000,
+      campaigns: [
+        { id: "p1", requested_budget: 600, status: "approved", parent_campaign_id: null },
+        { id: "k1", requested_budget: 0, status: "paid", parent_campaign_id: "p1" },
+        { id: "k2", requested_budget: 0, status: "ongoing", parent_campaign_id: "p1" },
+        // baris turunan tidak pernah dihitung, apa pun nilainya
+        { id: "k3", requested_budget: 250, status: "approved", parent_campaign_id: "p1" },
+      ],
+    });
+
+    const within = await checkAABudgetExceededAction({ action_approval_id: aaId, requested_budget: 400 });
+    const over = await checkAABudgetExceededAction({ action_approval_id: aaId, requested_budget: 401 });
+
+    expect(within.exceeded).toBe(false);
+    expect(over.exceeded).toBe(true);
+    expect(adminClient.from).toHaveBeenCalledWith("campaigns");
+  });
+
   it("exceeded=true saat requested budget melebihi target dikurangi total komitmen", async () => {
     setupMocks({
       targetBudget: 1000,

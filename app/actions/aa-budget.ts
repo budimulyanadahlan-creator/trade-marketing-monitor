@@ -44,6 +44,8 @@ export async function checkAABudgetExceededAction(
       .from("campaigns")
       .select("requested_budget")
       .eq("action_approval_id", action_approval_id)
+      // Komitmen SKP nasional hanya dari induk; klaim turunannya tidak dihitung.
+      .is("parent_campaign_id", null)
       .in("status", [...COMMITTED_CAMPAIGN_STATUSES]);
     // Edge case edit: campaign yang sudah berstatus komitmen tidak boleh
     // dihitung ganda terhadap dirinya sendiri.

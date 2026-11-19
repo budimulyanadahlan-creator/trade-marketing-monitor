@@ -38,6 +38,12 @@ type CampaignRegionRow = {
   region: { name: string } | null;
 };
 
+// SKP Nasional (Fase 6): komitmen hanya dari SKP induk — klaim turunan
+// (bernilai Rp0) dikeluarkan dari semua query SKP di bawah agar tidak muncul
+// sebagai baris Rp0 di drill-down maupun di hitungan catatan. Mode Realisasi
+// membaca tabel `realizations`, yang untuk SKP nasional hanya ada di klaim
+// turunan (induk menolak realisasi), jadi tiap invoice terhitung sekali.
+//
 // SKP komitmen dalam rentang kuartal, dengan nama region asli — sumber
 // tunggal untuk breakdown Realisasi By Region. Dipakai di KEDUA mode
 // (Komitmen & Realisasi) karena regionActuals selalu dari requested_budget
@@ -52,6 +58,7 @@ async function loadCommittedCampaignsWithRegion(
       "requested_budget, status, start_date, promotion_category_id, region:regions(name)"
     )
     .in("status", [...MONITORING_COMMITTED_STATUSES])
+    .is("parent_campaign_id", null)
     .gte("start_date", start)
     .lt("start_date", endExclusive);
 
@@ -153,12 +160,14 @@ export async function loadMonitoringBudgetData(
         "id, skp_number, name, requested_budget, status, start_date, promotion_category_id, brand:brands(name), region:regions(name)"
       )
       .in("status", [...MONITORING_COMMITTED_STATUSES])
+      .is("parent_campaign_id", null)
       .gte("start_date", start)
       .lt("start_date", endExclusive),
     supabase
       .from("campaigns")
       .select("status, requested_budget, start_date")
       .in("status", [...MONITORING_COMMITTED_STATUSES])
+      .is("parent_campaign_id", null)
       .is("start_date", null),
   ]);
 

@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createAdminClient } from "@/lib/supabase/server";
+import {
+  buildNationalClaimSheetRows,
+  hideNationalParentSpend,
+  mergeChildRealizations,
+  NATIONAL_CLAIM_SHEET_COL_WIDTHS,
+  NATIONAL_CLAIM_SHEET_HEADERS,
+  NATIONAL_CLAIM_SHEET_NAME,
+} from "@/lib/national-skp-report";
 import { DISTRIBUTOR_VISIBLE_CAMPAIGN_STATUSES } from "@/lib/campaign-status";
 import * as XLSX from "xlsx";
 import type { UserRole, CampaignStatus } from "@/types/database";
@@ -40,7 +48,8 @@ function fmtDate(s: string | null): string {
 }
 
 const CAMPAIGN_SELECT = `
-  id, name, status, skp_number, aa_reference_number,
+  id, name, status, skp_number, aa_reference_number, reference_number,
+  is_national, parent_campaign_id,
   requested_budget, actual_spent, sales_projection,
   mechanism, objective, store_id, start_date, end_date, submitted_at, created_at,
   department:departments(name),
@@ -54,6 +63,30 @@ const CAMPAIGN_SELECT = `
   realizations(invoice_number, amount, realization_date)
 `;
 
+// Klaim turunan SKP nasional untuk lembar "Klaim Nasional" dan untuk
+// menggabungkan invoice realisasinya ke baris induk.
+const NATIONAL_CHILD_SELECT = `
+  id, parent_campaign_id, skp_number, child_seq, status, claim_amount, actual_spent,
+  claim_owner_id,
+  distributor:distributors(name),
+  region:regions(name),
+  realizations(invoice_number, amount, realization_date)
+`;
+
+type NationalChildRow = {
+  id: string;
+  parent_campaign_id: string | null;
+  skp_number: string | null;
+  child_seq: number | null;
+  status: string;
+  claim_amount: number | null;
+  actual_spent: number | null;
+  claim_owner_id: string | null;
+  distributor: JoinedName;
+  region: JoinedName;
+  realizations: RealizationEntry[] | null;
+};
+
 type JoinedName = { name: string } | null;
 type JoinedPromoCategory = { name: string; account_code: string } | null;
 type RealizationEntry = { invoice_number: string; amount: number; realization_date: string };
@@ -64,6 +97,9 @@ type CampaignRow = {
   status: string;
   skp_number: string | null;
   aa_reference_number: string | null;
+  reference_number: string | null;
+  is_national: boolean | null;
+  parent_campaign_id: string | null;
   requested_budget: number;
   actual_spent: number;
   sales_projection: number;
@@ -155,6 +191,10 @@ export async function GET(request: NextRequest) {
     if (actionApprovalId) query = query.eq("action_approval_id", actionApprovalId);
     if (dateFrom) query = query.gte("start_date", dateFrom);
     if (dateTo) query = query.lte("start_date", dateTo);
+
+    // SKP nasional = satu baris (induk) dengan realisasi gabungan; klaim
+    // turunannya dirinci di lembar "Klaim Nasional" (SKP Nasional Fase 6).
+    query = query.is("parent_campaign_id", null);
   }
 
   if (q) {
@@ -169,7 +209,54 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const campaigns = (rawData ?? []) as unknown as CampaignRow[];
+  let campaigns = (rawData ?? []) as unknown as CampaignRow[];
+
+  // ── SKP Nasional Fase 6 ───────────────────────────────────────────────
+  // Klaim turunan dari SKP induk yang ikut diekspor. Role internal: diambil
+  // dengan hak layanan (role selain Finance/admin belum tentu punya akses RLS
+  // ke baris turunan, sedangkan induknya sudah lolos RLS di atas).
+  // Distributor: lewat RLS, jadi hanya klaim yang boleh dilihatnya.
+  const nationalParents = campaigns.filter((c) => c.is_national);
+  let nationalChildren: NationalChildRow[] = [];
+  if (nationalParents.length > 0) {
+    const childClient = isDistributor ? supabase : createAdminClient();
+    const { data: childData, error: childError } = await childClient
+      .from("campaigns")
+      .select(NATIONAL_CHILD_SELECT)
+      .in(
+        "parent_campaign_id",
+        nationalParents.map((c) => c.id)
+      );
+    if (childError) {
+      return NextResponse.json({ error: childError.message }, { status: 500 });
+    }
+    nationalChildren = (childData ?? []) as unknown as NationalChildRow[];
+  }
+
+  const ownerNameById = new Map<string, string>();
+  const ownerIds = [
+    ...new Set(nationalChildren.map((c) => c.claim_owner_id).filter((id): id is string => !!id)),
+  ];
+  if (ownerIds.length > 0) {
+    const { data: owners } = await supabase.from("users").select("id, full_name").in("id", ownerIds);
+    for (const o of owners ?? []) ownerNameById.set(o.id, o.full_name);
+  }
+
+  if (isDistributor) {
+    // Realisasi gabungan induk adalah angka semua cabang — tidak diekspor.
+    campaigns = hideNationalParentSpend(campaigns);
+  } else {
+    campaigns = mergeChildRealizations(campaigns, nationalChildren);
+  }
+
+  const nationalClaimRows = buildNationalClaimSheetRows(
+    nationalChildren.map((c) => ({
+      ...c,
+      owner_name: c.claim_owner_id ? (ownerNameById.get(c.claim_owner_id) ?? null) : null,
+    })),
+    nationalParents,
+    (status) => STATUS_LABELS[status as CampaignStatus] ?? status
+  );
 
   let rows: Record<string, string | number>[];
   let colWidths: { wch: number }[];
@@ -199,7 +286,13 @@ export async function GET(request: NextRequest) {
         Status: STATUS_LABELS[c.status as CampaignStatus] ?? c.status,
         "Tanggal Mulai": fmtDate(c.start_date),
         "Tanggal Selesai": fmtDate(c.end_date),
-        "Status Penerimaan": receiptedSet.has(c.id) ? "Sudah Diterima" : "Belum Diterima",
+        // SKP nasional dan klaim turunannya tidak memakai tanda terima.
+        "Status Penerimaan":
+          c.is_national || c.parent_campaign_id
+            ? "Tidak berlaku"
+            : receiptedSet.has(c.id)
+              ? "Sudah Diterima"
+              : "Belum Diterima",
       };
     });
     colWidths = [
@@ -284,6 +377,14 @@ export async function GET(request: NextRequest) {
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, sheetName);
+
+  // Lembar rincian klaim turunan SKP nasional — selalu ada (hanya judul kolom
+  // bila tidak ada klaim) agar bentuk file tetap.
+  const wsNational = XLSX.utils.json_to_sheet(nationalClaimRows, {
+    header: [...NATIONAL_CLAIM_SHEET_HEADERS],
+  });
+  wsNational["!cols"] = NATIONAL_CLAIM_SHEET_COL_WIDTHS;
+  XLSX.utils.book_append_sheet(wb, wsNational, NATIONAL_CLAIM_SHEET_NAME);
 
   const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
   const today = new Date().toISOString().slice(0, 10);

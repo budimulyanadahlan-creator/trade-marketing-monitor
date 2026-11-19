@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { createClient } from "@/lib/supabase/server";
 import type { CampaignStatus, UserRole } from "@/types/database";
+import { hideNationalParentSpend } from "@/lib/national-skp-report";
 import { DashboardFilters } from "./dashboard-filters";
 import { KpiCard } from "@/components/dashboard/kpi-card";
 import { BudgetChart } from "@/components/dashboard/budget-chart";
@@ -36,6 +37,7 @@ type CampaignRow = {
   start_date: string | null;
   end_date: string | null;
   brand_id: string;
+  is_national: boolean | null;
   brand: { name: string } | null;
   department: { name: string } | null;
 };
@@ -91,10 +93,19 @@ export default async function DashboardPage({
     .from("campaigns")
     .select(
       `id, name, requested_budget, actual_spent, status, start_date, end_date, brand_id,
+       is_national,
        brand:brands(name),
        department:departments(name)`
     )
     .not("status", "in", "(draft,cancelled)");
+
+  // SKP nasional dihitung sekali: nilai dan realisasi gabungannya ada di SKP
+  // induk, jadi baris klaim turunan tidak ikut (SKP Nasional Fase 6).
+  // Distributor tidak boleh melihat realisasi gabungan induk — untuknya
+  // induk dinolkan di bawah dan klaim turunan miliknya yang dihitung.
+  if (role !== "distributor") {
+    campaignQuery = campaignQuery.is("parent_campaign_id", null);
+  }
 
   // Explicit server-side scoping by role (defense-in-depth over RLS)
   if (role === "user") {
@@ -164,6 +175,7 @@ export default async function DashboardPage({
   ]);
 
   let campaigns = (rawCampaigns ?? []) as CampaignRow[];
+  if (role === "distributor") campaigns = hideNationalParentSpend(campaigns);
 
   // Filter by quarter overlap in JavaScript (avoids PostgREST OR syntax issues)
   if (quarter && ["1", "2", "3", "4"].includes(quarter)) {

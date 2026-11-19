@@ -360,7 +360,10 @@ export async function GET(request: NextRequest) {
        brand:brands(name),
        department:departments(name)`
     )
-    .not("status", "in", "(draft,cancelled)");
+    .not("status", "in", "(draft,cancelled)")
+    // SKP nasional dihitung sekali dari induknya (nilai + realisasi gabungan);
+    // baris klaim turunan tidak ikut (SKP Nasional Fase 6).
+    .is("parent_campaign_id", null);
 
   if (role === "user") {
     campaignQuery = campaignQuery.eq("created_by", user.id);

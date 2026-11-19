@@ -460,6 +460,8 @@ export function RekapClient({
                       : 0;
                   const statusCfg = getStatusConfig(c.status);
                   const isReceipted = receiptedSet.has(c.id);
+                  // SKP nasional dan klaim turunannya tidak memakai tanda terima.
+                  const noReceipt = !!c.is_national || !!c.parent_campaign_id;
 
                   return (
                     <TableRow
@@ -470,7 +472,7 @@ export function RekapClient({
                         {c.skp_number ?? "—"}
                       </TableCell>
                       <TableCell className="font-medium text-slate-200">
-                        {isDistributor && !isReceipted ? (
+                        {isDistributor && !isReceipted && !noReceipt ? (
                           c.name
                         ) : (
                           <Link
@@ -574,7 +576,11 @@ export function RekapClient({
                         </TableCell>
                       )}
                       <TableCell>
-                        {isReceipted ? (
+                        {noReceipt ? (
+                          <span className="text-xs text-slate-500" title="SKP Nasional tidak memakai tanda terima">
+                            Tidak berlaku
+                          </span>
+                        ) : isReceipted ? (
                           <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-400">
                             Sudah Diterima
                           </span>
