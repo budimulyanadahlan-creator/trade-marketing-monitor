@@ -317,3 +317,111 @@ export function isPaidToastRecipient(
   }
   return !!viewer.distributor_id && campaign.distributor_id === viewer.distributor_id;
 }
+
+// ============================================================
+// Pantauan budget di SKP induk (Fase 5)
+//
+// Komitmen hanya ada di nilai SKP induk; klaim turunan bernilai Rp0 dan
+// membawa nominal klaim serta realisasinya sendiri. Ringkasan di bawah adalah
+// satu-satunya sumber angka "total klaim", "sisa", dan peringatan kelebihan
+// klaim — dipakai halaman induk dan layar verifikasi klaim turunan. Kelebihan
+// hanya diperingatkan, tidak pernah memblokir. Angka-angka ini hanya untuk
+// role internal; distributor tidak menerimanya.
+// Padanan di database: migrasi 078 (actual_spent induk = jumlah turunannya).
+// ============================================================
+
+/** Status klaim turunan yang nominalnya masuk "total klaim diajukan". */
+export const CLAIMED_CHILD_STATUSES = [
+  "claim_submitted",
+  "claim_verified",
+  "ready_to_pay",
+  "paid",
+  "completed",
+] as const;
+
+/** Status klaim turunan yang nominalnya sudah disetujui Finance. */
+export const VERIFIED_CHILD_STATUSES = [
+  "claim_verified",
+  "ready_to_pay",
+  "paid",
+  "completed",
+] as const;
+
+/** true = nominal klaim turunan berstatus ini masuk total klaim induknya. */
+export function isClaimedChildStatus(status: string): boolean {
+  return (CLAIMED_CHILD_STATUSES as readonly string[]).includes(status);
+}
+
+export type NationalBudgetChild = {
+  status: string;
+  claim_amount: number | null;
+  actual_spent: number | null;
+};
+
+export type NationalBudgetSummary = {
+  /** Nilai SKP induk (komitmen). */
+  skpValue: number;
+  /** Jumlah klaim turunan yang tidak dibatalkan. */
+  activeClaimCount: number;
+  /** Jumlah nominal klaim turunan berstatus Klaim Diajukan ke atas. */
+  totalClaimed: number;
+  /** Jumlah nominal klaim turunan berstatus Terverifikasi ke atas. */
+  totalVerified: number;
+  /** Jumlah realisasi semua turunan. */
+  totalRealization: number;
+  /** Nilai SKP − total klaim; null bila induk bernilai Rp0 (nilai mengikuti realisasi). */
+  remaining: number | null;
+  /** true = nilai induk > 0 dan total klaim melampauinya. */
+  overClaimed: boolean;
+  /** Selisih total klaim di atas nilai induk; 0 bila tidak melampaui. */
+  excess: number;
+};
+
+/** Ringkasan budget sebuah SKP induk nasional dari klaim-klaim turunannya. */
+export function nationalBudgetSummary(
+  parentRequestedBudget: number | null | undefined,
+  children: NationalBudgetChild[]
+): NationalBudgetSummary {
+  const skpValue = parentRequestedBudget ?? 0;
+  let activeClaimCount = 0;
+  let totalClaimed = 0;
+  let totalVerified = 0;
+  let totalRealization = 0;
+
+  for (const child of children) {
+    if (child.status !== "cancelled") activeClaimCount += 1;
+    totalRealization += child.actual_spent ?? 0;
+    if (isClaimedChildStatus(child.status)) totalClaimed += child.claim_amount ?? 0;
+    if ((VERIFIED_CHILD_STATUSES as readonly string[]).includes(child.status)) {
+      totalVerified += child.claim_amount ?? 0;
+    }
+  }
+
+  const hasValue = skpValue > 0;
+  const overClaimed = hasValue && totalClaimed > skpValue;
+  return {
+    skpValue,
+    activeClaimCount,
+    totalClaimed,
+    totalVerified,
+    totalRealization,
+    remaining: hasValue ? skpValue - totalClaimed : null,
+    overClaimed,
+    excess: overClaimed ? totalClaimed - skpValue : 0,
+  };
+}
+
+/**
+ * Jumlah klaim turunan yang tidak dibatalkan per SKP induk — angka N pada
+ * lencana "Nasional · N klaim". Induk tanpa klaim aktif tidak muncul di hasil.
+ */
+export function activeChildClaimCountByParentId(
+  children: { parent_campaign_id: string | null; status: string }[]
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const child of children) {
+    if (!child.parent_campaign_id || child.status === "cancelled") continue;
+    counts[child.parent_campaign_id] = (counts[child.parent_campaign_id] ?? 0) + 1;
+  }
+  return counts;
+}

@@ -12,6 +12,11 @@ import {
   type CancelChildClaimTarget,
 } from "./national-skp";
 import { claimSubmittedCreatorId, isPaidToastRecipient } from "./national-skp";
+import {
+  activeChildClaimCountByParentId,
+  nationalBudgetSummary,
+  type NationalBudgetChild,
+} from "./national-skp";
 
 const admin = { role: "admin" };
 const superadmin = { role: "superadmin" };
@@ -374,5 +379,125 @@ describe("isPaidToastRecipient — toast realtime dibayar (Fase 4)", () => {
   it("role selain distributor tidak pernah menerima toast ini", () => {
     const skp = { distributor_id: "edm", parent_campaign_id: null, claim_owner_id: null };
     expect(isPaidToastRecipient(skp, { id: "u-fin", role: "finance", distributor_id: "edm" })).toBe(false);
+  });
+});
+
+// ============================================================
+// Pantauan budget di SKP induk (Fase 5)
+// ============================================================
+
+function turunan(over: Partial<NationalBudgetChild> = {}): NationalBudgetChild {
+  return { status: "approved", claim_amount: null, actual_spent: 0, ...over };
+}
+
+describe("nationalBudgetSummary", () => {
+  it("induk tanpa turunan: semua total nol, sisa = nilai SKP, tanpa peringatan", () => {
+    expect(nationalBudgetSummary(1_000_000, [])).toEqual({
+      skpValue: 1_000_000,
+      activeClaimCount: 0,
+      totalClaimed: 0,
+      totalVerified: 0,
+      totalRealization: 0,
+      remaining: 1_000_000,
+      overClaimed: false,
+      excess: 0,
+    });
+  });
+
+  it("total klaim hanya menjumlah turunan berstatus Klaim Diajukan ke atas", () => {
+    const s = nationalBudgetSummary(10_000, [
+      turunan({ status: "approved", claim_amount: 9_999 }),
+      turunan({ status: "ongoing", claim_amount: 9_999 }),
+      turunan({ status: "cancelled", claim_amount: 9_999 }),
+      turunan({ status: "claim_submitted", claim_amount: 1_000 }),
+      turunan({ status: "claim_verified", claim_amount: 2_000 }),
+      turunan({ status: "ready_to_pay", claim_amount: 300 }),
+      turunan({ status: "paid", claim_amount: 40 }),
+      turunan({ status: "completed", claim_amount: 5 }),
+    ]);
+    expect(s.totalClaimed).toBe(3_345);
+    expect(s.remaining).toBe(6_655);
+  });
+
+  it("total terverifikasi hanya menjumlah turunan berstatus Terverifikasi ke atas", () => {
+    const s = nationalBudgetSummary(10_000, [
+      turunan({ status: "claim_submitted", claim_amount: 1_000 }),
+      turunan({ status: "claim_verified", claim_amount: 2_000 }),
+      turunan({ status: "ready_to_pay", claim_amount: 300 }),
+      turunan({ status: "paid", claim_amount: 40 }),
+      turunan({ status: "completed", claim_amount: 5 }),
+    ]);
+    expect(s.totalVerified).toBe(2_345);
+  });
+
+  it("total realisasi menjumlah realisasi semua turunan", () => {
+    const s = nationalBudgetSummary(10_000, [
+      turunan({ status: "ongoing", actual_spent: 700 }),
+      turunan({ status: "claim_submitted", claim_amount: 500, actual_spent: 500 }),
+      turunan({ status: "approved" }),
+    ]);
+    expect(s.totalRealization).toBe(1_200);
+  });
+
+  it("jumlah klaim tidak menghitung turunan yang dibatalkan", () => {
+    const s = nationalBudgetSummary(10_000, [
+      turunan({ status: "approved" }),
+      turunan({ status: "cancelled" }),
+      turunan({ status: "paid", claim_amount: 1 }),
+    ]);
+    expect(s.activeClaimCount).toBe(2);
+  });
+
+  it("total klaim melampaui nilai induk: peringatan dengan selisihnya, sisa negatif", () => {
+    const s = nationalBudgetSummary(1_000, [
+      turunan({ status: "claim_submitted", claim_amount: 800 }),
+      turunan({ status: "paid", claim_amount: 450 }),
+    ]);
+    expect(s.overClaimed).toBe(true);
+    expect(s.excess).toBe(250);
+    expect(s.remaining).toBe(-250);
+  });
+
+  it("total klaim sama persis dengan nilai induk: tanpa peringatan", () => {
+    const s = nationalBudgetSummary(1_000, [
+      turunan({ status: "claim_submitted", claim_amount: 1_000 }),
+    ]);
+    expect(s.overClaimed).toBe(false);
+    expect(s.excess).toBe(0);
+    expect(s.remaining).toBe(0);
+  });
+
+  it("induk bernilai Rp0 tidak pernah memunculkan peringatan dan tidak punya sisa", () => {
+    const s = nationalBudgetSummary(0, [
+      turunan({ status: "claim_submitted", claim_amount: 5_000_000 }),
+    ]);
+    expect(s.overClaimed).toBe(false);
+    expect(s.excess).toBe(0);
+    expect(s.remaining).toBeNull();
+    expect(s.totalClaimed).toBe(5_000_000);
+  });
+
+  it("nilai induk kosong diperlakukan Rp0; nominal klaim kosong dihitung 0", () => {
+    const s = nationalBudgetSummary(null, [
+      turunan({ status: "claim_submitted", claim_amount: null }),
+    ]);
+    expect(s.skpValue).toBe(0);
+    expect(s.totalClaimed).toBe(0);
+    expect(s.overClaimed).toBe(false);
+  });
+});
+
+describe("activeChildClaimCountByParentId", () => {
+  it("menghitung turunan per induk tanpa yang dibatalkan", () => {
+    expect(
+      activeChildClaimCountByParentId([
+        { parent_campaign_id: "a", status: "approved" },
+        { parent_campaign_id: "a", status: "cancelled" },
+        { parent_campaign_id: "a", status: "completed" },
+        { parent_campaign_id: "b", status: "cancelled" },
+        { parent_campaign_id: "c", status: "claim_submitted" },
+        { parent_campaign_id: null, status: "approved" },
+      ])
+    ).toEqual({ a: 2, c: 1 });
   });
 });

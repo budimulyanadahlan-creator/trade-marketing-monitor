@@ -1,4 +1,5 @@
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { activeChildClaimCountByParentId } from "@/lib/national-skp";
 import { DISTRIBUTOR_VISIBLE_CAMPAIGN_STATUSES } from "@/lib/campaign-status";
 import { computeChecklistReadinessByCampaignId } from "@/lib/claim-checklist-status";
 import { computeClaimVerificationProgressByCampaignId } from "@/lib/claim-verification-progress";
@@ -105,6 +106,26 @@ export default async function CampaignsPage({
   }
 
   const { data: campaigns } = await campaignQuery;
+
+  // ── SKP Nasional Fase 5 ───────────────────────────────────────────────
+  // Role internal: jumlah klaim turunan aktif per induk untuk lencana
+  // "Nasional · N klaim". Hak layanan, karena role internal selain
+  // Finance/admin belum tentu punya akses RLS ke baris turunan.
+  // Distributor: nilai terpakai induk (gabungan realisasi semua cabang) tidak
+  // dikirim ke klien.
+  let nationalClaimCountByCampaignId: Record<string, number> = {};
+  const nationalParentIds = (campaigns ?? []).filter((c) => c.is_national).map((c) => c.id);
+  if (isDistributor) {
+    for (const c of campaigns ?? []) {
+      if (c.is_national) c.actual_spent = 0;
+    }
+  } else if (nationalParentIds.length > 0) {
+    const { data: nationalChildren } = await createAdminClient()
+      .from("campaigns")
+      .select("parent_campaign_id, status")
+      .in("parent_campaign_id", nationalParentIds);
+    nationalClaimCountByCampaignId = activeChildClaimCountByParentId(nationalChildren ?? []);
+  }
 
   // Filter khusus admin `?distributor=none` (Fase 5 multi-user distributor):
   // SKP Sales/TM berstatus Disetujui s.d. Selesai yang belum punya distributor,
@@ -317,6 +338,7 @@ export default async function CampaignsPage({
       checklistStatusByCampaignId={checklistStatusByCampaignId}
       claimVerificationProgressByCampaignId={claimVerificationProgressByCampaignId}
       childClaimInfoByCampaignId={childClaimInfoByCampaignId}
+      nationalClaimCountByCampaignId={nationalClaimCountByCampaignId}
     />
   );
 }

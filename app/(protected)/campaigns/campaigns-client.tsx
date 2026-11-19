@@ -75,6 +75,11 @@ interface Props {
     string,
     { parentName: string | null; ownerName: string | null; viewOnly?: boolean }
   >;
+  /**
+   * Role internal saja (Fase 5): jumlah klaim turunan yang tidak dibatalkan
+   * per SKP induk nasional, untuk lencana "Nasional · N klaim".
+   */
+  nationalClaimCountByCampaignId?: Record<string, number>;
 }
 
 export function CampaignsClient({
@@ -96,6 +101,7 @@ export function CampaignsClient({
   checklistStatusByCampaignId = {},
   claimVerificationProgressByCampaignId = {},
   childClaimInfoByCampaignId = {},
+  nationalClaimCountByCampaignId = {},
 }: Props) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingCampaign, setEditingCampaign] = useState<CampaignWithJoins | null>(null);
@@ -323,7 +329,9 @@ export function CampaignsClient({
                         {campaign.is_national && (
                           <span className="inline-flex items-center gap-1 rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-xs font-medium text-violet-300">
                             <Globe className="h-3 w-3" />
-                            Nasional
+                            {isDistributor
+                              ? "Nasional"
+                              : `Nasional · ${nationalClaimCountByCampaignId[campaign.id] ?? 0} klaim`}
                           </span>
                         )}
                         {campaign.parent_campaign_id && (

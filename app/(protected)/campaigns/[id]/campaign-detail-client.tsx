@@ -88,9 +88,11 @@ import type {
   ClaimDocument,
   ClaimItemVerificationInfo,
   MyChildClaimInfo,
+  NationalChildClaimRow,
   NationalParentInfo,
   OpenChildClaimInfo,
 } from "./page";
+import type { NationalBudgetSummary } from "@/lib/national-skp";
 
 type RealizationWithCreator = RealizationRow & {
   creator: { full_name: string } | null;
@@ -161,6 +163,16 @@ interface Props {
   myOpenChildClaim: OpenChildClaimInfo | null;
   /** Induk dibuka distributor: semua klaim turunan milik akun itu (Fase 3). */
   myChildClaims: MyChildClaimInfo[];
+  /** Induk dibuka role internal: semua klaim turunannya (Fase 5). */
+  nationalChildClaims: NationalChildClaimRow[];
+  /**
+   * Ringkasan budget SKP induk (Fase 5): terisi di induk untuk role internal,
+   * dan di klaim turunan yang sudah diajukan untuk Finance/admin. Selalu null
+   * untuk distributor.
+   */
+  nationalBudget: NationalBudgetSummary | null;
+  /** Peringatan kelebihan klaim hanya untuk admin, superadmin, dan Finance. */
+  canSeeOverClaimWarning: boolean;
   departments: { id: string; name: string }[];
   brands: { id: string; name: string }[];
   regions: { id: string; name: string }[];
@@ -1906,6 +1918,128 @@ function NationalToggleDialog({
 }
 
 // ============================================================
+// Klaim Turunan + ringkasan budget di SKP induk (SKP Nasional, Fase 5) —
+// hanya role internal. Angkanya dihitung nationalBudgetSummary di server.
+// ============================================================
+function NationalChildClaimsSection({
+  claims,
+  budget,
+}: {
+  claims: NationalChildClaimRow[];
+  budget: NationalBudgetSummary;
+}) {
+  const stats: { label: string; value: string; className: string }[] = [
+    { label: "Nilai SKP", value: formatIDR(budget.skpValue), className: "text-emerald-400" },
+    { label: "Total Klaim Diajukan", value: formatIDR(budget.totalClaimed), className: "text-amber-400" },
+    { label: "Total Terverifikasi", value: formatIDR(budget.totalVerified), className: "text-slate-100" },
+    { label: "Total Realisasi", value: formatIDR(budget.totalRealization), className: "text-slate-100" },
+    {
+      label: "Sisa",
+      value: budget.remaining == null ? "—" : formatIDR(budget.remaining),
+      className:
+        budget.remaining == null
+          ? "text-slate-500"
+          : budget.remaining < 0
+            ? "text-rose-400"
+            : "text-emerald-400",
+    },
+  ];
+
+  return (
+    <div className="rounded-xl border border-white/8 bg-white/2 p-6">
+      <h2 className="text-sm font-semibold text-slate-300 mb-1 uppercase tracking-wider">
+        Klaim Turunan
+      </h2>
+      <p className="text-xs text-slate-500 mb-4">
+        {budget.activeClaimCount} klaim aktif dari {claims.length} klaim yang pernah dibuat. Total
+        klaim menjumlah nominal klaim berstatus Klaim Diajukan ke atas; sisa = nilai SKP − total
+        klaim.
+        {budget.remaining == null
+          ? " SKP ini bernilai Rp0 (nilai mengikuti realisasi), jadi tidak ada sisa maupun peringatan kelebihan."
+          : ""}
+      </p>
+
+      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 mb-5">
+        {stats.map((s) => (
+          <div key={s.label} className="rounded-lg border border-white/8 bg-white/2 px-3 py-2.5">
+            <dt className="text-xs text-slate-500">{s.label}</dt>
+            <dd className={`mt-0.5 text-sm font-semibold tabular-nums ${s.className}`}>{s.value}</dd>
+          </div>
+        ))}
+      </dl>
+
+      {claims.length === 0 ? (
+        <p className="text-sm text-slate-500">Belum ada akun distributor yang membuat klaim.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/8 text-left text-xs text-slate-500">
+                <th className="py-2 pr-4 font-medium">Nomor</th>
+                <th className="py-2 pr-4 font-medium">Perusahaan</th>
+                <th className="py-2 pr-4 font-medium">Akun</th>
+                <th className="py-2 pr-4 font-medium">Region</th>
+                <th className="py-2 pr-4 font-medium text-right">Nominal Klaim</th>
+                <th className="py-2 pr-4 font-medium text-right">Realisasi</th>
+                <th className="py-2 font-medium">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/8">
+              {claims.map((claim) => {
+                const cfg = getStatusConfig(claim.status);
+                const cancelled = claim.status === "cancelled";
+                return (
+                  <tr key={claim.id} className={cancelled ? "text-slate-500" : "text-slate-300"}>
+                    <td className="py-2.5 pr-4 whitespace-nowrap">
+                      <Link
+                        href={`/campaigns/${claim.id}`}
+                        className="font-mono font-medium text-emerald-300 hover:text-emerald-200 hover:underline underline-offset-2"
+                      >
+                        {claim.skp_number ?? "Tanpa nomor"}
+                      </Link>
+                    </td>
+                    <td className="py-2.5 pr-4">{claim.distributorName ?? "—"}</td>
+                    <td className="py-2.5 pr-4">{claim.ownerName ?? "—"}</td>
+                    <td className="py-2.5 pr-4">{claim.regionName ?? "—"}</td>
+                    <td className="py-2.5 pr-4 text-right tabular-nums whitespace-nowrap">
+                      {claim.claim_amount != null ? formatIDR(claim.claim_amount) : "—"}
+                    </td>
+                    <td className="py-2.5 pr-4 text-right tabular-nums whitespace-nowrap">
+                      {claim.actual_spent > 0 ? formatIDR(claim.actual_spent) : "—"}
+                    </td>
+                    <td className="py-2.5">
+                      <span
+                        className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium whitespace-nowrap ${cfg.className}`}
+                      >
+                        {cfg.label}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr className="border-t border-white/15 text-slate-200 font-semibold">
+                <td className="py-2.5 pr-4" colSpan={4}>
+                  Total
+                </td>
+                <td className="py-2.5 pr-4 text-right tabular-nums whitespace-nowrap">
+                  {formatIDR(budget.totalClaimed)}
+                </td>
+                <td className="py-2.5 pr-4 text-right tabular-nums whitespace-nowrap">
+                  {formatIDR(budget.totalRealization)}
+                </td>
+                <td />
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
 // Batalkan Klaim turunan (SKP Nasional, Fase 3) — pemilik atau admin
 // ============================================================
 
@@ -1997,6 +2131,9 @@ export function CampaignDetailClient({
   claimOwnerName,
   myOpenChildClaim,
   myChildClaims,
+  nationalChildClaims,
+  nationalBudget,
+  canSeeOverClaimWarning,
   departments,
   brands,
   regions,
@@ -2039,6 +2176,12 @@ export function CampaignDetailClient({
     });
   }
   const canUnmakeNational = isAdminOrSuperadmin && isNational;
+
+  // Pantauan budget (Fase 5). Distributor tidak melihat nilai terpakai induk;
+  // peringatan kelebihan klaim hanya untuk admin, superadmin, dan Finance.
+  const hideParentSpend = isNational && userRole === "distributor";
+  const showOverClaimWarning =
+    canSeeOverClaimWarning && !!nationalBudget && nationalBudget.overClaimed;
   const [nationalDialog, setNationalDialog] = useState<"make" | "unmake" | null>(null);
 
   const canAddRealization =
@@ -2413,6 +2556,27 @@ export function CampaignDetailClient({
         </div>
       )}
 
+      {/* Kelebihan klaim SKP nasional (Fase 5): peringatan saja, tidak memblokir */}
+      {showOverClaimWarning && nationalBudget && (
+        <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-5 py-3 flex items-start gap-3">
+          <TriangleAlert className="h-4 w-4 text-rose-400 mt-0.5 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-rose-300">
+              Total klaim melebihi nilai SKP Nasional sebesar {formatIDR(nationalBudget.excess)}
+            </p>
+            <p className="text-xs text-rose-200/80 mt-0.5">
+              Nilai SKP{isNationalChild ? " induk" : ""} {formatIDR(nationalBudget.skpValue)} ·
+              total klaim diajukan {formatIDR(nationalBudget.totalClaimed)}
+              {isNationalChild ? " (termasuk klaim ini)" : ""} · selisih{" "}
+              {formatIDR(nationalBudget.excess)}.{" "}
+              {isNationalChild
+                ? "Klaim ini tetap dapat disetujui — Anda juga dapat meminta revisi nominal atau menahannya."
+                : "Klaim turunan tetap dapat diproses — periksa rinciannya di tabel Klaim Turunan."}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Hanya lihat: Pusat perusahaan induk melihat SKP anak perusahaan */}
       {distributorReadOnly && !isNational && !isNationalChild && (
         <div className="rounded-xl border border-sky-500/30 bg-sky-500/10 px-5 py-3 flex items-start gap-3">
@@ -2637,10 +2801,12 @@ export function CampaignDetailClient({
               }
             />
           )}
-          <DetailRow
-            label="Total Realisasi"
-            value={formatIDR(campaign.actual_spent)}
-          />
+          {!hideParentSpend && (
+            <DetailRow
+              label={isNational ? "Total Realisasi (semua klaim)" : "Total Realisasi"}
+              value={formatIDR(campaign.actual_spent)}
+            />
+          )}
           {campaign.claim_amount != null && (
             <DetailRow
               label="Nominal Klaim"
@@ -2664,7 +2830,7 @@ export function CampaignDetailClient({
           {campaign.paid_note != null && campaign.paid_note !== "" && (
             <DetailRow label="Catatan Bayar" value={campaign.paid_note} />
           )}
-          {campaign.requested_budget > 0 && campaign.actual_spent > 0 && (
+          {!hideParentSpend && campaign.requested_budget > 0 && campaign.actual_spent > 0 && (
             <DetailRow
               label="Serapan Anggaran"
               value={
@@ -2687,6 +2853,11 @@ export function CampaignDetailClient({
           />
         </dl>
       </div>
+
+      {/* Induk dibuka role internal: klaim turunan + ringkasan budget (Fase 5) */}
+      {isNational && nationalBudget && (
+        <NationalChildClaimsSection claims={nationalChildClaims} budget={nationalBudget} />
+      )}
 
       {/* Realizations section */}
       {showRealizationsSection && (

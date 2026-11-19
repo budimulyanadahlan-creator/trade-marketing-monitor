@@ -6,7 +6,12 @@ import {
   isClaimHolderCandidate,
   type DistributorCampaignAccess,
 } from "@/lib/distributor-campaign-guard";
-import { isOpenChildClaimStatus } from "@/lib/national-skp";
+import {
+  isClaimedChildStatus,
+  isOpenChildClaimStatus,
+  nationalBudgetSummary,
+  type NationalBudgetSummary,
+} from "@/lib/national-skp";
 import { CampaignDetailClient } from "./campaign-detail-client";
 import type { CampaignRow, CampaignFileRow, ApprovalHistoryRow, RealizationRow, DistributorReceiptRow, ClaimEventRow, ClaimItemStatus, UserRole, CampaignStatus, DistributorScope } from "@/types/database";
 
@@ -69,6 +74,32 @@ export type OpenChildClaimInfo = {
 export type MyChildClaimInfo = OpenChildClaimInfo & {
   claim_amount: number | null;
   created_at: string;
+};
+
+/**
+ * Satu klaim turunan pada tabel "Klaim Turunan" di halaman induk (Fase 5).
+ * Hanya dikirim ke role internal — distributor tidak melihat klaim akun lain.
+ */
+export type NationalChildClaimRow = {
+  id: string;
+  skp_number: string | null;
+  status: CampaignStatus;
+  claim_amount: number | null;
+  actual_spent: number;
+  distributorName: string | null;
+  ownerName: string | null;
+  regionName: string | null;
+};
+
+type NationalChildRaw = {
+  id: string;
+  skp_number: string | null;
+  status: CampaignStatus;
+  claim_amount: number | null;
+  actual_spent: number | null;
+  claim_owner_id: string | null;
+  distributor: { name: string } | null;
+  region: { name: string } | null;
 };
 
 type CampaignFileWithUploader = CampaignFileRow & {
@@ -271,6 +302,73 @@ export default async function CampaignDetailPage({ params }: Props) {
     myChildClaims = (myChildrenRaw ?? []) as MyChildClaimInfo[];
     myOpenChildClaim =
       [...myChildClaims].reverse().find((c) => isOpenChildClaimStatus(c.status)) ?? null;
+  }
+
+  // ── SKP Nasional Fase 5: pantauan budget ──────────────────────────────
+  // Induk dibuka role internal: tabel semua klaim turunan + ringkasan budget.
+  // Turunan dibuka Finance/admin saat nominalnya sudah diajukan: ringkasan
+  // induknya, untuk peringatan kelebihan klaim di layar verifikasi.
+  // Hak layanan: role internal yang boleh membuka induk (mis. ASM pembuatnya)
+  // belum tentu punya akses RLS ke baris turunan, yang dibuat akun distributor.
+  // Distributor tidak pernah menerima angka-angka ini.
+  const isInternalRole = userRole !== "distributor";
+  const canSeeOverClaimWarning = ["admin", "superadmin", "finance"].includes(userRole);
+  let nationalChildClaims: NationalChildClaimRow[] = [];
+  let nationalBudget: NationalBudgetSummary | null = null;
+
+  if (campaign.is_national && isInternalRole) {
+    const admin = createAdminClient();
+    const { data: childrenRaw } = await admin
+      .from("campaigns")
+      .select(
+        "id, skp_number, status, claim_amount, actual_spent, claim_owner_id, distributor:distributors(name), region:regions(name)"
+      )
+      .eq("parent_campaign_id", campaign.id)
+      .order("child_seq", { ascending: true });
+    const children = (childrenRaw ?? []) as unknown as NationalChildRaw[];
+
+    const ownerIds = [
+      ...new Set(children.map((c) => c.claim_owner_id).filter((v): v is string => !!v)),
+    ];
+    const ownerNameById = new Map<string, string>();
+    if (ownerIds.length > 0) {
+      const { data: owners } = await admin.from("users").select("id, full_name").in("id", ownerIds);
+      for (const o of owners ?? []) ownerNameById.set(o.id, o.full_name);
+    }
+
+    nationalChildClaims = children.map((c) => ({
+      id: c.id,
+      skp_number: c.skp_number,
+      status: c.status,
+      claim_amount: c.claim_amount,
+      actual_spent: c.actual_spent ?? 0,
+      distributorName: c.distributor?.name ?? null,
+      ownerName: c.claim_owner_id ? (ownerNameById.get(c.claim_owner_id) ?? null) : null,
+      regionName: c.region?.name ?? null,
+    }));
+    nationalBudget = nationalBudgetSummary(campaign.requested_budget, children);
+  } else if (isNationalChild && canSeeOverClaimWarning && isClaimedChildStatus(campaign.status)) {
+    const admin = createAdminClient();
+    const [{ data: parentBudgetRaw }, { data: siblingsRaw }] = await Promise.all([
+      admin
+        .from("campaigns")
+        .select("requested_budget")
+        .eq("id", campaign.parent_campaign_id!)
+        .maybeSingle(),
+      admin
+        .from("campaigns")
+        .select("status, claim_amount, actual_spent")
+        .eq("parent_campaign_id", campaign.parent_campaign_id!),
+    ]);
+    if (parentBudgetRaw) {
+      nationalBudget = nationalBudgetSummary(parentBudgetRaw.requested_budget, siblingsRaw ?? []);
+    }
+  }
+
+  // Distributor tidak melihat nilai terpakai SKP induk (gabungan realisasi
+  // semua cabang) — angkanya tidak dikirim ke klien.
+  if (campaign.is_national && !isInternalRole) {
+    campaign.actual_spent = 0;
   }
 
   const files = (filesRaw ?? []) as CampaignFileRow[];
@@ -562,6 +660,9 @@ export default async function CampaignDetailPage({ params }: Props) {
       claimOwnerName={claimOwnerName}
       myOpenChildClaim={myOpenChildClaim}
       myChildClaims={myChildClaims}
+      nationalChildClaims={nationalChildClaims}
+      nationalBudget={nationalBudget}
+      canSeeOverClaimWarning={canSeeOverClaimWarning}
       departments={departments ?? []}
       brands={brands ?? []}
       regions={regions ?? []}
