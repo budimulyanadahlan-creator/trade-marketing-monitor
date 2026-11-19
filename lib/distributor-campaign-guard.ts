@@ -19,10 +19,14 @@
  * - SKP induk nasional (`is_national`, SKP Nasional Fase 1): semua akun
  *   distributor berperusahaan → **hanya lihat**, di semua region. Tidak pernah
  *   bertindak — klaim dikerjakan di klaim turunan.
+ * - Klaim turunan SKP nasional (`parent_campaign_id`, SKP Nasional Fase 2):
+ *   hanya pemiliknya (`claim_owner_id`) yang melihat dan bertindak. Aturan
+ *   perusahaan/region TIDAK dipakai — rekan seperusahaan seregion pun tidak
+ *   melihatnya.
  * - Admin/superadmin selalu boleh bertindak (fallback).
  *
  * Padanannya di database: fungsi `distributor_campaign_access` (migrasi 067,
- * diperbarui 069; versi per baris SKP di migrasi 074)
+ * diperbarui 069; versi per baris SKP di migrasi 074, klaim turunan di 075)
  * yang dipakai semua policy RLS tabel terkait klaim. Status dan departemen
  * SKP (Sales/TM, Disetujui s.d. Selesai) disaring oleh RLS +
  * DISTRIBUTOR_VISIBLE_CAMPAIGN_STATUSES, bukan oleh modul ini.
@@ -38,6 +42,7 @@ export const DISTRIBUTOR_GUARD_MESSAGES = {
   otherRegion: "SKP ini di luar region akun Anda",
   parentViewOnly: "Hanya lihat — SKP anak perusahaan",
   nationalViewOnly: "SKP Nasional hanya dapat dilihat — klaim tidak diajukan langsung di SKP ini",
+  notClaimOwner: "Klaim ini milik akun lain — hanya pemilik klaim yang dapat membukanya",
 } as const;
 
 export type DistributorGuardDenial = keyof typeof DISTRIBUTOR_GUARD_MESSAGES;
@@ -46,6 +51,8 @@ export type DistributorGuardDenial = keyof typeof DISTRIBUTOR_GUARD_MESSAGES;
 export type DistributorCampaignAccess = "act" | "view" | null;
 
 export type DistributorViewer = {
+  /** ID akun; wajib untuk mengenali pemilik klaim turunan. */
+  id?: string | null;
   role: string;
   distributor_id: string | null;
   distributor_scope?: DistributorScope | null;
@@ -59,6 +66,10 @@ export type CampaignAccessTarget = {
   distributor_parent_id?: string | null;
   /** SKP induk nasional (`campaigns.is_national`); opsional, default bukan. */
   is_national?: boolean | null;
+  /** Terisi hanya pada klaim turunan SKP nasional (`campaigns.parent_campaign_id`). */
+  parent_campaign_id?: string | null;
+  /** Pemilik klaim turunan (`campaigns.claim_owner_id`). */
+  claim_owner_id?: string | null;
 };
 
 function isAdminRole(role: string): boolean {
@@ -83,6 +94,13 @@ export function distributorActionDenial(
 
   // Induk nasional: terlihat semua akun berperusahaan, tidak pernah bertindak.
   if (campaign.is_national) return "nationalViewOnly";
+
+  // Klaim turunan: kuncinya pemilik, bukan perusahaan/region.
+  if (campaign.parent_campaign_id) {
+    return viewer.id && campaign.claim_owner_id && campaign.claim_owner_id === viewer.id
+      ? null
+      : "notClaimOwner";
+  }
 
   // SKP tanpa perusahaan bukan milik siapa pun (Fase 6).
   if (!campaign.distributor_id) return "otherCompany";

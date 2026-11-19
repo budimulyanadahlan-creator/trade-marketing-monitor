@@ -29,6 +29,15 @@ export const NATIONAL_SKP_MESSAGES = {
     "Tanda Nasional tidak dapat dicabut karena SKP ini sudah punya klaim turunan",
   parentActivity:
     "SKP Nasional tidak menerima realisasi, klaim, checklist, dokumen klaim, atau tanda terima secara langsung — aktivitas klaim dilakukan di klaim turunan",
+  childNotDistributor: "Hanya akun distributor yang dapat membuat klaim atas SKP Nasional",
+  childInactive: "Akun tidak aktif",
+  childNoCompany: "Akun Anda belum terhubung ke perusahaan distributor",
+  childParentNotApproved:
+    "Klaim hanya dapat dibuat pada SKP Nasional berstatus Disetujui",
+  childParentNoNumber: "SKP Nasional ini belum bernomor — hubungi admin Marmot",
+  childOpenClaimExists:
+    "Selesaikan atau batalkan klaim Anda yang belum diajukan sebelum membuat klaim baru",
+  childNoReceipt: "Klaim SKP Nasional tidak memakai tanda terima",
 } as const;
 
 export type NationalActor = { role: string };
@@ -128,4 +137,81 @@ export function nationalParentActivityError(
   campaign: { is_national?: boolean | null }
 ): string | null {
   return campaign.is_national ? NATIONAL_SKP_MESSAGES.parentActivity : null;
+}
+
+// ============================================================
+// Klaim turunan (Fase 2)
+//
+// Klaim turunan adalah baris SKP biasa yang menunjuk ke SKP induk nasional
+// (`parent_campaign_id`) dan dikunci ke akun pembuatnya (`claim_owner_id`).
+// Seluruh alur klaim yang ada berjalan di baris itu tanpa diubah. Padanan di
+// database: migrasi 075 (constraint, trigger, dan fungsi
+// create_national_child_claim yang mengalokasikan nomor urut secara atomik).
+// ============================================================
+
+/** true = baris ini klaim turunan SKP nasional. */
+export function isNationalChild(
+  campaign: { parent_campaign_id?: string | null } | null | undefined
+): boolean {
+  return !!campaign?.parent_campaign_id;
+}
+
+export type ChildClaimActor = {
+  role: string;
+  is_active: boolean;
+  distributor_id: string | null;
+};
+
+export type ChildClaimParent = {
+  status: string;
+  is_national?: boolean | null;
+  parent_campaign_id?: string | null;
+  skp_number: string | null;
+};
+
+/**
+ * Pesan error jika akun tidak boleh membuat klaim turunan atas SKP ini, atau
+ * null jika boleh. `openChildClaims` = jumlah klaim turunan akun itu atas
+ * induk yang sama yang belum diajukan (status Disetujui atau Berjalan).
+ */
+export function createChildClaimError(
+  actor: ChildClaimActor,
+  parent: ChildClaimParent,
+  openChildClaims: number
+): string | null {
+  const m = NATIONAL_SKP_MESSAGES;
+  if (actor.role !== "distributor") return m.childNotDistributor;
+  if (!actor.is_active) return m.childInactive;
+  if (!actor.distributor_id) return m.childNoCompany;
+  if (!parent.is_national || parent.parent_campaign_id) return m.notNational;
+  if (parent.status !== "approved") return m.childParentNotApproved;
+  if (!parent.skp_number) return m.childParentNoNumber;
+  if (openChildClaims > 0) return m.childOpenClaimExists;
+  return null;
+}
+
+/** Nomor klaim turunan: nomor induk + `-K` + nomor urut dua digit. */
+export function childSkpNumber(parentSkpNumber: string, seq: number): string {
+  return `${parentSkpNumber}-K${String(seq).padStart(2, "0")}`;
+}
+
+/**
+ * Nama klaim turunan: nama induk + " – klaim " + nama akun; mulai klaim
+ * kedua akun itu atas induk yang sama ditambah nomor urutnya.
+ */
+export function childClaimName(parentName: string, ownerName: string, ownerClaimNo: number): string {
+  const base = `${parentName} – klaim ${ownerName}`;
+  return ownerClaimNo > 1 ? `${base} (${ownerClaimNo})` : base;
+}
+
+/**
+ * Pesan error untuk aksi tanda terima: induk nasional dan klaim turunannya
+ * tidak memakai tanda terima; null untuk SKP biasa.
+ */
+export function nationalReceiptError(
+  campaign: { is_national?: boolean | null; parent_campaign_id?: string | null }
+): string | null {
+  if (campaign.is_national) return NATIONAL_SKP_MESSAGES.parentActivity;
+  if (campaign.parent_campaign_id) return NATIONAL_SKP_MESSAGES.childNoReceipt;
+  return null;
 }

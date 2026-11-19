@@ -24,6 +24,7 @@ import {
   addRealizationAction,
 } from "./realizations";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { DISTRIBUTOR_GUARD_MESSAGES } from "@/lib/distributor-campaign-guard";
 import { revalidatePath } from "next/cache";
 import { sendClaimSubmittedEmail, sendMarkedAsPaidEmail, sendClaimApprovedEmail } from "@/lib/email";
 import { getDistributorNotificationRecipients } from "@/lib/distributor-notification-recipients";
@@ -1465,5 +1466,64 @@ describe("SKP induk nasional — realisasi dan klaim ditolak", () => {
 
     expect(result).toEqual({ error: NATIONAL_PARENT_ERROR });
     expect(campaignsChain.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("klaim turunan SKP nasional — hanya pemilik yang bertindak", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const turunan = {
+    id: "camp-1",
+    status: "ongoing",
+    name: "Promo Nasional – klaim Cabang A",
+    created_by: "dist-1",
+    distributor_id: "dist-co-1",
+    region_id: "region-wcj",
+    parent_campaign_id: "induk-1",
+    claim_owner_id: "dist-1",
+  };
+
+  it("pemilik mengajukan klaim turunannya", async () => {
+    const { campaignsChain } = setupMocks({
+      userId: "dist-1",
+      userScope: "cabang",
+      userRegionId: "region-wcj",
+      campaign: turunan,
+    });
+    expect(await submitKlaimAction("camp-1", 500000)).toEqual({ success: true });
+    expect(campaignsChain.update).toHaveBeenCalled();
+  });
+
+  it("rekan seperusahaan seregion yang bukan pemilik ditolak di submit, batal, dan ubah nominal", async () => {
+    const rekan = { userId: "dist-2", userScope: "cabang" as const, userRegionId: "region-wcj" };
+
+    let mocks = setupMocks({ ...rekan, campaign: turunan });
+    expect(await submitKlaimAction("camp-1", 500000)).toEqual({
+      error: DISTRIBUTOR_GUARD_MESSAGES.notClaimOwner,
+    });
+    expect(mocks.campaignsChain.update).not.toHaveBeenCalled();
+
+    const diajukan = { ...turunan, status: "claim_submitted", claim_submitted_by: "dist-1" };
+    mocks = setupMocks({ ...rekan, campaign: diajukan });
+    expect(await cancelKlaimAction("camp-1")).toEqual({
+      error: DISTRIBUTOR_GUARD_MESSAGES.notClaimOwner,
+    });
+    expect(mocks.campaignsChain.update).not.toHaveBeenCalled();
+
+    mocks = setupMocks({ ...rekan, campaign: diajukan });
+    expect(await updateClaimAmountAction("camp-1", 400000)).toEqual({
+      error: DISTRIBUTOR_GUARD_MESSAGES.notClaimOwner,
+    });
+    expect(mocks.campaignsChain.update).not.toHaveBeenCalled();
+  });
+
+  it("pusat perusahaan yang sama pun tidak bertindak atas turunan akun lain", async () => {
+    const mocks = setupMocks({ userId: "dist-pusat", userScope: "pusat", campaign: turunan });
+    expect(await submitKlaimAction("camp-1", 500000)).toEqual({
+      error: DISTRIBUTOR_GUARD_MESSAGES.notClaimOwner,
+    });
+    expect(mocks.campaignsChain.update).not.toHaveBeenCalled();
   });
 });

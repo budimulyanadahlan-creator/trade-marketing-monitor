@@ -7,7 +7,7 @@ import type { CampaignStatus, CampaignFileRow } from "@/types/database";
 import { sendSkpSubmittedEmail } from "@/lib/email";
 import { distributorClaimActionError } from "@/lib/distributor-campaign-guard";
 import { distributorRequiredError } from "@/lib/campaign-distributor-required";
-import { nationalParentActivityError } from "@/lib/national-skp";
+import { nationalReceiptError } from "@/lib/national-skp";
 
 // Budget SKP asli terkecil di sistem (per Agustus 2026) adalah ~Rp168.000 —
 // threshold ini jauh di bawahnya sehingga tidak menolak SKP sah manapun,
@@ -312,24 +312,30 @@ export async function createDistributorReceiptAction(
 
     const { data: campaign } = await supabase
       .from("campaigns")
-      .select("id, distributor_id, region_id, is_national")
+      .select("id, distributor_id, region_id, is_national, parent_campaign_id, claim_owner_id")
       .eq("id", campaignId)
       .single();
 
     if (!campaign) return { error: "SKP tidak ditemukan" };
 
-    // SKP induk nasional tidak memakai tanda terima.
-    const nationalError = nationalParentActivityError(campaign);
+    // SKP induk nasional dan klaim turunannya tidak memakai tanda terima.
+    const nationalError = nationalReceiptError(campaign);
     if (nationalError) return { error: nationalError };
 
     const guardError = distributorClaimActionError(
       {
+        id: user.id,
         role: profile.role,
         distributor_id: profile.distributor_id ?? null,
         distributor_scope: profile.distributor_scope ?? null,
         region_id: profile.region_id ?? null,
       },
-      { distributor_id: campaign.distributor_id ?? null, region_id: campaign.region_id ?? null }
+      {
+        distributor_id: campaign.distributor_id ?? null,
+        region_id: campaign.region_id ?? null,
+        parent_campaign_id: campaign.parent_campaign_id ?? null,
+        claim_owner_id: campaign.claim_owner_id ?? null,
+      }
     );
     if (guardError) return { error: guardError };
 

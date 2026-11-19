@@ -178,6 +178,14 @@ export type CampaignRow = {
   paid_note: string | null;
   /** SKP induk nasional (migrasi 074): tanpa distributor, region National. */
   is_national: boolean;
+  /** Klaim turunan SKP nasional (migrasi 075): SKP induk; null untuk SKP biasa & induk. */
+  parent_campaign_id: string | null;
+  /** Pemilik klaim turunan — satu-satunya akun distributor yang boleh mengerjakannya. */
+  claim_owner_id: string | null;
+  /** Nomor urut klaim turunan per induk (akhiran -K01, -K02, …). */
+  child_seq: number | null;
+  /** No surat (migrasi 035); hanya di SKP biasa/induk, selalu null di turunan. */
+  reference_number?: string | null;
   updated_at: string;
   created_at: string;
 };
@@ -768,9 +776,12 @@ export type Database = {
       };
       campaigns: {
         Row: CampaignRow;
-        Insert: Omit<CampaignRow, "id" | "created_at" | "updated_at" | "actual_spent" | "submitted_at" | "skp_number" | "aa_reference_number" | "claim_amount" | "claim_submitted_at" | "claim_submitted_by" | "paid_at" | "paid_note" | "is_national"> & {
+        Insert: Omit<CampaignRow, "id" | "created_at" | "updated_at" | "actual_spent" | "submitted_at" | "skp_number" | "aa_reference_number" | "claim_amount" | "claim_submitted_at" | "claim_submitted_by" | "paid_at" | "paid_note" | "is_national" | "parent_campaign_id" | "claim_owner_id" | "child_seq"> & {
           id?: string;
           is_national?: boolean;
+          parent_campaign_id?: string | null;
+          claim_owner_id?: string | null;
+          child_seq?: number | null;
           created_at?: string;
           updated_at?: string;
           actual_spent?: number;
@@ -1621,6 +1632,10 @@ export type Database = {
       gimmick_campaign_refs: {
         Args: { p_ids: string[] };
         Returns: { id: string; skp_number: string | null; name: string }[];
+      };
+      create_national_child_claim: {
+        Args: { p_parent_id: string; p_owner_id: string };
+        Returns: string;
       };
       create_marketing_asset: {
         Args: {

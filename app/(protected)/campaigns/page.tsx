@@ -133,10 +133,45 @@ export default async function CampaignsPage({
             (c.distributor as { parent_distributor_id?: string | null } | null)
               ?.parent_distributor_id ?? null,
           is_national: c.is_national,
+          parent_campaign_id: c.parent_campaign_id ?? null,
+          claim_owner_id: c.claim_owner_id ?? null,
         },
-        profile
+        { ...profile, id: user.id }
       );
       if (access === "view") readOnlyCampaignIds.push(c.id);
+    }
+  }
+
+  // Klaim turunan SKP nasional (Fase 2): nama SKP induk dan akun pemilik
+  // untuk ditampilkan di bawah nama baris turunan. Nama induk diambil dari
+  // daftar yang sama (induk terlihat oleh siapa pun yang melihat turunannya);
+  // nama pemilik hanya untuk role internal — distributor hanya melihat
+  // turunannya sendiri.
+  const childClaimInfoByCampaignId: Record<
+    string,
+    { parentName: string | null; ownerName: string | null }
+  > = {};
+  const childClaims = (campaigns ?? []).filter((c) => c.parent_campaign_id);
+  if (childClaims.length > 0) {
+    const nameById = new Map((campaigns ?? []).map((c) => [c.id, c.name]));
+    const ownerNameById = new Map<string, string>();
+    if (!isDistributor) {
+      const ownerIds = [
+        ...new Set(childClaims.map((c) => c.claim_owner_id).filter((id): id is string => !!id)),
+      ];
+      if (ownerIds.length > 0) {
+        const { data: owners } = await supabase
+          .from("users")
+          .select("id, full_name")
+          .in("id", ownerIds);
+        for (const o of owners ?? []) ownerNameById.set(o.id, o.full_name);
+      }
+    }
+    for (const c of childClaims) {
+      childClaimInfoByCampaignId[c.id] = {
+        parentName: nameById.get(c.parent_campaign_id!) ?? null,
+        ownerName: c.claim_owner_id ? (ownerNameById.get(c.claim_owner_id) ?? null) : null,
+      };
     }
   }
 
@@ -270,6 +305,7 @@ export default async function CampaignsPage({
       readOnlyCampaignIds={readOnlyCampaignIds}
       checklistStatusByCampaignId={checklistStatusByCampaignId}
       claimVerificationProgressByCampaignId={claimVerificationProgressByCampaignId}
+      childClaimInfoByCampaignId={childClaimInfoByCampaignId}
     />
   );
 }

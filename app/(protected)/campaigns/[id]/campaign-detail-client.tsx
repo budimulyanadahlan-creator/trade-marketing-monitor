@@ -41,7 +41,11 @@ import {
 } from "lucide-react";
 import { Select } from "@/components/ui/select";
 import { transferClaimHolderAction } from "@/app/actions/claim-holder";
-import { makeNationalAction, unmakeNationalAction } from "@/app/actions/national-skp";
+import {
+  createChildClaimAction,
+  makeNationalAction,
+  unmakeNationalAction,
+} from "@/app/actions/national-skp";
 import { toast } from "sonner";
 import { formatDate, formatIDR } from "@/lib/utils";
 import { UPLOAD_MAX_LABEL, UPLOAD_MAX_SIZE } from "@/lib/upload-limits";
@@ -78,7 +82,13 @@ import type {
   UserRole,
   CampaignStatus,
 } from "@/types/database";
-import type { AABudgetInfo, ClaimDocument, ClaimItemVerificationInfo } from "./page";
+import type {
+  AABudgetInfo,
+  ClaimDocument,
+  ClaimItemVerificationInfo,
+  NationalParentInfo,
+  OpenChildClaimInfo,
+} from "./page";
 
 type RealizationWithCreator = RealizationRow & {
   creator: { full_name: string } | null;
@@ -139,6 +149,14 @@ interface Props {
    * melihat SKP anak perusahaan). Selalu "act" untuk role lain.
    */
   distributorAccess: DistributorCampaignAccess;
+  /** Klaim turunan (SKP Nasional Fase 2): SKP induknya; null untuk SKP lain. */
+  nationalParent: NationalParentInfo | null;
+  /** Lampiran surat SKP induk, ditampilkan di klaim turunan. */
+  nationalParentFiles: CampaignFileRow[];
+  /** Nama akun pemilik klaim turunan. */
+  claimOwnerName: string | null;
+  /** Induk dibuka distributor: klaim turunannya sendiri yang belum diajukan. */
+  myOpenChildClaim: OpenChildClaimInfo | null;
   departments: { id: string; name: string }[];
   brands: { id: string; name: string }[];
   regions: { id: string; name: string }[];
@@ -1900,6 +1918,10 @@ export function CampaignDetailClient({
   userRole,
   userId,
   distributorAccess,
+  nationalParent,
+  nationalParentFiles,
+  claimOwnerName,
+  myOpenChildClaim,
   departments,
   brands,
   regions,
@@ -1910,14 +1932,37 @@ export function CampaignDetailClient({
   distributors,
   masterBudgets,
 }: Props) {
+  const router = useRouter();
   const [editOpen, setEditOpen] = useState(false);
   const statusCfg = getStatusConfig(campaign.status);
 
   // SKP induk nasional: terlihat semua distributor, tidak menerima aktivitas
   // klaim apa pun (realisasi, checklist, dokumen klaim, tanda terima).
   const isNational = !!campaign.is_national;
+  // Klaim turunan: baris SKP milik satu akun distributor di bawah SKP induk.
+  const isNationalChild = !!campaign.parent_campaign_id;
   const isAdminOrSuperadmin = userRole === "admin" || userRole === "superadmin";
-  const canMakeNational = isAdminOrSuperadmin && !isNational && campaign.status === "approved";
+  const canMakeNational =
+    isAdminOrSuperadmin && !isNational && !isNationalChild && campaign.status === "approved";
+
+  // Buat Klaim (Fase 2): akun distributor pada induk nasional Disetujui.
+  // Selama akun masih punya klaim turunan yang belum diajukan, tombol
+  // berganti menjadi tautan ke klaim itu.
+  const canCreateChildClaim =
+    userRole === "distributor" && isNational && campaign.status === "approved";
+  const [isCreatingClaim, startCreateClaim] = useTransition();
+  function handleCreateChildClaim() {
+    startCreateClaim(async () => {
+      const result = await createChildClaimAction(campaign.id);
+      if (result.error || !result.childId) {
+        toast.error(result.error ?? "Klaim gagal dibuat");
+        router.refresh();
+        return;
+      }
+      toast.success("Klaim dibuat — lengkapi dokumen dan checklist-nya");
+      router.push(`/campaigns/${result.childId}`);
+    });
+  }
   const canUnmakeNational = isAdminOrSuperadmin && isNational;
   const [nationalDialog, setNationalDialog] = useState<"make" | "unmake" | null>(null);
 
@@ -1955,7 +2000,9 @@ export function CampaignDetailClient({
   const canTransferHolder =
     ["admin", "superadmin"].includes(userRole) &&
     campaign.status === "claim_submitted" &&
-    !!campaign.distributor_id;
+    !!campaign.distributor_id &&
+    // Klaim turunan dikunci ke pemiliknya; alih kepemilikan menyusul (Fase 8).
+    !isNationalChild;
   const [transferHolderOpen, setTransferHolderOpen] = useState(false);
 
   const canSubmitKlaim =
@@ -2065,6 +2112,12 @@ export function CampaignDetailClient({
                   Nasional
                 </span>
               )}
+              {isNationalChild && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-violet-500/30 bg-violet-500/10 px-2.5 py-0.5 text-xs font-medium text-violet-300">
+                  <Globe className="h-3 w-3" />
+                  Klaim Nasional
+                </span>
+              )}
             </div>
             <p className="text-sm text-slate-500 mt-0.5">
               Dibuat {formatDate(campaign.created_at)}
@@ -2076,6 +2129,27 @@ export function CampaignDetailClient({
         </div>
 
         <div className="flex items-center gap-2">
+          {canCreateChildClaim &&
+            (myOpenChildClaim ? (
+              <Button asChild size="sm" variant="outline">
+                <Link
+                  href={`/campaigns/${myOpenChildClaim.id}`}
+                  title="Selesaikan atau batalkan klaim Anda yang belum diajukan sebelum membuat klaim baru"
+                >
+                  <Receipt className="h-4 w-4" />
+                  Buka Klaim Saya{myOpenChildClaim.skp_number ? ` (${myOpenChildClaim.skp_number})` : ""}
+                </Link>
+              </Button>
+            ) : (
+              <Button size="sm" onClick={handleCreateChildClaim} disabled={isCreatingClaim}>
+                {isCreatingClaim ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Plus className="h-4 w-4" />
+                )}
+                Buat Klaim
+              </Button>
+            ))}
           {canMakeNational && (
             <Button size="sm" variant="outline" onClick={() => setNationalDialog("make")}>
               <Globe className="h-4 w-4" />
@@ -2113,8 +2187,48 @@ export function CampaignDetailClient({
             <p className="text-sm font-medium text-violet-200">SKP Nasional</p>
             <p className="text-xs text-violet-300/80 mt-0.5">
               {userRole === "distributor"
-                ? "SKP ini berlaku untuk semua distributor. Anda dapat membaca ketentuan dan mengunduh PDF-nya tanpa tanda terima; realisasi, checklist, dan dokumen klaim tidak dicatat langsung di SKP ini."
+                ? canCreateChildClaim
+                  ? myOpenChildClaim
+                    ? "SKP ini berlaku untuk semua distributor. Anda masih punya klaim yang belum diajukan atas SKP ini — selesaikan klaim itu lewat tombol \"Buka Klaim Saya\" sebelum membuat klaim baru."
+                    : "SKP ini berlaku untuk semua distributor. Untuk menagih, tekan \"Buat Klaim\": Marmot membuat klaim milik akun Anda, tempat Anda mengunggah dokumen, mengisi checklist, dan mengajukan nominal."
+                  : "SKP ini berlaku untuk semua distributor. Anda dapat membaca ketentuan dan mengunduh PDF-nya tanpa tanda terima; realisasi, checklist, dan dokumen klaim tidak dicatat langsung di SKP ini."
                 : "SKP ini terlihat oleh semua akun distributor di semua perusahaan dan region. Realisasi, checklist, dokumen klaim, dan tanda terima tidak dicatat di SKP ini — aktivitas klaim dilakukan di klaim turunan per akun distributor."}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Klaim turunan: tautan ke SKP induk, No surat induk, dan pemilik */}
+      {isNationalChild && (
+        <div className="rounded-xl border border-violet-500/30 bg-violet-500/10 px-5 py-3 flex items-start gap-3">
+          <Globe className="h-4 w-4 text-violet-300 mt-0.5 flex-shrink-0" />
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-violet-200">
+              Klaim atas SKP Nasional
+              {claimOwnerName ? ` — milik ${claimOwnerName}` : ""}
+            </p>
+            <p className="text-xs text-violet-300/80 mt-0.5">
+              {nationalParent ? (
+                <>
+                  SKP induk:{" "}
+                  <Link
+                    href={`/campaigns/${nationalParent.id}`}
+                    className="font-medium text-violet-200 underline underline-offset-2 hover:text-white"
+                  >
+                    {nationalParent.name}
+                  </Link>
+                  {nationalParent.skp_number ? ` · No. SKP ${nationalParent.skp_number}` : ""}
+                  {nationalParent.reference_number
+                    ? ` · No surat ${nationalParent.reference_number}`
+                    : ""}
+                  .{" "}
+                </>
+              ) : (
+                "SKP induk tidak dapat ditampilkan untuk akun Anda. "
+              )}
+              {userRole === "distributor"
+                ? "Unggah dokumen dan isi checklist di sini; setelah Finance mencatat realisasi, ajukan nominal klaim Anda. Klaim ini tidak memakai tanda terima."
+                : "Alur klaim berjalan di sini seperti SKP biasa. Nilai SKP dan komitmen budget hanya ada di SKP induk."}
             </p>
           </div>
         </div>
@@ -2273,6 +2387,7 @@ export function CampaignDetailClient({
             label="Distributor"
             value={isNational ? "Semua distributor (SKP Nasional)" : campaign.distributor?.name}
           />
+          {isNationalChild && <DetailRow label="Pemilik Klaim" value={claimOwnerName} />}
           {(campaign.claim_submitted_by || canTransferHolder) && (
             <DetailRow
               label="Pemegang Klaim"
@@ -2314,9 +2429,13 @@ export function CampaignDetailClient({
           <DetailRow
             label="Budget Diajukan"
             value={
-              <span className="font-semibold text-emerald-400">
-                {formatIDR(campaign.requested_budget)}
-              </span>
+              isNationalChild ? (
+                <span className="text-slate-400">Mengikuti SKP induk (nilai klaim ini Rp0)</span>
+              ) : (
+                <span className="font-semibold text-emerald-400">
+                  {formatIDR(campaign.requested_budget)}
+                </span>
+              )
             }
           />
           {campaign.sales_projection > 0 && (
@@ -2453,6 +2572,22 @@ export function CampaignDetailClient({
           </h2>
           <ul className="space-y-2">
             {skpFiles.map((f) => (
+              <li key={f.id}>
+                <SignedFileLink fileId={f.id} fileName={f.file_name} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Klaim turunan: lampiran surat SKP induk */}
+      {isNationalChild && nationalParentFiles.length > 0 && (
+        <div className="rounded-xl border border-white/8 bg-white/2 p-6">
+          <h2 className="text-sm font-semibold text-slate-300 mb-3 uppercase tracking-wider">
+            Lampiran Surat SKP Induk
+          </h2>
+          <ul className="space-y-2">
+            {nationalParentFiles.map((f) => (
               <li key={f.id}>
                 <SignedFileLink fileId={f.id} fileName={f.file_name} />
               </li>

@@ -1,9 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createAdminClient } from "@/lib/supabase/server";
 import {
   NATIONAL_REGION_NAME,
+  createChildClaimError,
   makeNationalError,
   unmakeNationalError,
 } from "@/lib/national-skp";
@@ -152,11 +153,15 @@ export async function unmakeNationalAction(campaignId: string): Promise<National
       .single();
     if (!campaign) return { error: "SKP tidak ditemukan" };
 
-    // Klaim turunan baru ada mulai Fase 2 (kolom parent_campaign_id); sampai
-    // saat itu jumlahnya selalu 0.
-    const childClaimCount = 0;
+    // Klaim turunan (status apa pun) mengunci tanda nasional; database
+    // memeriksa ulang lewat trigger migrasi 075.
+    const { count: childClaimCount, error: countError } = await supabase
+      .from("campaigns")
+      .select("id", { count: "exact", head: true })
+      .eq("parent_campaign_id", campaignId);
+    if (countError) return { error: countError.message };
 
-    const ruleError = unmakeNationalError(actor, campaign, childClaimCount);
+    const ruleError = unmakeNationalError(actor, campaign, childClaimCount ?? 0);
     if (ruleError) return { error: ruleError };
 
     const { data: updated, error } = await supabase
@@ -172,6 +177,98 @@ export async function unmakeNationalAction(campaignId: string): Promise<National
     revalidatePath("/campaigns");
     revalidatePath(`/campaigns/${campaignId}`);
     return { success: true };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Terjadi kesalahan" };
+  }
+}
+
+// ============================================================
+// Buat Klaim (SKP Nasional, Fase 2)
+// ============================================================
+
+export type CreateChildClaimResult = { error?: string; success?: boolean; childId?: string };
+
+/** Status klaim turunan yang belum diajukan — menghalangi klaim baru akun itu. */
+const OPEN_CHILD_CLAIM_STATUSES = ["approved", "ongoing"] as const;
+
+const CHILD_CLAIM_FAILED = "Klaim gagal dibuat — coba lagi sebentar lagi";
+
+/**
+ * Buat Klaim: akun distributor membuat klaim turunan miliknya di bawah SKP
+ * induk nasional. Turunan adalah baris SKP biasa (status Disetujui, nilai 0,
+ * nomor induk + -K01, perusahaan & region dari akun) tempat seluruh alur
+ * klaim yang ada berjalan.
+ *
+ * Syaratnya di createChildClaimError (lib/national-skp.ts). Baris ditulis
+ * dengan hak layanan lewat fungsi database create_national_child_claim
+ * (migrasi 075) — distributor tidak punya izin INSERT ke campaigns, dan
+ * fungsi itu mengunci induk agar nomor urut dua akun yang menekan bersamaan
+ * tidak kembar. Pemilik selalu akun yang login, tidak pernah dari input.
+ */
+export async function createChildClaimAction(parentId: string): Promise<CreateChildClaimResult> {
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { error: "Unauthorized" };
+
+    const { data: profile } = await supabase
+      .from("users")
+      .select("role, is_active, distributor_id")
+      .eq("id", user.id)
+      .single();
+    if (!profile) return { error: "Unauthorized" };
+
+    // Dibaca dengan sesi akun: RLS memastikan hanya induk yang memang
+    // terlihat oleh akun ini (Disetujui s.d. Selesai, Sales/TM) yang lolos.
+    const { data: parent } = await supabase
+      .from("campaigns")
+      .select("id, status, is_national, parent_campaign_id, skp_number")
+      .eq("id", parentId)
+      .single();
+
+    const actor = {
+      role: profile.role as string,
+      is_active: !!profile.is_active,
+      distributor_id: (profile.distributor_id ?? null) as string | null,
+    };
+    // Aturan akun diperiksa sebelum "tidak ditemukan" agar pesannya tepat.
+    const actorError = createChildClaimError(
+      actor,
+      { status: "approved", is_national: true, parent_campaign_id: null, skp_number: "-" },
+      0
+    );
+    if (actorError) return { error: actorError };
+    if (!parent) return { error: "SKP tidak ditemukan" };
+
+    const { count: openClaims, error: countError } = await supabase
+      .from("campaigns")
+      .select("id", { count: "exact", head: true })
+      .eq("parent_campaign_id", parentId)
+      .eq("claim_owner_id", user.id)
+      .in("status", [...OPEN_CHILD_CLAIM_STATUSES]);
+    if (countError) return { error: countError.message };
+
+    const ruleError = createChildClaimError(actor, parent, openClaims ?? 0);
+    if (ruleError) return { error: ruleError };
+
+    const { data: childId, error } = await createAdminClient().rpc("create_national_child_claim", {
+      p_parent_id: parentId,
+      p_owner_id: user.id,
+    });
+
+    if (error || !childId) {
+      // P0001 = penolakan aturan dari fungsi database (pesannya sudah ramah,
+      // mis. klaim kembar dari klik ganda). Selain itu error teknis.
+      if (error?.code === "P0001" && error.message) return { error: error.message };
+      console.error("[createChildClaimAction] rpc error:", error);
+      return { error: CHILD_CLAIM_FAILED };
+    }
+
+    revalidatePath("/campaigns");
+    revalidatePath(`/campaigns/${parentId}`);
+    return { success: true, childId };
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Terjadi kesalahan" };
   }

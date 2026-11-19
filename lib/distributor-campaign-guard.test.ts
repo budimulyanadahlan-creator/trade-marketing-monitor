@@ -407,3 +407,52 @@ describe("distributorCampaignAccess — SKP induk nasional", () => {
     expect(distributorCampaignAccess(skp({ distributor_id: null, region_id: NATIONAL }), pusatEdm)).toBeNull();
   });
 });
+
+describe("distributorCampaignAccess — klaim turunan SKP nasional", () => {
+  const OWNER = "user-owner";
+  const owner = viewer({ id: OWNER });
+  const turunan = skp({
+    distributor_id: EDM,
+    region_id: WCJ,
+    parent_campaign_id: "skp-induk",
+    claim_owner_id: OWNER,
+  });
+
+  it("pemilik boleh bertindak", () => {
+    expect(distributorCampaignAccess(turunan, owner)).toBe("act");
+    expect(distributorClaimActionError(owner, turunan)).toBeNull();
+  });
+
+  it("pemilik tetap bertindak walau region akunnya berbeda dari region turunan", () => {
+    expect(distributorCampaignAccess(turunan, viewer({ id: OWNER, region_id: EJB }))).toBe("act");
+    expect(distributorCampaignAccess(turunan, viewer({ id: OWNER, region_id: null }))).toBe("act");
+  });
+
+  it("cabang seperusahaan seregion yang bukan pemilik tidak melihat turunan", () => {
+    const rekan = viewer({ id: "user-rekan" });
+    expect(distributorCampaignAccess(turunan, rekan)).toBeNull();
+    expect(distributorActionDenial(turunan, rekan)).toBe("notClaimOwner");
+    expect(distributorClaimActionError(rekan, turunan)).toBe(
+      DISTRIBUTOR_GUARD_MESSAGES.notClaimOwner
+    );
+  });
+
+  it("akun perusahaan lain tidak melihat turunan", () => {
+    expect(distributorCampaignAccess(turunan, viewer({ id: "user-mms", distributor_id: MMS }))).toBeNull();
+    expect(distributorCampaignAccess(turunan, viewer({ id: "user-ajs", distributor_id: AJS }))).toBeNull();
+  });
+
+  it("akun tanpa id (pemanggil lama) tidak pernah dianggap pemilik", () => {
+    expect(distributorCampaignAccess(turunan, viewer())).toBeNull();
+    expect(distributorCampaignAccess(skp({ parent_campaign_id: "skp-induk", claim_owner_id: null }), viewer())).toBeNull();
+  });
+
+  it("akun tanpa perusahaan tidak melihat turunan, termasuk bila tercatat sebagai pemilik", () => {
+    expect(distributorCampaignAccess(turunan, viewer({ id: OWNER, distributor_id: null }))).toBeNull();
+  });
+
+  it("admin/superadmin tetap boleh bertindak (fallback)", () => {
+    expect(distributorClaimActionError(viewer({ role: "admin", distributor_id: null }), turunan)).toBeNull();
+    expect(distributorClaimActionError(viewer({ role: "superadmin", distributor_id: null }), turunan)).toBeNull();
+  });
+});

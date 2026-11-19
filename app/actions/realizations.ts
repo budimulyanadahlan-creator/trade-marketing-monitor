@@ -209,7 +209,9 @@ export async function submitKlaimAction(
 
     const { data: campaign } = await supabase
       .from("campaigns")
-      .select("id, status, name, created_by, promotion_category_id, distributor_id, region_id, is_national")
+      .select(
+        "id, status, name, created_by, promotion_category_id, distributor_id, region_id, is_national, parent_campaign_id, claim_owner_id"
+      )
       .eq("id", campaignId)
       .single();
 
@@ -219,10 +221,15 @@ export async function submitKlaimAction(
     const nationalError = nationalParentActivityError(campaign);
     if (nationalError) return { error: nationalError };
 
-    const guardError = distributorClaimActionError(profile, {
-      distributor_id: campaign.distributor_id ?? null,
-      region_id: campaign.region_id ?? null,
-    });
+    const guardError = distributorClaimActionError(
+      { ...profile, id: userId },
+      {
+        distributor_id: campaign.distributor_id ?? null,
+        region_id: campaign.region_id ?? null,
+        parent_campaign_id: campaign.parent_campaign_id ?? null,
+        claim_owner_id: campaign.claim_owner_id ?? null,
+      }
+    );
     if (guardError) return { error: guardError };
 
     if (campaign.status !== "ongoing") {
@@ -312,16 +319,21 @@ export async function cancelKlaimAction(
 
     const { data: campaign } = await supabase
       .from("campaigns")
-      .select("id, status, distributor_id, region_id, claim_submitted_by")
+      .select("id, status, distributor_id, region_id, claim_submitted_by, parent_campaign_id, claim_owner_id")
       .eq("id", campaignId)
       .single();
 
     if (!campaign) return { error: "SKP tidak ditemukan" };
 
-    const guardError = distributorClaimActionError(profile, {
-      distributor_id: campaign.distributor_id ?? null,
-      region_id: campaign.region_id ?? null,
-    });
+    const guardError = distributorClaimActionError(
+      { ...profile, id: userId },
+      {
+        distributor_id: campaign.distributor_id ?? null,
+        region_id: campaign.region_id ?? null,
+        parent_campaign_id: campaign.parent_campaign_id ?? null,
+        claim_owner_id: campaign.claim_owner_id ?? null,
+      }
+    );
     if (guardError) return { error: guardError };
 
     if (campaign.status !== "claim_submitted") {
@@ -408,16 +420,21 @@ export async function updateClaimAmountAction(
 
     const { data: campaign } = await supabase
       .from("campaigns")
-      .select("id, status, distributor_id, region_id, claim_submitted_by")
+      .select("id, status, distributor_id, region_id, claim_submitted_by, parent_campaign_id, claim_owner_id")
       .eq("id", campaignId)
       .single();
 
     if (!campaign) return { error: "SKP tidak ditemukan" };
 
-    const guardError = distributorClaimActionError(profile, {
-      distributor_id: campaign.distributor_id ?? null,
-      region_id: campaign.region_id ?? null,
-    });
+    const guardError = distributorClaimActionError(
+      { ...profile, id: userId },
+      {
+        distributor_id: campaign.distributor_id ?? null,
+        region_id: campaign.region_id ?? null,
+        parent_campaign_id: campaign.parent_campaign_id ?? null,
+        claim_owner_id: campaign.claim_owner_id ?? null,
+      }
+    );
     if (guardError) return { error: guardError };
 
     if (campaign.status !== "claim_submitted") {

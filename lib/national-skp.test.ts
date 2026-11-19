@@ -131,3 +131,105 @@ describe("nationalParentActivityError — induk menolak aktivitas klaim", () => 
     expect(isNationalParent(null)).toBe(false);
   });
 });
+
+// ============================================================
+// Fase 2: klaim turunan
+// ============================================================
+
+import {
+  childClaimName,
+  childSkpNumber,
+  createChildClaimError,
+  isNationalChild,
+  nationalReceiptError,
+  type ChildClaimActor,
+  type ChildClaimParent,
+} from "./national-skp";
+
+describe("createChildClaimError — syarat Buat Klaim", () => {
+  const cabang: ChildClaimActor = { role: "distributor", is_active: true, distributor_id: "co-edm" };
+  const induk: ChildClaimParent = {
+    status: "approved",
+    is_national: true,
+    parent_campaign_id: null,
+    skp_number: "0049/WWI/11/2026",
+  };
+
+  it("akun distributor aktif berperusahaan boleh pada induk nasional Disetujui", () => {
+    expect(createChildClaimError(cabang, induk, 0)).toBeNull();
+  });
+
+  it("role selain distributor ditolak, termasuk admin", () => {
+    for (const role of ["admin", "superadmin", "finance", "manager", "user"]) {
+      expect(createChildClaimError({ ...cabang, role }, induk, 0)).toBe(
+        NATIONAL_SKP_MESSAGES.childNotDistributor
+      );
+    }
+  });
+
+  it("akun nonaktif atau tanpa perusahaan ditolak", () => {
+    expect(createChildClaimError({ ...cabang, is_active: false }, induk, 0)).toBe(
+      NATIONAL_SKP_MESSAGES.childInactive
+    );
+    expect(createChildClaimError({ ...cabang, distributor_id: null }, induk, 0)).toBe(
+      NATIONAL_SKP_MESSAGES.childNoCompany
+    );
+  });
+
+  it("hanya induk nasional — SKP biasa dan klaim turunan ditolak", () => {
+    expect(createChildClaimError(cabang, { ...induk, is_national: false }, 0)).toBe(
+      NATIONAL_SKP_MESSAGES.notNational
+    );
+    expect(
+      createChildClaimError(cabang, { ...induk, is_national: false, parent_campaign_id: "x" }, 0)
+    ).toBe(NATIONAL_SKP_MESSAGES.notNational);
+  });
+
+  it("induk harus berstatus Disetujui dan sudah bernomor", () => {
+    for (const status of ["draft", "submitted", "rejected", "completed", "cancelled"]) {
+      expect(createChildClaimError(cabang, { ...induk, status }, 0)).toBe(
+        NATIONAL_SKP_MESSAGES.childParentNotApproved
+      );
+    }
+    expect(createChildClaimError(cabang, { ...induk, skp_number: null }, 0)).toBe(
+      NATIONAL_SKP_MESSAGES.childParentNoNumber
+    );
+  });
+
+  it("ditolak selama akun masih punya klaim turunan yang belum diajukan", () => {
+    expect(createChildClaimError(cabang, induk, 1)).toBe(NATIONAL_SKP_MESSAGES.childOpenClaimExists);
+  });
+});
+
+describe("nomor dan nama klaim turunan", () => {
+  it("nomor = nomor induk + -K + urutan dua digit", () => {
+    expect(childSkpNumber("0049/WWI/11/2026", 1)).toBe("0049/WWI/11/2026-K01");
+    expect(childSkpNumber("0049/WWI/11/2026", 12)).toBe("0049/WWI/11/2026-K12");
+    expect(childSkpNumber("0049/WWI/11/2026", 123)).toBe("0049/WWI/11/2026-K123");
+  });
+
+  it("nama = nama induk – klaim nama akun, bernomor mulai klaim kedua akun itu", () => {
+    expect(childClaimName("O Pao 300 Extra 300", "Roro Ajheng - Samarinda", 1)).toBe(
+      "O Pao 300 Extra 300 – klaim Roro Ajheng - Samarinda"
+    );
+    expect(childClaimName("O Pao 300 Extra 300", "Roro Ajheng - Samarinda", 2)).toBe(
+      "O Pao 300 Extra 300 – klaim Roro Ajheng - Samarinda (2)"
+    );
+  });
+});
+
+describe("isNationalChild & tanda terima", () => {
+  it("mengenali klaim turunan dari parent_campaign_id", () => {
+    expect(isNationalChild({ parent_campaign_id: "induk" })).toBe(true);
+    expect(isNationalChild({ parent_campaign_id: null })).toBe(false);
+    expect(isNationalChild(null)).toBe(false);
+  });
+
+  it("induk dan turunan tidak memakai tanda terima; SKP biasa boleh", () => {
+    expect(nationalReceiptError({ is_national: true })).toBe(NATIONAL_SKP_MESSAGES.parentActivity);
+    expect(nationalReceiptError({ parent_campaign_id: "induk" })).toBe(
+      NATIONAL_SKP_MESSAGES.childNoReceipt
+    );
+    expect(nationalReceiptError({ is_national: false, parent_campaign_id: null })).toBeNull();
+  });
+});

@@ -67,6 +67,11 @@ interface Props {
     string,
     { total: number; accepted: number; hasRevisionRequested: boolean }
   >;
+  /**
+   * Klaim turunan SKP nasional (Fase 2): nama SKP induk dan akun pemiliknya,
+   * ditampilkan di bawah nama baris turunan.
+   */
+  childClaimInfoByCampaignId?: Record<string, { parentName: string | null; ownerName: string | null }>;
 }
 
 export function CampaignsClient({
@@ -87,6 +92,7 @@ export function CampaignsClient({
   readOnlyCampaignIds = [],
   checklistStatusByCampaignId = {},
   claimVerificationProgressByCampaignId = {},
+  childClaimInfoByCampaignId = {},
 }: Props) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingCampaign, setEditingCampaign] = useState<CampaignWithJoins | null>(null);
@@ -107,6 +113,12 @@ export function CampaignsClient({
 
   const isDistributor = userRole === "distributor";
   const readOnlyIds = new Set(readOnlyCampaignIds);
+  // SKP yang bisa dibuka distributor tanpa menekan "Diterima": yang hanya
+  // boleh dilihat, serta klaim turunan SKP nasional (tanpa tanda terima).
+  const receiptExemptIds = new Set([
+    ...readOnlyCampaignIds,
+    ...campaigns.filter((c) => c.parent_campaign_id).map((c) => c.id),
+  ]);
   const isAdminOrSuperadmin = userRole === "admin" || userRole === "superadmin";
   const canSeeChecklistReadiness = ["admin", "superadmin", "finance", "manager"].includes(userRole);
   // Finance queue badge (Phase 5, verifikasi klaim finance) — narrower than
@@ -133,6 +145,9 @@ export function CampaignsClient({
     c.distributor?.name,
     c.vendor?.name,
     c.is_national ? "Nasional" : null,
+    c.parent_campaign_id ? "Klaim Nasional" : null,
+    childClaimInfoByCampaignId[c.id]?.parentName,
+    childClaimInfoByCampaignId[c.id]?.ownerName,
     getStatusConfig(c.status).label,
   ]);
 
@@ -292,7 +307,7 @@ export function CampaignsClient({
                       <div className="flex items-center gap-2 flex-wrap">
                         {isDistributor &&
                         !localReceiptedIds.has(campaign.id) &&
-                        !readOnlyIds.has(campaign.id) ? (
+                        !receiptExemptIds.has(campaign.id) ? (
                           campaign.name
                         ) : (
                           <Link
@@ -308,7 +323,29 @@ export function CampaignsClient({
                             Nasional
                           </span>
                         )}
+                        {campaign.parent_campaign_id && (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-xs font-medium text-violet-300">
+                            <Globe className="h-3 w-3" />
+                            Klaim Nasional
+                          </span>
+                        )}
                       </div>
+                      {campaign.parent_campaign_id && (
+                        // Klaim turunan: SKP induk, perusahaan, dan akun pemiliknya.
+                        <p className="mt-0.5 text-xs font-normal text-slate-500">
+                          {[
+                            childClaimInfoByCampaignId[campaign.id]?.parentName
+                              ? `Induk: ${childClaimInfoByCampaignId[campaign.id]!.parentName}`
+                              : null,
+                            campaign.distributor?.name,
+                            childClaimInfoByCampaignId[campaign.id]?.ownerName
+                              ? `Pemilik: ${childClaimInfoByCampaignId[campaign.id]!.ownerName}`
+                              : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </p>
+                      )}
                     </TableCell>
                     <TableCell className="text-slate-400">
                       {campaign.brand?.name ?? "—"}
@@ -384,11 +421,11 @@ export function CampaignsClient({
                     </TableCell>
                     {isDistributor && (
                       <TableCell>
-                        {campaign.is_national ? (
-                          // SKP Nasional tidak memakai tanda terima.
+                        {campaign.is_national || campaign.parent_campaign_id ? (
+                          // SKP Nasional dan klaim turunannya tidak memakai tanda terima.
                           <span
                             className="text-xs text-slate-500"
-                            title="SKP Nasional tidak memakai tanda terima"
+                            title="SKP Nasional dan klaimnya tidak memakai tanda terima"
                           >
                             Tidak berlaku
                           </span>
@@ -414,7 +451,7 @@ export function CampaignsClient({
                       <div className="flex items-center justify-end gap-1">
                         {isDistributor &&
                           !localReceiptedIds.has(campaign.id) &&
-                          !readOnlyIds.has(campaign.id) && (
+                          !receiptExemptIds.has(campaign.id) && (
                           <Button
                             variant="outline"
                             size="sm"
@@ -450,7 +487,7 @@ export function CampaignsClient({
                           </Button>
                         )}
                         {["approved", "ongoing", "claim_submitted", "claim_verified", "ready_to_pay", "paid", "completed"].includes(campaign.status) &&
-                          (!isDistributor || localReceiptedIds.has(campaign.id) || readOnlyIds.has(campaign.id)) && (
+                          (!isDistributor || localReceiptedIds.has(campaign.id) || receiptExemptIds.has(campaign.id)) && (
                           <Button
                             asChild
                             variant="outline"
@@ -463,7 +500,7 @@ export function CampaignsClient({
                             </a>
                           </Button>
                         )}
-                        {(!isDistributor || localReceiptedIds.has(campaign.id) || readOnlyIds.has(campaign.id)) && (
+                        {(!isDistributor || localReceiptedIds.has(campaign.id) || receiptExemptIds.has(campaign.id)) && (
                           <Button asChild variant="outline" size="sm" className="h-7 w-7 p-0">
                             <Link href={`/campaigns/${campaign.id}`}>
                               <ExternalLink className="h-3 w-3" />

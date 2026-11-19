@@ -298,6 +298,8 @@ type SkpData = {
   name: string;
   status: string;
   skp_number: string | null;
+  /** Hanya pada klaim turunan SKP nasional: nomor SKP induknya. */
+  parent_skp_number: string | null;
   department: string;
   brand: string;
   region: string;
@@ -359,6 +361,9 @@ function SkpPDF({ data }: { data: SkpData }) {
           <Text style={styles.sectionTitle}>Informasi SKP</Text>
           <View style={styles.infoTable}>
             <InfoRow label="Nomor SKP" value={data.skp_number ?? "—"} />
+            {data.parent_skp_number && (
+              <InfoRow label="Nomor SKP Induk (Nasional)" value={data.parent_skp_number} />
+            )}
             <InfoRow label="Nama SKP" value={data.name} />
             <InfoRow label="Action Approval (AA)" value={data.action_approval} />
             <InfoRow label="Departemen" value={data.department} />
@@ -460,7 +465,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       requested_budget, sales_projection, actual_spent,
       start_date, end_date, created_by,
       region_id, department_id,
-      skp_number,
+      skp_number, parent_campaign_id,
       department:departments(name),
       brand:brands(name),
       region:regions(name),
@@ -483,6 +488,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     name: string;
     status: string;
     skp_number: string | null;
+    parent_campaign_id: string | null;
     mechanism: string;
     objective: string | null;
     requested_budget: number;
@@ -516,8 +522,47 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
   // (owner/dept for user & manager, all for staff, approved-only for
   // distributor). Anyone who can see an approved SKP may download its PDF.
 
-  // Fetch approval history + levels + creator — admin client bypasses RLS
   const supabaseAdmin = createAdminClient();
+
+  // Klaim turunan SKP nasional (Fase 2): baris turunan tidak punya nilai,
+  // riwayat persetujuan, maupun lampiran surat sendiri — PDF-nya memakai isi
+  // dan riwayat persetujuan SKP induk, dengan nomor, perusahaan, dan region
+  // turunan. Induk dibaca dengan hak layanan: hak lihat sudah dibuktikan oleh
+  // RLS pada baris turunan di atas, dan induk nasional memang terlihat semua
+  // distributor.
+  let source = campaign;
+  if (campaign.parent_campaign_id) {
+    const { data: parentRaw } = await supabaseAdmin
+      .from("campaigns")
+      .select(
+        `
+        id, name, status, mechanism, objective,
+        requested_budget, sales_projection, actual_spent,
+        start_date, end_date, created_by,
+        region_id, department_id,
+        skp_number, parent_campaign_id,
+        department:departments(name),
+        brand:brands(name),
+        region:regions(name),
+        channel:channels(name),
+        promotion_category:promotion_categories(name, account_code),
+        action_approval:action_approvals(name),
+        vendor:vendors(name),
+        distributor:distributors(name)
+      `
+      )
+      .eq("id", campaign.parent_campaign_id)
+      .single();
+    if (!parentRaw) {
+      return NextResponse.json({ error: "SKP induk tidak ditemukan" }, { status: 404 });
+    }
+    source = parentRaw as unknown as typeof campaign;
+  }
+  const isChildClaim = source !== campaign;
+  // Riwayat persetujuan dan lampiran surat diambil dari SKP sumber isi.
+  const contentId = source.id;
+
+  // Fetch approval history + levels + creator — admin client bypasses RLS
   const [
     { data: historyRaw },
     { data: levelsRaw },
@@ -526,7 +571,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     supabaseAdmin
       .from("approval_history")
       .select("id, action, role, signature_text, signature_image, comment, created_at, actor:users!approval_history_actor_id_fkey(full_name)")
-      .eq("campaign_id", id)
+      .eq("campaign_id", contentId)
       .order("created_at", { ascending: true }),
     supabaseAdmin
       .from("approval_levels")
@@ -536,7 +581,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     supabaseAdmin
       .from("users")
       .select("full_name")
-      .eq("id", campaign.created_by)
+      .eq("id", source.created_by)
       .single(),
   ]);
 
@@ -554,7 +599,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
 
   // Determine if a level was passed based on campaign status (fallback when history is missing)
   function wasLevelPassed(levelSeq: number): boolean {
-    const s = campaign.status;
+    const s = source.status;
     if (["approved", "ongoing", "claim_submitted", "claim_verified", "ready_to_pay", "paid", "completed"].includes(s)) return true;
     const m = s.match(/^approved_l(\d+)$/);
     if (m) return levelSeq <= parseInt(m[1]);
@@ -601,8 +646,8 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
   ];
 
   const costRatio =
-    campaign.sales_projection > 0 && campaign.requested_budget > 0
-      ? ((campaign.requested_budget / campaign.sales_projection) * 100).toFixed(1) + "%"
+    source.sales_projection > 0 && source.requested_budget > 0
+      ? ((source.requested_budget / source.sales_projection) * 100).toFixed(1) + "%"
       : "—";
 
   const generatedAt = new Date().toLocaleString("id-ID", {
@@ -615,26 +660,28 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
 
   const skpData: SkpData = {
     id: campaign.id,
-    name: campaign.name,
+    // Turunan: nama & isi dari induk; nomor, perusahaan, region dari turunan.
+    name: source.name,
     status: campaign.status,
     skp_number: campaign.skp_number ?? null,
-    department: campaign.department?.name ?? "—",
-    brand: campaign.brand?.name ?? "—",
+    parent_skp_number: isChildClaim ? (source.skp_number ?? null) : null,
+    department: source.department?.name ?? "—",
+    brand: source.brand?.name ?? "—",
     region: campaign.region?.name ?? "—",
-    channel: campaign.channel?.name ?? "—",
-    promotion_category: campaign.promotion_category
-      ? `[${campaign.promotion_category.account_code}] ${campaign.promotion_category.name}`
+    channel: source.channel?.name ?? "—",
+    promotion_category: source.promotion_category
+      ? `[${source.promotion_category.account_code}] ${source.promotion_category.name}`
       : "—",
-    action_approval: campaign.action_approval?.name ?? "—",
-    vendor: campaign.vendor?.name ?? "—",
+    action_approval: source.action_approval?.name ?? "—",
+    vendor: source.vendor?.name ?? "—",
     distributor: campaign.distributor?.name ?? "—",
-    objective: campaign.objective ?? "—",
-    mechanism: campaign.mechanism ?? "—",
-    requested_budget: campaign.requested_budget,
-    sales_projection: campaign.sales_projection,
+    objective: source.objective ?? "—",
+    mechanism: source.mechanism ?? "—",
+    requested_budget: source.requested_budget,
+    sales_projection: source.sales_projection,
     cost_ratio: costRatio,
-    start_date: campaign.start_date,
-    end_date: campaign.end_date,
+    start_date: source.start_date,
+    end_date: source.end_date,
     approvalHistory,
     signatureRows,
     generatedAt,
@@ -656,7 +703,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
   const { data: campaignFiles } = await supabaseAdmin
     .from("campaign_files")
     .select("id, file_name, file_url, file_type")
-    .eq("campaign_id", id)
+    .eq("campaign_id", contentId)
     .order("uploaded_at", { ascending: true });
 
   // If no attachments, return the SKP PDF directly

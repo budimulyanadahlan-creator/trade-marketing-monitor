@@ -35,7 +35,7 @@ export async function upsertClaimChecklistAction(
 
     const { data: campaign } = await supabase
       .from("campaigns")
-      .select("id, status, distributor_id, region_id, is_national")
+      .select("id, status, distributor_id, region_id, is_national, parent_campaign_id, claim_owner_id")
       .eq("id", campaignId)
       .single();
 
@@ -47,12 +47,18 @@ export async function upsertClaimChecklistAction(
 
     const guardError = distributorClaimActionError(
       {
+        id: user.id,
         role: profile.role,
         distributor_id: profile.distributor_id ?? null,
         distributor_scope: profile.distributor_scope ?? null,
         region_id: profile.region_id ?? null,
       },
-      { distributor_id: campaign.distributor_id ?? null, region_id: campaign.region_id ?? null }
+      {
+        distributor_id: campaign.distributor_id ?? null,
+        region_id: campaign.region_id ?? null,
+        parent_campaign_id: campaign.parent_campaign_id ?? null,
+        claim_owner_id: campaign.claim_owner_id ?? null,
+      }
     );
     if (guardError) return { error: guardError };
 

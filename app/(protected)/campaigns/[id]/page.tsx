@@ -48,6 +48,22 @@ export type AABudgetInfo = {
   shortfall: number;
 };
 
+/** SKP induk nasional dari sebuah klaim turunan (SKP Nasional Fase 2). */
+export type NationalParentInfo = {
+  id: string;
+  name: string;
+  skp_number: string | null;
+  reference_number: string | null;
+  status: CampaignStatus;
+};
+
+/** Klaim turunan milik akun yang login yang belum diajukan, pada sebuah induk. */
+export type OpenChildClaimInfo = {
+  id: string;
+  skp_number: string | null;
+  status: CampaignStatus;
+};
+
 type CampaignFileWithUploader = CampaignFileRow & {
   uploader: { full_name: string } | null;
 };
@@ -186,8 +202,11 @@ export default async function CampaignDetailPage({ params }: Props) {
             region_id: campaign.region_id ?? null,
             distributor_parent_id: campaign.distributor?.parent_distributor_id ?? null,
             is_national: campaign.is_national,
+            parent_campaign_id: campaign.parent_campaign_id ?? null,
+            claim_owner_id: campaign.claim_owner_id ?? null,
           },
           {
+            id: user.id,
             role: userRole,
             distributor_id: userProfile?.distributor_id ?? null,
             distributor_scope: (userProfile?.distributor_scope ?? null) as DistributorScope | null,
@@ -198,6 +217,51 @@ export default async function CampaignDetailPage({ params }: Props) {
   // Pertahanan lapis kedua: jika RLS belum menyaring (misalnya migrasi belum
   // jalan), distributor yang tidak berhak tetap mendapat "tidak ditemukan".
   if (userRole === "distributor" && distributorAccess === null) notFound();
+
+  // ── SKP Nasional Fase 2: klaim turunan ────────────────────────────────
+  // Turunan: tautan ke induk, No surat & lampiran surat induk, nama pemilik.
+  // Induk (dibuka distributor): klaim turunannya sendiri yang belum diajukan,
+  // agar tombol "Buat Klaim" berganti menjadi tautan ke klaim itu.
+  const isNationalChild = !!campaign.parent_campaign_id;
+  let nationalParent: NationalParentInfo | null = null;
+  let nationalParentFiles: CampaignFileRow[] = [];
+  let claimOwnerName: string | null = null;
+  let myOpenChildClaim: OpenChildClaimInfo | null = null;
+
+  if (isNationalChild) {
+    // RLS: distributor pemilik turunan melihat induknya (akses "view") dan
+    // lampiran surat induk; role internal melihat sesuai aturan SKP biasa.
+    const [{ data: parentRaw }, { data: parentFilesRaw }, { data: ownerRaw }] = await Promise.all([
+      supabase
+        .from("campaigns")
+        .select("id, name, skp_number, reference_number, status")
+        .eq("id", campaign.parent_campaign_id!)
+        .maybeSingle(),
+      supabase
+        .from("campaign_files")
+        .select("*")
+        .eq("campaign_id", campaign.parent_campaign_id!)
+        .is("document_type_id", null)
+        .order("uploaded_at"),
+      campaign.claim_owner_id
+        ? supabase.from("users").select("full_name").eq("id", campaign.claim_owner_id).maybeSingle()
+        : Promise.resolve({ data: null as { full_name: string } | null }),
+    ]);
+    nationalParent = (parentRaw ?? null) as NationalParentInfo | null;
+    nationalParentFiles = (parentFilesRaw ?? []) as CampaignFileRow[];
+    claimOwnerName = ownerRaw?.full_name ?? null;
+  } else if (campaign.is_national && userRole === "distributor") {
+    const { data: openChild } = await supabase
+      .from("campaigns")
+      .select("id, skp_number, status")
+      .eq("parent_campaign_id", campaign.id)
+      .eq("claim_owner_id", user.id)
+      .in("status", ["approved", "ongoing"])
+      .order("child_seq", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    myOpenChildClaim = (openChild ?? null) as OpenChildClaimInfo | null;
+  }
 
   const files = (filesRaw ?? []) as CampaignFileRow[];
   const approvalHistory = (historyRaw ?? []) as unknown as ApprovalHistoryWithActor[];
@@ -226,7 +290,9 @@ export default async function CampaignDetailPage({ params }: Props) {
   if (
     (userRole === "admin" || userRole === "superadmin") &&
     campaign.status === "claim_submitted" &&
-    campaign.distributor_id
+    campaign.distributor_id &&
+    // Klaim turunan dikunci ke pemiliknya; alih kepemilikan menyusul (Fase 8).
+    !isNationalChild
   ) {
     const { data: candidateUsers } = await supabase
       .from("users")
@@ -481,6 +547,10 @@ export default async function CampaignDetailPage({ params }: Props) {
       userRole={userRole}
       userId={user.id}
       distributorAccess={distributorAccess}
+      nationalParent={nationalParent}
+      nationalParentFiles={nationalParentFiles}
+      claimOwnerName={claimOwnerName}
+      myOpenChildClaim={myOpenChildClaim}
       departments={departments ?? []}
       brands={brands ?? []}
       regions={regions ?? []}
