@@ -8,7 +8,8 @@
  * sama. Departemen lain (Marketing, Finance, ...) tidak terpengaruh.
  *
  * Modul ini juga menyediakan predikat daftar admin "SKP tanpa distributor":
- * SKP Sales/TM berstatus Disetujui s.d. Selesai yang distributor_id-nya kosong.
+ * SKP Sales/TM berstatus Disetujui s.d. Selesai yang distributor_id-nya kosong,
+ * selain SKP induk nasional (lib/national-skp.ts).
  */
 
 import { DISTRIBUTOR_VISIBLE_CAMPAIGN_STATUSES } from "./campaign-status";
@@ -42,11 +43,14 @@ export type CampaignDistributorCheck = {
   distributor_id: string | null | undefined;
   status: string;
   departmentName: string | null | undefined;
+  /** SKP induk nasional memang tanpa distributor — bukan data bermasalah. */
+  is_national?: boolean | null;
 };
 
 /** Filter admin `/campaigns?distributor=none`. */
 export function isCampaignWithoutDistributor(c: CampaignDistributorCheck): boolean {
   if (c.distributor_id) return false;
+  if (c.is_national) return false;
   if (!isDistributorRequiredDepartment(c.departmentName)) return false;
   return DISTRIBUTOR_VISIBLE_CAMPAIGN_STATUSES.includes(c.status as CampaignStatus);
 }

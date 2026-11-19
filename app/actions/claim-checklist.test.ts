@@ -119,3 +119,18 @@ describe("upsertClaimChecklistAction", () => {
     expect(upsertChain.upsert).not.toHaveBeenCalled();
   });
 });
+
+describe("upsertClaimChecklistAction — SKP induk nasional (SKP Nasional Fase 1)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("menolak checklist pada induk nasional tanpa menulis apa pun", async () => {
+    const { upsertChain } = setupMocks({
+      campaign: { id: "camp-1", status: "approved", distributor_id: null, is_national: true } as never,
+    });
+    const result = await upsertClaimChecklistAction("camp-1", "doc-1", true);
+    expect(result.error).toContain("SKP Nasional tidak menerima");
+    expect(upsertChain.upsert).not.toHaveBeenCalled();
+  });
+});

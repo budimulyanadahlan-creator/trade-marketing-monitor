@@ -395,3 +395,14 @@ describe("createDistributorReceiptAction — kasus lain pengaman", () => {
     expect(result).toEqual({ error: "SKP tidak ditemukan" });
   });
 });
+
+describe("createDistributorReceiptAction — SKP induk nasional (SKP Nasional Fase 1)", () => {
+  it("menolak tanda terima pada induk nasional tanpa menulis apa pun", async () => {
+    const { insertChain } = setupReceiptMocks({
+      campaign: { id: "camp-1", distributor_id: null, is_national: true } as never,
+    });
+    const result = await createDistributorReceiptAction("camp-1", null);
+    expect(result.error).toContain("SKP Nasional tidak menerima");
+    expect(insertChain.insert).not.toHaveBeenCalled();
+  });
+});

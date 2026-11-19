@@ -1411,3 +1411,59 @@ describe("addRealizationAction — claim cycle reset", () => {
     expect(result.success).toBe(true);
   });
 });
+
+// -------------------------------------------------------
+// SKP Nasional Fase 1 — induk nasional menolak realisasi dan pengajuan klaim
+// -------------------------------------------------------
+
+const NATIONAL_PARENT_ERROR =
+  "SKP Nasional tidak menerima realisasi, klaim, checklist, dokumen klaim, atau tanda terima secara langsung — aktivitas klaim dilakukan di klaim turunan";
+
+describe("SKP induk nasional — realisasi dan klaim ditolak", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("addRealizationAction menolak induk nasional tanpa mencatat realisasi, termasuk untuk admin", async () => {
+    const { realizationsChain, campaignsChain } = setupAddRealizationMocks({
+      role: "admin",
+      campaign: {
+        id: "camp-1",
+        status: "approved",
+        actual_spent: 0,
+        requested_budget: 5_000_000,
+        is_national: true,
+      } as never,
+    });
+
+    const result = await addRealizationAction({
+      campaignId: "11111111-1111-4111-8111-111111111111",
+      invoiceNumber: "INV-001",
+      amount: 500_000,
+      realizationDate: "2026-01-01",
+    });
+
+    expect(result).toEqual({ error: NATIONAL_PARENT_ERROR });
+    expect(realizationsChain.insert).not.toHaveBeenCalled();
+    expect(campaignsChain.update).not.toHaveBeenCalled();
+  });
+
+  it("submitKlaimAction menolak induk nasional tanpa mengubah SKP, termasuk untuk admin", async () => {
+    const { campaignsChain } = setupMocks({
+      role: "admin",
+      campaign: {
+        id: "camp-1",
+        status: "ongoing",
+        name: "Promo Nasional",
+        created_by: "creator-1",
+        distributor_id: null,
+        is_national: true,
+      } as never,
+    });
+
+    const result = await submitKlaimAction("camp-1", 1_000_000);
+
+    expect(result).toEqual({ error: NATIONAL_PARENT_ERROR });
+    expect(campaignsChain.update).not.toHaveBeenCalled();
+  });
+});

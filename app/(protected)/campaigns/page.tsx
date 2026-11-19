@@ -114,12 +114,14 @@ export default async function CampaignsPage({
           distributor_id: c.distributor_id,
           status: c.status,
           departmentName: (c.department as { name?: string } | null)?.name,
+          is_national: c.is_national,
         })
       )
     : (campaigns ?? []);
 
   // SKP yang hanya boleh dilihat (Pusat perusahaan induk melihat SKP anak
-  // perusahaan): tombol aksi di daftar disembunyikan untuk ID ini.
+  // perusahaan, dan SKP induk nasional untuk semua akun): tombol aksi di
+  // daftar disembunyikan untuk ID ini.
   const readOnlyCampaignIds: string[] = [];
   if (isDistributor && profile) {
     for (const c of campaigns ?? []) {
@@ -130,6 +132,7 @@ export default async function CampaignsPage({
           distributor_parent_id:
             (c.distributor as { parent_distributor_id?: string | null } | null)
               ?.parent_distributor_id ?? null,
+          is_national: c.is_national,
         },
         profile
       );
@@ -156,7 +159,11 @@ export default async function CampaignsPage({
   > = {};
 
   if (!isDistributor) {
-    const approvedCampaigns = (campaigns ?? []).filter((c) => c.status === "approved");
+    // Induk nasional tidak punya checklist (ada di klaim turunan), jadi tidak
+    // pernah masuk hitungan maupun filter "Checklist Siap".
+    const approvedCampaigns = (campaigns ?? []).filter(
+      (c) => c.status === "approved" && !c.is_national
+    );
     const categoryIds = [
       ...new Set(
         approvedCampaigns

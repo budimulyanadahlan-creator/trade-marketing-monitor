@@ -23,7 +23,7 @@ begin
     raise exception 'GAGAL: migrasi 069_hide_campaigns_without_distributor.sql belum dijalankan — jalankan migrasi itu dulu, baru tes ini';
   end if;
 end
-$;
+$$;
 
 do $$
 declare

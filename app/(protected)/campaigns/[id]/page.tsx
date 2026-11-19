@@ -185,6 +185,7 @@ export default async function CampaignDetailPage({ params }: Props) {
             distributor_id: campaign.distributor_id ?? null,
             region_id: campaign.region_id ?? null,
             distributor_parent_id: campaign.distributor?.parent_distributor_id ?? null,
+            is_national: campaign.is_national,
           },
           {
             role: userRole,
@@ -263,7 +264,9 @@ export default async function CampaignDetailPage({ params }: Props) {
   // campaign.promotion_category_id, both already known from Batch 1) — one
   // more round-trip instead of two sequential ones.
   const wantsItemVerifications = showClaimSection && ITEM_VERIFICATION_STATUSES.includes(campaign.status);
-  const wantsClaimRequirements = showClaimSection && !!campaign.promotion_category_id;
+  // SKP induk nasional tidak punya checklist — checklist ada di klaim turunan.
+  const wantsClaimRequirements =
+    showClaimSection && !!campaign.promotion_category_id && !campaign.is_national;
 
   const [
     { data: itemsRaw },

@@ -7,6 +7,7 @@ import {
   claimHolderActionError,
   distributorClaimActionError,
 } from "@/lib/distributor-campaign-guard";
+import { nationalParentActivityError } from "@/lib/national-skp";
 import { UPLOAD_MAX_LABEL, UPLOAD_MAX_SIZE } from "@/lib/upload-limits";
 import type { CampaignStatus } from "@/types/database";
 
@@ -75,7 +76,7 @@ export async function POST(request: NextRequest) {
   // below since the select policy also allows paid/completed for viewing.
   const { data: campaign } = await supabase
     .from("campaigns")
-    .select("id, status, distributor_id, region_id, claim_submitted_by")
+    .select("id, status, distributor_id, region_id, claim_submitted_by, is_national")
     .eq("id", campaignId)
     .single();
 
@@ -84,6 +85,12 @@ export async function POST(request: NextRequest) {
       { error: "SKP tidak ditemukan atau Anda tidak memiliki akses." },
       { status: 403 }
     );
+  }
+
+  // SKP induk nasional tidak menerima dokumen klaim — diunggah di klaim turunan.
+  const nationalError = nationalParentActivityError(campaign);
+  if (nationalError) {
+    return NextResponse.json({ error: nationalError }, { status: 403 });
   }
 
   const guardError = distributorClaimActionError(

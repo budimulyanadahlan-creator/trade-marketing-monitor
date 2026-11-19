@@ -53,3 +53,13 @@ describe("isCampaignWithoutDistributor", () => {
     expect(isCampaignWithoutDistributor({ ...base, status: "rejected" })).toBe(false);
   });
 });
+
+describe("isCampaignWithoutDistributor — SKP induk nasional (SKP Nasional Fase 1)", () => {
+  const base = { distributor_id: null, status: "approved", departmentName: "Sales" };
+
+  it("tidak memuat induk nasional: tanpa distributor memang bentuknya", () => {
+    expect(isCampaignWithoutDistributor({ ...base, is_national: true })).toBe(false);
+    expect(isCampaignWithoutDistributor({ ...base, is_national: false })).toBe(true);
+    expect(isCampaignWithoutDistributor({ ...base, is_national: null })).toBe(true);
+  });
+});

@@ -14,6 +14,7 @@ import {
   claimHolderActionError,
   distributorClaimActionError,
 } from "@/lib/distributor-campaign-guard";
+import { nationalParentActivityError } from "@/lib/national-skp";
 import type { CampaignStatus, DistributorScope } from "@/types/database";
 
 async function requireActiveUser() {
@@ -88,11 +89,15 @@ export async function addRealizationAction(
 
     const { data: campaign, error: fetchError } = await supabase
       .from("campaigns")
-      .select("id, status, actual_spent, requested_budget")
+      .select("id, status, actual_spent, requested_budget, is_national")
       .eq("id", campaignId)
       .single();
 
     if (fetchError || !campaign) return { error: "SKP tidak ditemukan" };
+
+    // SKP induk nasional tidak menerima realisasi — dicatat di klaim turunan.
+    const nationalError = nationalParentActivityError(campaign);
+    if (nationalError) return { error: nationalError };
 
     const allowedStatuses: CampaignStatus[] = ["approved", "ongoing", "paid"];
     if (!allowedStatuses.includes(campaign.status as CampaignStatus)) {
@@ -204,11 +209,15 @@ export async function submitKlaimAction(
 
     const { data: campaign } = await supabase
       .from("campaigns")
-      .select("id, status, name, created_by, promotion_category_id, distributor_id, region_id")
+      .select("id, status, name, created_by, promotion_category_id, distributor_id, region_id, is_national")
       .eq("id", campaignId)
       .single();
 
     if (!campaign) return { error: "SKP tidak ditemukan" };
+
+    // SKP induk nasional tidak menerima pengajuan klaim (juga untuk admin).
+    const nationalError = nationalParentActivityError(campaign);
+    if (nationalError) return { error: nationalError };
 
     const guardError = distributorClaimActionError(profile, {
       distributor_id: campaign.distributor_id ?? null,

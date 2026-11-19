@@ -407,3 +407,19 @@ describe("POST /api/upload/claim-document", () => {
     expect(resetClaimItemToPending).not.toHaveBeenCalled();
   });
 });
+
+describe("POST /api/upload/claim-document — SKP induk nasional (SKP Nasional Fase 1)", () => {
+  it("menolak unggah dokumen klaim pada induk nasional tanpa menyimpan file", async () => {
+    const { storageUpload, filesInsertChain } = setupMocks({
+      campaign: { id: "camp-1", status: "approved", distributor_id: null, is_national: true } as never,
+    });
+
+    const res = await POST(makeRequest());
+    const json = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(json.error).toContain("SKP Nasional tidak menerima");
+    expect(storageUpload).not.toHaveBeenCalled();
+    expect(filesInsertChain.insert).not.toHaveBeenCalled();
+  });
+});

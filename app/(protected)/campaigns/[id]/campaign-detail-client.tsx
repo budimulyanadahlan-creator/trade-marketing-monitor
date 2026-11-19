@@ -37,9 +37,11 @@ import {
   Eye,
   Lock,
   ArrowLeftRight,
+  Globe,
 } from "lucide-react";
 import { Select } from "@/components/ui/select";
 import { transferClaimHolderAction } from "@/app/actions/claim-holder";
+import { makeNationalAction, unmakeNationalAction } from "@/app/actions/national-skp";
 import { toast } from "sonner";
 import { formatDate, formatIDR } from "@/lib/utils";
 import { UPLOAD_MAX_LABEL, UPLOAD_MAX_SIZE } from "@/lib/upload-limits";
@@ -1763,6 +1765,123 @@ function ClaimHistorySection({ events }: { events: ClaimEventWithActor[] }) {
 }
 
 // ============================================================
+// Jadikan / Batalkan Nasional (SKP Nasional, Fase 1) — admin/superadmin
+// ============================================================
+
+function NationalToggleDialog({
+  campaignId,
+  mode,
+  distributorName,
+  regionName,
+  open,
+  onOpenChange,
+}: {
+  campaignId: string;
+  mode: "make" | "unmake";
+  distributorName: string | null;
+  regionName: string | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [isPending, startTransition] = useTransition();
+  const regionWillMove = !!regionName && regionName.trim().toLowerCase() !== "national";
+
+  function handleConfirm() {
+    startTransition(async () => {
+      const result =
+        mode === "make"
+          ? await makeNationalAction(campaignId)
+          : await unmakeNationalAction(campaignId);
+      if (result.error) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success(
+        mode === "make"
+          ? "SKP dijadikan SKP Nasional — kini terlihat semua distributor"
+          : "Tanda Nasional dicabut"
+      );
+      onOpenChange(false);
+    });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !isPending && onOpenChange(o)}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>
+            {mode === "make" ? "Jadikan SKP Nasional" : "Batalkan SKP Nasional"}
+          </DialogTitle>
+        </DialogHeader>
+        {mode === "make" ? (
+          <div className="space-y-2 text-sm text-slate-400">
+            <p>
+              SKP ini akan langsung terlihat oleh{" "}
+              <span className="text-slate-200">
+                semua akun distributor di semua perusahaan dan region
+              </span>
+              .
+            </p>
+            <ul className="list-disc pl-5 space-y-1">
+              <li>
+                Distributor dikosongkan
+                {distributorName && (
+                  <>
+                    {" "}
+                    (saat ini: <span className="text-slate-200">{distributorName}</span>)
+                  </>
+                )}
+                .
+              </li>
+              <li>
+                Region dipindah ke National
+                {regionWillMove && (
+                  <>
+                    {" "}
+                    (saat ini: <span className="text-slate-200">{regionName}</span>)
+                  </>
+                )}
+                .
+              </li>
+              <li>
+                SKP ini tidak lagi menerima realisasi, checklist, dokumen klaim, atau tanda
+                terima.
+              </li>
+            </ul>
+            <p className="text-xs text-slate-500">
+              Hanya bisa dilakukan selama SKP belum punya aktivitas klaim.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2 text-sm text-slate-400">
+            <p>
+              SKP ini kembali menjadi SKP biasa dan{" "}
+              <span className="text-slate-200">
+                tidak lagi terlihat oleh distributor mana pun
+              </span>
+              .
+            </p>
+            <p className="text-xs text-slate-500">
+              Distributor dan region lama tidak dikembalikan otomatis — SKP akan muncul di
+              daftar SKP tanpa distributor.
+            </p>
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isPending}>
+            Batal
+          </Button>
+          <Button onClick={handleConfirm} disabled={isPending}>
+            {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+            {mode === "make" ? "Jadikan Nasional" : "Batalkan Nasional"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ============================================================
 // Main Client Component
 // ============================================================
 
@@ -1794,7 +1913,16 @@ export function CampaignDetailClient({
   const [editOpen, setEditOpen] = useState(false);
   const statusCfg = getStatusConfig(campaign.status);
 
+  // SKP induk nasional: terlihat semua distributor, tidak menerima aktivitas
+  // klaim apa pun (realisasi, checklist, dokumen klaim, tanda terima).
+  const isNational = !!campaign.is_national;
+  const isAdminOrSuperadmin = userRole === "admin" || userRole === "superadmin";
+  const canMakeNational = isAdminOrSuperadmin && !isNational && campaign.status === "approved";
+  const canUnmakeNational = isAdminOrSuperadmin && isNational;
+  const [nationalDialog, setNationalDialog] = useState<"make" | "unmake" | null>(null);
+
   const canAddRealization =
+    !isNational &&
     ["admin", "superadmin", "finance"].includes(userRole) &&
     (campaign.status === "approved" || campaign.status === "ongoing" || campaign.status === "paid");
 
@@ -1931,6 +2059,12 @@ export function CampaignDetailClient({
               >
                 {statusCfg.label}
               </span>
+              {isNational && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-violet-500/30 bg-violet-500/10 px-2.5 py-0.5 text-xs font-medium text-violet-300">
+                  <Globe className="h-3 w-3" />
+                  Nasional
+                </span>
+              )}
             </div>
             <p className="text-sm text-slate-500 mt-0.5">
               Dibuat {formatDate(campaign.created_at)}
@@ -1942,6 +2076,18 @@ export function CampaignDetailClient({
         </div>
 
         <div className="flex items-center gap-2">
+          {canMakeNational && (
+            <Button size="sm" variant="outline" onClick={() => setNationalDialog("make")}>
+              <Globe className="h-4 w-4" />
+              Jadikan Nasional
+            </Button>
+          )}
+          {canUnmakeNational && (
+            <Button size="sm" variant="outline" onClick={() => setNationalDialog("unmake")}>
+              <Globe className="h-4 w-4" />
+              Batalkan Nasional
+            </Button>
+          )}
           {canDownloadPdf && (
             <Button asChild size="sm" variant="outline">
               <a href={`/api/skp-pdf/${campaign.id}`} download>
@@ -1959,8 +2105,23 @@ export function CampaignDetailClient({
         </div>
       </div>
 
+      {/* SKP induk nasional: berlaku untuk semua distributor, tanpa aksi klaim langsung */}
+      {isNational && (
+        <div className="rounded-xl border border-violet-500/30 bg-violet-500/10 px-5 py-3 flex items-start gap-3">
+          <Globe className="h-4 w-4 text-violet-300 mt-0.5 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-violet-200">SKP Nasional</p>
+            <p className="text-xs text-violet-300/80 mt-0.5">
+              {userRole === "distributor"
+                ? "SKP ini berlaku untuk semua distributor. Anda dapat membaca ketentuan dan mengunduh PDF-nya tanpa tanda terima; realisasi, checklist, dan dokumen klaim tidak dicatat langsung di SKP ini."
+                : "SKP ini terlihat oleh semua akun distributor di semua perusahaan dan region. Realisasi, checklist, dokumen klaim, dan tanda terima tidak dicatat di SKP ini — aktivitas klaim dilakukan di klaim turunan per akun distributor."}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Hanya lihat: Pusat perusahaan induk melihat SKP anak perusahaan */}
-      {distributorReadOnly && (
+      {distributorReadOnly && !isNational && (
         <div className="rounded-xl border border-sky-500/30 bg-sky-500/10 px-5 py-3 flex items-start gap-3">
           <Eye className="h-4 w-4 text-sky-300 mt-0.5 flex-shrink-0" />
           <div>
@@ -2108,7 +2269,10 @@ export function CampaignDetailClient({
           />
           <DetailRow label="AA" value={campaign.action_approval?.name} />
           <DetailRow label="Vendor" value={campaign.vendor?.name} />
-          <DetailRow label="Distributor" value={campaign.distributor?.name} />
+          <DetailRow
+            label="Distributor"
+            value={isNational ? "Semua distributor (SKP Nasional)" : campaign.distributor?.name}
+          />
           {(campaign.claim_submitted_by || canTransferHolder) && (
             <DetailRow
               label="Pemegang Klaim"
@@ -2259,6 +2423,17 @@ export function CampaignDetailClient({
 
       {/* Claim history */}
       {claimEvents.length > 0 && <ClaimHistorySection events={claimEvents} />}
+
+      {(canMakeNational || canUnmakeNational) && nationalDialog && (
+        <NationalToggleDialog
+          campaignId={campaign.id}
+          mode={nationalDialog}
+          distributorName={campaign.distributor?.name ?? null}
+          regionName={campaign.region?.name ?? null}
+          open
+          onOpenChange={(o) => !o && setNationalDialog(null)}
+        />
+      )}
 
       {canTransferHolder && (
         <TransferClaimHolderDialog

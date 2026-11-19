@@ -364,3 +364,46 @@ describe("isClaimHolderCandidate — isi dropdown pemegang baru", () => {
     ).toEqual([]);
   });
 });
+
+// ============================================================
+// SKP Nasional — Fase 1 (plans/plan-skp-nasional.md)
+// Skenario yang sama diuji di database: supabase/tests/074_national_campaign_access.sql
+// ============================================================
+
+describe("distributorCampaignAccess — SKP induk nasional", () => {
+  const skpNasional = skp({ distributor_id: null, region_id: NATIONAL, is_national: true });
+
+  it("cabang dan pusat tiap perusahaan melihat induk nasional (hanya lihat), di semua region", () => {
+    expect(distributorCampaignAccess(skpNasional, cabangEdmWcj)).toBe("view");
+    expect(distributorCampaignAccess(skpNasional, viewer({ region_id: EJB }))).toBe("view");
+    expect(distributorCampaignAccess(skpNasional, pusatEdm)).toBe("view");
+    expect(distributorCampaignAccess(skpNasional, cabangMmsWcj)).toBe("view");
+    expect(distributorCampaignAccess(skpNasional, pusatMms)).toBe("view");
+    expect(distributorCampaignAccess(skpNasional, viewer({ distributor_id: BIR, region_id: EJB }))).toBe("view");
+    expect(distributorCampaignAccess(skpNasional, viewer({ distributor_id: AJS }))).toBe("view");
+  });
+
+  it("akun cabang tanpa region dan akun scope lama tetap melihat induk nasional", () => {
+    expect(distributorCampaignAccess(skpNasional, viewer({ region_id: null }))).toBe("view");
+    expect(distributorCampaignAccess(skpNasional, viewer({ distributor_scope: null }))).toBe("view");
+  });
+
+  it("akses induk nasional tidak pernah menjadi bertindak, termasuk untuk pusat", () => {
+    expect(distributorActionDenial(skpNasional, pusatEdm)).toBe("nationalViewOnly");
+    expect(distributorActionDenial(skpNasional, cabangEdmWcj)).toBe("nationalViewOnly");
+    expect(distributorClaimActionError(cabangEdmWcj, skpNasional)).toBe(
+      DISTRIBUTOR_GUARD_MESSAGES.nationalViewOnly
+    );
+  });
+
+  it("akun distributor tanpa perusahaan tetap tidak melihat induk nasional", () => {
+    expect(distributorCampaignAccess(skpNasional, viewer({ distributor_id: null }))).toBeNull();
+  });
+
+  it("SKP tanpa distributor yang bukan nasional tetap tersembunyi", () => {
+    const bukanNasional = skp({ distributor_id: null, region_id: NATIONAL, is_national: false });
+    expect(distributorCampaignAccess(bukanNasional, cabangEdmWcj)).toBeNull();
+    expect(distributorCampaignAccess(bukanNasional, pusatEdm)).toBeNull();
+    expect(distributorCampaignAccess(skp({ distributor_id: null, region_id: NATIONAL }), pusatEdm)).toBeNull();
+  });
+});

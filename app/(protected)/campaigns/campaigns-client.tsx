@@ -20,7 +20,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { Plus, ExternalLink, Pencil, CheckSquare, Download, Trash2, CheckCircle2, AlertTriangle, X } from "lucide-react";
+import { Plus, ExternalLink, Pencil, CheckSquare, Download, Trash2, CheckCircle2, AlertTriangle, X, Globe } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate, formatIDR } from "@/lib/utils";
 import { filterBySearch } from "@/lib/search";
@@ -58,7 +58,7 @@ interface Props {
   /** Admin only: daftar sedang difilter `?distributor=none` (SKP tanpa distributor). */
   noDistributorOnly?: boolean;
   receiptedCampaignIds?: string[];
-  /** Distributor only: SKP yang hanya boleh dilihat (Pusat induk → SKP anak perusahaan). */
+  /** Distributor only: SKP yang hanya boleh dilihat (Pusat induk → SKP anak perusahaan; SKP induk nasional). */
   readOnlyCampaignIds?: string[];
   /** Approved SKP only: required vs fulfilled claim-document checklist items. */
   checklistStatusByCampaignId?: Record<string, { required: number; fulfilled: number }>;
@@ -132,6 +132,7 @@ export function CampaignsClient({
     c.region?.name,
     c.distributor?.name,
     c.vendor?.name,
+    c.is_national ? "Nasional" : null,
     getStatusConfig(c.status).label,
   ]);
 
@@ -288,18 +289,26 @@ export function CampaignsClient({
                       {campaign.skp_number ?? "—"}
                     </TableCell>
                     <TableCell className="font-medium text-slate-100">
-                      {isDistributor &&
-                      !localReceiptedIds.has(campaign.id) &&
-                      !readOnlyIds.has(campaign.id) ? (
-                        campaign.name
-                      ) : (
-                        <Link
-                          href={`/campaigns/${campaign.id}`}
-                          className="hover:text-emerald-400 transition-colors"
-                        >
-                          {campaign.name}
-                        </Link>
-                      )}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {isDistributor &&
+                        !localReceiptedIds.has(campaign.id) &&
+                        !readOnlyIds.has(campaign.id) ? (
+                          campaign.name
+                        ) : (
+                          <Link
+                            href={`/campaigns/${campaign.id}`}
+                            className="hover:text-emerald-400 transition-colors"
+                          >
+                            {campaign.name}
+                          </Link>
+                        )}
+                        {campaign.is_national && (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-xs font-medium text-violet-300">
+                            <Globe className="h-3 w-3" />
+                            Nasional
+                          </span>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="text-slate-400">
                       {campaign.brand?.name ?? "—"}
@@ -375,7 +384,15 @@ export function CampaignsClient({
                     </TableCell>
                     {isDistributor && (
                       <TableCell>
-                        {readOnlyIds.has(campaign.id) ? (
+                        {campaign.is_national ? (
+                          // SKP Nasional tidak memakai tanda terima.
+                          <span
+                            className="text-xs text-slate-500"
+                            title="SKP Nasional tidak memakai tanda terima"
+                          >
+                            Tidak berlaku
+                          </span>
+                        ) : readOnlyIds.has(campaign.id) ? (
                           <span
                             className="inline-flex items-center rounded-full border border-sky-500/30 bg-sky-500/10 px-2.5 py-0.5 text-xs font-medium text-sky-300"
                             title="Hanya lihat — SKP anak perusahaan"

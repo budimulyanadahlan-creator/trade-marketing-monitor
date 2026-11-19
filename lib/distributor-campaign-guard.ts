@@ -16,10 +16,13 @@
  * - Scope `pusat` dari perusahaan INDUK SKP → **hanya lihat**.
  * - SKP tanpa perusahaan tidak terlihat dan tidak bisa dikerjakan oleh
  *   distributor mana pun (Fase 6; pengecualian sementara sudah dicabut).
+ * - SKP induk nasional (`is_national`, SKP Nasional Fase 1): semua akun
+ *   distributor berperusahaan → **hanya lihat**, di semua region. Tidak pernah
+ *   bertindak — klaim dikerjakan di klaim turunan.
  * - Admin/superadmin selalu boleh bertindak (fallback).
  *
  * Padanannya di database: fungsi `distributor_campaign_access` (migrasi 067,
- * diperbarui 069)
+ * diperbarui 069; versi per baris SKP di migrasi 074)
  * yang dipakai semua policy RLS tabel terkait klaim. Status dan departemen
  * SKP (Sales/TM, Disetujui s.d. Selesai) disaring oleh RLS +
  * DISTRIBUTOR_VISIBLE_CAMPAIGN_STATUSES, bukan oleh modul ini.
@@ -34,6 +37,7 @@ export const DISTRIBUTOR_GUARD_MESSAGES = {
   otherCompany: "SKP ini bukan milik distributor Anda",
   otherRegion: "SKP ini di luar region akun Anda",
   parentViewOnly: "Hanya lihat — SKP anak perusahaan",
+  nationalViewOnly: "SKP Nasional hanya dapat dilihat — klaim tidak diajukan langsung di SKP ini",
 } as const;
 
 export type DistributorGuardDenial = keyof typeof DISTRIBUTOR_GUARD_MESSAGES;
@@ -53,6 +57,8 @@ export type CampaignAccessTarget = {
   region_id: string | null;
   /** Induk perusahaan SKP (`distributors.parent_distributor_id`); opsional. */
   distributor_parent_id?: string | null;
+  /** SKP induk nasional (`campaigns.is_national`); opsional, default bukan. */
+  is_national?: boolean | null;
 };
 
 function isAdminRole(role: string): boolean {
@@ -74,6 +80,9 @@ export function distributorActionDenial(
 ): DistributorGuardDenial | null {
   if (isAdminRole(viewer.role)) return null;
   if (!viewer.distributor_id) return "noCompany";
+
+  // Induk nasional: terlihat semua akun berperusahaan, tidak pernah bertindak.
+  if (campaign.is_national) return "nationalViewOnly";
 
   // SKP tanpa perusahaan bukan milik siapa pun (Fase 6).
   if (!campaign.distributor_id) return "otherCompany";
@@ -100,7 +109,7 @@ export function distributorCampaignAccess(
 ): DistributorCampaignAccess {
   const denial = distributorActionDenial(campaign, viewer);
   if (denial === null) return "act";
-  if (denial === "parentViewOnly") return "view";
+  if (denial === "parentViewOnly" || denial === "nationalViewOnly") return "view";
   return null;
 }
 

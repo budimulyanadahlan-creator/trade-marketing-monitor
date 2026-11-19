@@ -7,6 +7,7 @@ import type { CampaignStatus, CampaignFileRow } from "@/types/database";
 import { sendSkpSubmittedEmail } from "@/lib/email";
 import { distributorClaimActionError } from "@/lib/distributor-campaign-guard";
 import { distributorRequiredError } from "@/lib/campaign-distributor-required";
+import { nationalParentActivityError } from "@/lib/national-skp";
 
 // Budget SKP asli terkecil di sistem (per Agustus 2026) adalah ~Rp168.000 —
 // threshold ini jauh di bawahnya sehingga tidak menolak SKP sah manapun,
@@ -311,11 +312,15 @@ export async function createDistributorReceiptAction(
 
     const { data: campaign } = await supabase
       .from("campaigns")
-      .select("id, distributor_id, region_id")
+      .select("id, distributor_id, region_id, is_national")
       .eq("id", campaignId)
       .single();
 
     if (!campaign) return { error: "SKP tidak ditemukan" };
+
+    // SKP induk nasional tidak memakai tanda terima.
+    const nationalError = nationalParentActivityError(campaign);
+    if (nationalError) return { error: nationalError };
 
     const guardError = distributorClaimActionError(
       {

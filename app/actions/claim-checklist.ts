@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { distributorClaimActionError } from "@/lib/distributor-campaign-guard";
+import { nationalParentActivityError } from "@/lib/national-skp";
 import type { CampaignStatus } from "@/types/database";
 
 // "claim_submitted" is intentionally excluded — once a claim is submitted,
@@ -34,11 +35,15 @@ export async function upsertClaimChecklistAction(
 
     const { data: campaign } = await supabase
       .from("campaigns")
-      .select("id, status, distributor_id, region_id")
+      .select("id, status, distributor_id, region_id, is_national")
       .eq("id", campaignId)
       .single();
 
     if (!campaign) return { error: "SKP tidak ditemukan" };
+
+    // SKP induk nasional tidak punya checklist — diisi di klaim turunan.
+    const nationalError = nationalParentActivityError(campaign);
+    if (nationalError) return { error: nationalError };
 
     const guardError = distributorClaimActionError(
       {
