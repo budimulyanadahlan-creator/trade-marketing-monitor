@@ -5,13 +5,30 @@ import { computeChecklistReadinessByCampaignId } from "@/lib/claim-checklist-sta
 import { computeClaimVerificationProgressByCampaignId } from "@/lib/claim-verification-progress";
 import { distributorCampaignAccess } from "@/lib/distributor-campaign-guard";
 import { isCampaignWithoutDistributor } from "@/lib/campaign-distributor-required";
+import {
+  computeSpecialUploaderWorklist,
+  sortBySpecialUploaderWorklist,
+  specialUploaderWorklistLabel,
+  type SpecialUploaderWorklistPriority,
+} from "@/lib/claim-document-worklist";
+import { fetchAppointedUploadersByDocType } from "@/lib/claim-document-uploaders-data";
+import type { AppointedUploader } from "@/lib/claim-document-uploaders";
 import { CampaignsClient } from "./campaigns-client";
 import type { ClaimItemStatus, DistributorScope, UserRole } from "@/types/database";
+
+/** `.in()` dengan ratusan UUID bisa melewati batas panjang URL — dipecah. */
+const WORKLIST_ID_CHUNK = 150;
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
 
 export default async function CampaignsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ distributor?: string }>;
+  searchParams: Promise<{ distributor?: string; menunggu?: string }>;
 }) {
   const supabase = await createClient();
 
@@ -135,7 +152,7 @@ export default async function CampaignsPage({
   // Filter khusus admin `?distributor=none` (Fase 5 multi-user distributor):
   // SKP Sales/TM berstatus Disetujui s.d. Selesai yang belum punya distributor,
   // yaitu SKP yang tidak terlihat oleh distributor mana pun.
-  const { distributor: distributorParam } = await searchParams;
+  const { distributor: distributorParam, menunggu: worklistParam } = await searchParams;
   const isAdminOrSuperadmin = profile?.role === "admin" || profile?.role === "superadmin";
   const noDistributorOnly = isAdminOrSuperadmin && distributorParam === "none";
   const listedCampaigns = noDistributorOnly
@@ -292,6 +309,102 @@ export default async function CampaignsPage({
     }
   }
 
+  // ── Pengunggah Khusus Fase 7: daftar kerja ────────────────────────────
+  // Hanya untuk akun yang ditunjuk sebagai pengunggah khusus minimal satu
+  // jenis dokumen; akun lain berhenti setelah satu query penunjukan (tabel
+  // kecil). Semuanya batch dari daftar SKP yang sudah diambil — tanpa query
+  // per baris. Aturannya ada di lib/claim-document-worklist.ts.
+  let worklistLabel: string | null = null;
+  let worklistPriorityByCampaignId: Record<string, SpecialUploaderWorklistPriority> = {};
+  if (isDistributor) {
+    // Klien sistem: distributor tidak selalu boleh membaca baris akun lain.
+    // Gagal baca hanya menyembunyikan filter.
+    const appointedByDocType = await fetchAppointedUploadersByDocType(createAdminClient()).catch(
+      () => new Map<string, AppointedUploader[]>()
+    );
+    const myAppointedByDocType = new Map(
+      [...appointedByDocType].filter(([, list]) => list.some((a) => a.id === user.id))
+    );
+    const myDocTypeIds = [...myAppointedByDocType.keys()];
+
+    if (myDocTypeIds.length > 0) {
+      const candidates = (campaigns ?? []).filter(
+        (c) =>
+          ["approved", "ongoing", "claim_submitted"].includes(c.status) &&
+          !c.is_national &&
+          !!c.promotion_category_id
+      );
+      const candidateIds = candidates.map((c) => c.id);
+      const submittedIds = candidates
+        .filter((c) => c.status === "claim_submitted")
+        .map((c) => c.id);
+      const categoryIds = [...new Set(candidates.map((c) => c.promotion_category_id as string))];
+
+      const [{ data: docTypes }, { data: requirements }, fileChunks, itemChunks] =
+        await Promise.all([
+          supabase.from("claim_document_types").select("id, name").in("id", myDocTypeIds),
+          categoryIds.length > 0
+            ? supabase
+                .from("claim_requirements")
+                .select("promotion_category_id, document_type_id")
+                .in("promotion_category_id", categoryIds)
+                .in("document_type_id", myDocTypeIds)
+            : Promise.resolve({
+                data: [] as { promotion_category_id: string; document_type_id: string }[],
+              }),
+          Promise.all(
+            chunk(candidateIds, WORKLIST_ID_CHUNK).map((ids) =>
+              supabase
+                .from("campaign_files")
+                .select("campaign_id, document_type_id")
+                .in("campaign_id", ids)
+                .in("document_type_id", myDocTypeIds)
+            )
+          ),
+          Promise.all(
+            chunk(submittedIds, WORKLIST_ID_CHUNK).map((ids) =>
+              supabase
+                .from("claim_item_verifications")
+                .select("campaign_id, document_type_id, status")
+                .in("campaign_id", ids)
+                .in("document_type_id", myDocTypeIds)
+            )
+          ),
+        ]);
+
+      // Gagal membaca file / status item akan membuat SKP yang sudah beres
+      // tampak menunggu — lebih baik filter tidak tampil daripada menyesatkan.
+      const readFailed = fileChunks.some((r) => r.error) || itemChunks.some((r) => r.error);
+      if (!readFailed) {
+        worklistLabel = specialUploaderWorklistLabel(
+          (docTypes ?? []).map((d) => d.name).filter(Boolean)
+        );
+        worklistPriorityByCampaignId = computeSpecialUploaderWorklist({
+          actorId: user.id,
+          campaigns: candidates.map((c) => ({
+            id: c.id,
+            status: c.status,
+            is_national: c.is_national,
+            parent_campaign_id: c.parent_campaign_id ?? null,
+            distributor_id: c.distributor_id ?? null,
+            distributor_parent_id:
+              (c.distributor as { parent_distributor_id?: string | null } | null)
+                ?.parent_distributor_id ?? null,
+            promotion_category_id: c.promotion_category_id ?? null,
+          })),
+          appointedByDocType: myAppointedByDocType,
+          requirements: requirements ?? [],
+          files: fileChunks.flatMap((r) => r.data ?? []),
+          itemVerifications: itemChunks.flatMap((r) => r.data ?? []),
+        });
+      }
+    }
+  }
+  const worklistOnly = worklistLabel !== null && worklistParam === "dokumen";
+  const displayedCampaigns = worklistOnly
+    ? sortBySpecialUploaderWorklist(listedCampaigns, worklistPriorityByCampaignId)
+    : listedCampaigns;
+
   // Fetch receipted campaign IDs for distributor (to show Status Penerimaan column)
   let receiptedCampaignIds: string[] = [];
   // Penerimaan milik SKP (Fase 8 multi-user distributor): rekan satu
@@ -325,7 +438,10 @@ export default async function CampaignsPage({
 
   return (
     <CampaignsClient
-      campaigns={listedCampaigns}
+      campaigns={displayedCampaigns}
+      worklistLabel={worklistLabel}
+      worklistOnly={worklistOnly}
+      worklistPriorityByCampaignId={worklistPriorityByCampaignId}
       noDistributorOnly={noDistributorOnly}
       userRole={profile?.role ?? "user"}
       departments={departments ?? []}

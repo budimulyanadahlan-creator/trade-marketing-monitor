@@ -20,7 +20,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { Plus, ExternalLink, Pencil, CheckSquare, Download, Trash2, CheckCircle2, AlertTriangle, X, Globe } from "lucide-react";
+import { Plus, ExternalLink, Pencil, CheckSquare, Download, Trash2, CheckCircle2, AlertTriangle, X, Globe, FileClock } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate, formatIDR } from "@/lib/utils";
 import { filterBySearch } from "@/lib/search";
@@ -28,6 +28,10 @@ import { getStatusConfig } from "@/lib/campaign-status";
 import { BudgetProgress } from "@/components/budget-progress";
 import { CampaignFormModal } from "./campaign-form-modal";
 import { createDistributorReceiptAction, deleteCampaignAdminAction, getCampaignSkpFilesAction } from "@/app/actions/campaigns";
+import {
+  SPECIAL_UPLOADER_WORKLIST_PRIORITY_LABELS,
+  type SpecialUploaderWorklistPriority,
+} from "@/lib/claim-document-worklist";
 import type { UserRole, CampaignRow, CampaignStatus, CampaignFileRow } from "@/types/database";
 
 type CampaignWithJoins = CampaignRow & {
@@ -80,6 +84,16 @@ interface Props {
    * per SKP induk nasional, untuk lencana "Nasional · N klaim".
    */
   nationalClaimCountByCampaignId?: Record<string, number>;
+  /**
+   * Pengunggah khusus saja (Pengunggah Khusus Fase 7): label filter daftar
+   * kerja ("Menunggu Surat Pengantar Klaim"); null = akun bukan pengunggah
+   * khusus, filter tidak tampil.
+   */
+  worklistLabel?: string | null;
+  /** Daftar sedang difilter `?menunggu=dokumen` (sudah diurutkan server). */
+  worklistOnly?: boolean;
+  /** SKP yang menunggu dokumen dari akun ini → prioritas (1 = paling mendesak). */
+  worklistPriorityByCampaignId?: Record<string, SpecialUploaderWorklistPriority>;
 }
 
 export function CampaignsClient({
@@ -102,6 +116,9 @@ export function CampaignsClient({
   claimVerificationProgressByCampaignId = {},
   childClaimInfoByCampaignId = {},
   nationalClaimCountByCampaignId = {},
+  worklistLabel = null,
+  worklistOnly = false,
+  worklistPriorityByCampaignId = {},
 }: Props) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingCampaign, setEditingCampaign] = useState<CampaignWithJoins | null>(null);
@@ -128,6 +145,18 @@ export function CampaignsClient({
     ...readOnlyCampaignIds,
     ...campaigns.filter((c) => c.parent_campaign_id).map((c) => c.id),
   ]);
+  const worklistCount = Object.keys(worklistPriorityByCampaignId).length;
+  // SKP boleh dibuka tanpa "Diterima" bila hanya-lihat / klaim turunan, atau
+  // sedang menunggu dokumen dari akun ini — tanda terima tidak menghalangi
+  // pengunggah khusus.
+  function canOpen(campaignId: string): boolean {
+    return (
+      !isDistributor ||
+      localReceiptedIds.has(campaignId) ||
+      receiptExemptIds.has(campaignId) ||
+      worklistPriorityByCampaignId[campaignId] !== undefined
+    );
+  }
   const isAdminOrSuperadmin = userRole === "admin" || userRole === "superadmin";
   const canSeeChecklistReadiness = ["admin", "superadmin", "finance", "manager"].includes(userRole);
   // Finance queue badge (Phase 5, verifikasi klaim finance) — narrower than
@@ -247,6 +276,19 @@ export function CampaignsClient({
               Checklist Siap
             </label>
           )}
+          {worklistLabel && (
+            <Button
+              asChild
+              size="sm"
+              variant={worklistOnly ? "secondary" : "outline"}
+              title="SKP yang menunggu dokumen dari Anda: revisi diminta, lalu klaim yang sudah diajukan, lalu sisanya"
+            >
+              <Link href={worklistOnly ? "/campaigns" : "/campaigns?menunggu=dokumen"}>
+                {worklistOnly ? <X className="h-4 w-4" /> : <FileClock className="h-4 w-4" />}
+                {worklistOnly ? "Semua SKP" : `${worklistLabel} (${worklistCount})`}
+              </Link>
+            </Button>
+          )}
           {isAdminOrSuperadmin && (
             <Button
               asChild
@@ -276,6 +318,17 @@ export function CampaignsClient({
             Menampilkan {campaigns.length} SKP Sales / Trade Marketing berstatus Disetujui s.d.
             Selesai yang belum punya distributor. SKP ini tidak terlihat oleh distributor mana pun
             sampai kolom Distributor diisi.
+          </span>
+        </div>
+      )}
+
+      {worklistOnly && (
+        <div className="flex items-start gap-2 rounded-lg border border-sky-500/30 bg-sky-500/10 px-4 py-3 text-sm text-sky-200">
+          <FileClock className="mt-0.5 h-4 w-4 flex-shrink-0" />
+          <span>
+            {worklistLabel}: {campaigns.length} SKP. Urutan: revisi diminta, lalu klaim yang sudah
+            diajukan, lalu SKP Disetujui / Berjalan. SKP hilang dari daftar ini setelah dokumennya
+            diunggah.
           </span>
         </div>
       )}
@@ -314,9 +367,7 @@ export function CampaignsClient({
                     </TableCell>
                     <TableCell className="font-medium text-slate-100">
                       <div className="flex items-center gap-2 flex-wrap">
-                        {isDistributor &&
-                        !localReceiptedIds.has(campaign.id) &&
-                        !receiptExemptIds.has(campaign.id) ? (
+                        {!canOpen(campaign.id) ? (
                           campaign.name
                         ) : (
                           <Link
@@ -352,6 +403,29 @@ export function CampaignsClient({
                           </span>
                         )}
                       </div>
+                      {worklistOnly && worklistPriorityByCampaignId[campaign.id] && (
+                        // Daftar kerja: alasan menunggu, perusahaan, dan region.
+                        <p className="mt-0.5 flex items-center gap-2 flex-wrap text-xs font-normal text-slate-400">
+                          <span
+                            className={`inline-flex items-center rounded-full border px-2 py-0.5 font-medium ${
+                              worklistPriorityByCampaignId[campaign.id] === 1
+                                ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
+                                : worklistPriorityByCampaignId[campaign.id] === 2
+                                ? "border-sky-500/30 bg-sky-500/10 text-sky-300"
+                                : "border-slate-600 bg-slate-700/40 text-slate-400"
+                            }`}
+                          >
+                            {
+                              SPECIAL_UPLOADER_WORKLIST_PRIORITY_LABELS[
+                                worklistPriorityByCampaignId[campaign.id]
+                              ]
+                            }
+                          </span>
+                          {[campaign.distributor?.name, campaign.region?.name]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </p>
+                      )}
                       {campaign.parent_campaign_id && (
                         // Klaim turunan: SKP induk, perusahaan, dan akun pemiliknya.
                         <p className="mt-0.5 text-xs font-normal text-slate-500">
@@ -509,7 +583,7 @@ export function CampaignsClient({
                           </Button>
                         )}
                         {["approved", "ongoing", "claim_submitted", "claim_verified", "ready_to_pay", "paid", "completed"].includes(campaign.status) &&
-                          (!isDistributor || localReceiptedIds.has(campaign.id) || receiptExemptIds.has(campaign.id)) && (
+                          canOpen(campaign.id) && (
                           <Button
                             asChild
                             variant="outline"
@@ -522,7 +596,7 @@ export function CampaignsClient({
                             </a>
                           </Button>
                         )}
-                        {(!isDistributor || localReceiptedIds.has(campaign.id) || receiptExemptIds.has(campaign.id)) && (
+                        {canOpen(campaign.id) && (
                           <Button asChild variant="outline" size="sm" className="h-7 w-7 p-0">
                             <Link href={`/campaigns/${campaign.id}`}>
                               <ExternalLink className="h-3 w-3" />
@@ -542,6 +616,8 @@ export function CampaignsClient({
                 >
                   {query.trim()
                     ? `Tidak ada SKP yang cocok dengan "${query.trim()}".`
+                    : worklistOnly
+                    ? "Tidak ada SKP yang menunggu dokumen dari Anda."
                     : onlyChecklistReady
                     ? "Tidak ada SKP approved dengan checklist yang sudah lengkap."
                     : 'Belum ada SKP. Klik "SKP Baru" untuk memulai.'}
