@@ -948,6 +948,9 @@ export function ClaimChecklistSection({
   const canVerifyItems =
     ["finance", "admin", "superadmin"].includes(userRole) &&
     campaignStatus === "claim_submitted";
+  // Admin/superadmin: jalan terakhir untuk item terkunci (pengunggah khusus).
+  const isAdminActor = userRole === "admin" || userRole === "superadmin";
+  const statusEditable = CHECKLIST_EDITABLE_STATUSES.includes(campaignStatus);
 
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
   // Optimistic toggles only; the server value (doc.isFulfilled) is the
@@ -972,6 +975,8 @@ export function ClaimChecklistSection({
     if (!isEditable || pendingIds.has(documentTypeId)) return;
 
     const doc = documents.find((d) => d.documentTypeId === documentTypeId);
+    // Item terkunci (pengunggah khusus): centang hanya mengikuti file.
+    if (doc?.specialUpload?.locked) return;
     const current = doc ? isFulfilled(doc) : false;
     const next = !current;
 
@@ -1040,15 +1045,32 @@ export function ClaimChecklistSection({
           // Once a file is attached, fulfillment is file-driven (see
           // lib/claim-checklist-sync.ts) — manual toggling only applies
           // to items with no files attached.
-          const canToggleManually = isEditable && !hasFiles;
+          // Pengunggah Khusus Fase 2: item "terkunci" hanya diunggah akun yang
+          // ditunjuk (atau admin), dan centangnya hanya mengikuti file.
+          // Server (route upload/hapus, action checklist, RLS) menegakkan
+          // aturan yang sama.
+          const special = doc.specialUpload;
+          const locked = !!special?.locked;
+          const mayUploadLocked = !!special?.canUpload;
+          const canToggleManually = isEditable && !hasFiles && !locked;
           // Phase 3 (Loop Revisi): once a claim is submitted, this one item
           // reopens for re-upload only while finance has it as
           // revision_requested — everything else stays locked.
           const canReupload =
             canActAsDistributor &&
             campaignStatus === "claim_submitted" &&
-            doc.verification?.status === "revision_requested";
-          const canUpload = (canActAsDistributor && isEditable) || canReupload;
+            doc.verification?.status === "revision_requested" &&
+            (!locked || mayUploadLocked);
+          const canUpload = locked
+            ? mayUploadLocked &&
+              (((canActAsDistributor || isAdminActor) && statusEditable) || canReupload)
+            : (canActAsDistributor && isEditable) || canReupload;
+          const canDeleteFile = (f: ClaimDocument["files"][number]) =>
+            (canActAsDistributor && isEditable && f.uploadedBy === userId) ||
+            (locked &&
+              isAdminActor &&
+              statusEditable &&
+              (!!special?.canDeleteAny || f.uploadedBy === userId));
 
           return (
             <div
@@ -1089,6 +1111,21 @@ export function ClaimChecklistSection({
                 >
                   {doc.name}
                 </span>
+                {locked && !mayUploadLocked && (
+                  <span className="text-[11px] text-sky-400 whitespace-nowrap">
+                    Diunggah oleh Pusat
+                  </span>
+                )}
+                {locked && !mayUploadLocked && !fulfilled && (
+                  <span className="text-[10px] rounded-full px-1.5 py-0.5 border whitespace-nowrap text-amber-400 border-amber-500/30 bg-amber-500/10">
+                    menunggu Pusat
+                  </span>
+                )}
+                {locked && mayUploadLocked && !hasFiles && (
+                  <span className="text-[11px] text-slate-500 whitespace-nowrap">
+                    centang mengikuti file
+                  </span>
+                )}
                 {isEditable && hasFiles && (
                   <span className="text-[11px] text-slate-500">
                     otomatis dari dokumen
@@ -1121,7 +1158,7 @@ export function ClaimChecklistSection({
                     <ClaimFileRow
                       key={f.id}
                       file={f}
-                      canDelete={canActAsDistributor && isEditable && f.uploadedBy === userId}
+                      canDelete={canDeleteFile(f)}
                       onDeleted={() => router.refresh()}
                       showVersionTag={doc.files.length > 1}
                     />
@@ -2537,7 +2574,10 @@ export function CampaignDetailClient({
   const hasDistributor = distributorReceipts.length > 0;
   const unfulfilledClaimDocs =
     hasDistributor && claimDocuments.length > 0
-      ? claimDocuments.filter((d) => !d.isFulfilled).map((d) => d.name)
+      ? claimDocuments
+          .filter((d) => !d.isFulfilled)
+          // Item terkunci (pengunggah khusus) bukan tugas cabang.
+          .map((d) => (d.specialUpload?.locked ? `${d.name} — menunggu Pusat` : d.name))
       : [];
 
   // Distributor hanya bisa bertindak jika hak aksesnya "act" — Pusat

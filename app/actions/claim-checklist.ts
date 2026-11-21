@@ -1,7 +1,12 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient, createClient } from "@/lib/supabase/server";
+import {
+  effectiveSpecialUploaderIds,
+  specialDocumentManualCheckError,
+} from "@/lib/claim-document-uploaders";
+import { fetchAppointedUploadersByDocType } from "@/lib/claim-document-uploaders-data";
 import { distributorClaimActionError } from "@/lib/distributor-campaign-guard";
 import { nationalParentActivityError } from "@/lib/national-skp";
 import type { CampaignStatus } from "@/types/database";
@@ -35,7 +40,9 @@ export async function upsertClaimChecklistAction(
 
     const { data: campaign } = await supabase
       .from("campaigns")
-      .select("id, status, distributor_id, region_id, is_national, parent_campaign_id, claim_owner_id")
+      .select(
+        "id, status, distributor_id, region_id, is_national, parent_campaign_id, claim_owner_id, distributor:distributors(parent_distributor_id)"
+      )
       .eq("id", campaignId)
       .single();
 
@@ -70,6 +77,23 @@ export async function upsertClaimChecklistAction(
           "Checklist hanya dapat diupdate saat SKP berstatus Approved atau Ongoing",
       };
     }
+
+    // Pengunggah Khusus Fase 2: item terkunci tidak bisa dicentang manual oleh
+    // siapa pun — centangnya hanya berubah lewat upload dan hapus file.
+    const appointed = await fetchAppointedUploadersByDocType(createAdminClient(), [documentTypeId]);
+    const distributorParent = (
+      campaign as unknown as { distributor?: { parent_distributor_id: string | null } | null }
+    ).distributor;
+    const lockedError = specialDocumentManualCheckError(
+      effectiveSpecialUploaderIds(
+        {
+          distributor_id: campaign.distributor_id ?? null,
+          distributor_parent_id: distributorParent?.parent_distributor_id ?? null,
+        },
+        appointed.get(documentTypeId) ?? []
+      )
+    );
+    if (lockedError) return { error: lockedError };
 
     const { error } = await supabase
       .from("distributor_claim_checklists")

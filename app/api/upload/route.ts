@@ -2,6 +2,11 @@
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { syncChecklistAfterFileDelete } from "@/lib/claim-checklist-sync";
 import { CLAIM_HOLDER_MESSAGES, claimFileDeleteError } from "@/lib/distributor-campaign-guard";
+import {
+  effectiveSpecialUploaderIds,
+  specialDocumentDeleteOverride,
+} from "@/lib/claim-document-uploaders";
+import { fetchAppointedUploadersByDocType } from "@/lib/claim-document-uploaders-data";
 import { UPLOAD_MAX_LABEL, UPLOAD_MAX_SIZE } from "@/lib/upload-limits";
 import type { CampaignStatus } from "@/types/database";
 
@@ -141,34 +146,65 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "File tidak ditemukan" }, { status: 404 });
   }
 
-  // File hanya bisa dihapus oleh pengunggahnya (Fase 9 — rekan satu
-  // perusahaan bisa melihat file ini lewat RLS, jadi beri alasan yang jelas).
-  if (fileRecord.uploaded_by !== user.id) {
-    return NextResponse.json({ error: CLAIM_HOLDER_MESSAGES.notUploader }, { status: 403 });
-  }
+  const adminClient = createAdminClient();
+  const isOwnFile = fileRecord.uploaded_by === user.id;
+  let actorIsAdmin = false;
 
   if (fileRecord.document_type_id) {
     const [{ data: campaign }, { data: profile }] = await Promise.all([
       supabase
         .from("campaigns")
-        .select("status, claim_submitted_by")
+        .select("status, claim_submitted_by, distributor_id, distributor:distributors(parent_distributor_id)")
         .eq("id", fileRecord.campaign_id)
         .single(),
       supabase.from("users").select("role").eq("id", user.id).single(),
     ]);
+    const actor = { id: user.id, role: profile?.role ?? "distributor" };
+    actorIsAdmin = actor.role === "admin" || actor.role === "superadmin";
+
+    // Pengunggah Khusus Fase 2: admin/superadmin boleh menghapus file item
+    // TERKUNCI milik akun lain (jalan terakhir). Selain itu aturan lama:
+    // hanya pengunggahnya sendiri.
+    let adminOverride = false;
+    if (!isOwnFile && actorIsAdmin && campaign) {
+      const appointed = await fetchAppointedUploadersByDocType(adminClient, [
+        fileRecord.document_type_id,
+      ]);
+      const distributorParent = (
+        campaign as unknown as { distributor?: { parent_distributor_id: string | null } | null }
+      ).distributor;
+      adminOverride = specialDocumentDeleteOverride(
+        actor,
+        effectiveSpecialUploaderIds(
+          {
+            distributor_id: campaign.distributor_id ?? null,
+            distributor_parent_id: distributorParent?.parent_distributor_id ?? null,
+          },
+          appointed.get(fileRecord.document_type_id) ?? []
+        )
+      );
+    }
+
+    // File hanya bisa dihapus oleh pengunggahnya (Fase 9 — rekan satu
+    // perusahaan bisa melihat file ini lewat RLS, jadi beri alasan yang jelas).
+    if (!isOwnFile && !adminOverride) {
+      return NextResponse.json({ error: CLAIM_HOLDER_MESSAGES.notUploader }, { status: 403 });
+    }
 
     if (!campaign) {
       return NextResponse.json({ error: "SKP tidak ditemukan" }, { status: 404 });
     }
 
-    // Selama klaim diajukan, pengunggah harus pemegang klaim.
-    const deleteError = claimFileDeleteError(
-      { id: user.id, role: profile?.role ?? "distributor" },
-      { uploaded_by: fileRecord.uploaded_by },
-      { status: campaign.status, claim_submitted_by: campaign.claim_submitted_by ?? null }
-    );
-    if (deleteError) {
-      return NextResponse.json({ error: deleteError }, { status: 403 });
+    if (!adminOverride) {
+      // Selama klaim diajukan, pengunggah harus pemegang klaim.
+      const deleteError = claimFileDeleteError(
+        actor,
+        { uploaded_by: fileRecord.uploaded_by },
+        { status: campaign.status, claim_submitted_by: campaign.claim_submitted_by ?? null }
+      );
+      if (deleteError) {
+        return NextResponse.json({ error: deleteError }, { status: 403 });
+      }
     }
 
     if (!CLAIM_DOCUMENT_EDITABLE_STATUSES.includes(campaign.status as CampaignStatus)) {
@@ -177,9 +213,10 @@ export async function DELETE(request: NextRequest) {
         { status: 400 }
       );
     }
+  } else if (!isOwnFile) {
+    return NextResponse.json({ error: CLAIM_HOLDER_MESSAGES.notUploader }, { status: 403 });
   }
 
-  const adminClient = createAdminClient();
   await adminClient.storage
     .from("campaign-documents")
     .remove([fileRecord.file_url]);
@@ -189,8 +226,9 @@ export async function DELETE(request: NextRequest) {
   // Claim document (has document_type_id): if this was the last file of
   // that document type on the SKP (from any uploader), reset the shared
   // checklist item back to unfulfilled.
+  // Admin tidak punya policy RLS tulis checklist → lewat klien sistem.
   if (fileRecord.document_type_id) {
-    await syncChecklistAfterFileDelete(supabase, {
+    await syncChecklistAfterFileDelete(actorIsAdmin ? adminClient : supabase, {
       campaignId: fileRecord.campaign_id,
       actorId: user.id,
       documentTypeId: fileRecord.document_type_id,

@@ -8,10 +8,14 @@ vi.mock("@/lib/supabase/server", () => ({
 vi.mock("@/lib/claim-checklist-sync", () => ({
   syncChecklistAfterFileDelete: vi.fn(),
 }));
+vi.mock("@/lib/claim-document-uploaders-data", () => ({
+  fetchAppointedUploadersByDocType: vi.fn(),
+}));
 
 import { DELETE, POST } from "./route";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { syncChecklistAfterFileDelete } from "@/lib/claim-checklist-sync";
+import { fetchAppointedUploadersByDocType } from "@/lib/claim-document-uploaders-data";
 
 function makeSelectChain(result: { data: unknown }) {
   const chain: Record<string, unknown> = {};
@@ -24,11 +28,19 @@ function makeSelectChain(result: { data: unknown }) {
 
 function setupMocks(
   fileRecord: unknown,
-  campaign: { status: string; claim_submitted_by?: string | null } | null = { status: "ongoing" }
+  campaign: {
+    status: string;
+    claim_submitted_by?: string | null;
+    distributor_id?: string | null;
+  } | null = { status: "ongoing" },
+  opts: {
+    role?: string;
+    appointed?: { id: string; role: string; is_active: boolean; distributor_id: string | null }[];
+  } = {}
 ) {
   const filesChain = makeSelectChain({ data: fileRecord });
   const campaignsChain = makeSelectChain({ data: campaign });
-  const usersChain = makeSelectChain({ data: { role: "distributor" } });
+  const usersChain = makeSelectChain({ data: { role: opts.role ?? "distributor" } });
   const supabase = {
     auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: "dist-1" } } }) },
     from: vi.fn().mockImplementation((table: string) => {
@@ -45,8 +57,11 @@ function setupMocks(
   (createClient as ReturnType<typeof vi.fn>).mockResolvedValue(supabase);
   (createAdminClient as ReturnType<typeof vi.fn>).mockReturnValue(adminClient);
   (syncChecklistAfterFileDelete as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+  (fetchAppointedUploadersByDocType as ReturnType<typeof vi.fn>).mockResolvedValue(
+    new Map(opts.appointed?.length ? [["doc-1", opts.appointed]] : [])
+  );
 
-  return { supabase, filesChain, campaignsChain, storageRemove };
+  return { supabase, adminClient, filesChain, campaignsChain, storageRemove };
 }
 
 function makeRequest(fileId: string | null) {
@@ -198,5 +213,82 @@ describe("DELETE /api/upload", () => {
     expect(res.status).toBe(403);
     expect(json.error).toMatch(/pemegang klaim/i);
     expect(storageRemove).not.toHaveBeenCalled();
+  });
+});
+
+describe("DELETE /api/upload — item terkunci (Pengunggah Khusus Fase 2)", () => {
+  const meriana = { id: "meriana", role: "distributor", is_active: true, distributor_id: "company-a" };
+  const otherFile = {
+    file_url: "path/to/file.jpg",
+    uploaded_by: "meriana",
+    campaign_id: "camp-1",
+    document_type_id: "doc-1",
+  };
+  const ownFile = { ...otherFile, uploaded_by: "dist-1" };
+  const skp = { status: "ongoing", distributor_id: "company-a" };
+
+  it("mengizinkan admin menghapus file item terkunci milik akun lain, checklist disinkronkan lewat klien sistem", async () => {
+    const { adminClient, storageRemove } = setupMocks(otherFile, skp, {
+      role: "admin",
+      appointed: [meriana],
+    });
+
+    const res = await DELETE(makeRequest("file-1"));
+
+    expect(res.status).toBe(200);
+    expect(storageRemove).toHaveBeenCalled();
+    expect(syncChecklistAfterFileDelete).toHaveBeenCalledWith(adminClient, {
+      campaignId: "camp-1",
+      actorId: "dist-1",
+      documentTypeId: "doc-1",
+    });
+  });
+
+  it("tetap menolak admin menghapus file akun lain pada item yang tidak terkunci", async () => {
+    const { storageRemove } = setupMocks(otherFile, skp, { role: "admin" });
+
+    const res = await DELETE(makeRequest("file-1"));
+
+    expect(res.status).toBe(403);
+    expect(storageRemove).not.toHaveBeenCalled();
+  });
+
+  it("menolak akun cabang menghapus file pengunggah khusus", async () => {
+    const { storageRemove } = setupMocks(otherFile, skp, { appointed: [meriana] });
+
+    const res = await DELETE(makeRequest("file-1"));
+    const json = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(json.error).toMatch(/pengunggah/i);
+    expect(storageRemove).not.toHaveBeenCalled();
+  });
+
+  it("pengunggah khusus menghapus filenya sendiri dan checklist ikut disinkronkan", async () => {
+    const { supabase } = setupMocks(ownFile, skp, { appointed: [{ ...meriana, id: "dist-1" }] });
+
+    const res = await DELETE(makeRequest("file-1"));
+
+    expect(res.status).toBe(200);
+    expect(syncChecklistAfterFileDelete).toHaveBeenCalledWith(supabase, expect.anything());
+  });
+
+  it("file lama unggahan cabang pada item terkunci tetap bisa dihapus pengunggahnya (aturan lama)", async () => {
+    setupMocks(ownFile, skp, { appointed: [meriana] });
+
+    const res = await DELETE(makeRequest("file-1"));
+
+    expect(res.status).toBe(200);
+  });
+
+  it("admin tetap terikat jendela status saat menghapus item terkunci", async () => {
+    setupMocks(otherFile, { status: "paid", distributor_id: "company-a" }, {
+      role: "admin",
+      appointed: [meriana],
+    });
+
+    const res = await DELETE(makeRequest("file-1"));
+
+    expect(res.status).toBe(400);
   });
 });

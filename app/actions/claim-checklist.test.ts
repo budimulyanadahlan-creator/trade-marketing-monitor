@@ -2,11 +2,17 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("@/lib/supabase/server", () => ({
   createClient: vi.fn(),
+  createAdminClient: vi.fn(() => ({})),
+}));
+vi.mock("@/lib/claim-document-uploaders-data", () => ({
+  fetchAppointedUploadersByDocType: vi.fn(),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 import { upsertClaimChecklistAction } from "./claim-checklist";
 import { createClient } from "@/lib/supabase/server";
+import { fetchAppointedUploadersByDocType } from "@/lib/claim-document-uploaders-data";
+import { SPECIAL_UPLOADER_MESSAGES } from "@/lib/claim-document-uploaders";
 
 function makeQueryChain(data: unknown) {
   return {
@@ -22,7 +28,9 @@ function setupMocks({
   userDistributorId = "company-a",
   campaign = { id: "camp-1", status: "ongoing", distributor_id: "company-a" },
   upsertError = null,
+  appointed = [],
 }: Partial<{
+  appointed: { id: string; role: string; is_active: boolean; distributor_id: string | null }[];
   role: string;
   isActive: boolean;
   userDistributorId: string | null;
@@ -43,6 +51,9 @@ function setupMocks({
   };
 
   vi.mocked(createClient).mockResolvedValue(mockClient as never);
+  vi.mocked(fetchAppointedUploadersByDocType).mockResolvedValue(
+    new Map(appointed.length > 0 ? [["doc-1", appointed]] : []) as never
+  );
   return { upsertChain };
 }
 
@@ -132,5 +143,53 @@ describe("upsertClaimChecklistAction — SKP induk nasional (SKP Nasional Fase 1
     const result = await upsertClaimChecklistAction("camp-1", "doc-1", true);
     expect(result.error).toContain("SKP Nasional tidak menerima");
     expect(upsertChain.upsert).not.toHaveBeenCalled();
+  });
+});
+
+describe("upsertClaimChecklistAction — item terkunci (Pengunggah Khusus Fase 2)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const meriana = { id: "meriana", role: "distributor", is_active: true, distributor_id: "company-a" };
+
+  it("menolak centang manual item terkunci untuk akun cabang", async () => {
+    const { upsertChain } = setupMocks({ appointed: [meriana] });
+    const result = await upsertClaimChecklistAction("camp-1", "doc-1", true);
+    expect(result).toEqual({ error: SPECIAL_UPLOADER_MESSAGES.manualCheckLocked });
+    expect(upsertChain.upsert).not.toHaveBeenCalled();
+  });
+
+  it("menolak centang manual item terkunci juga untuk pengunggah khususnya sendiri", async () => {
+    const { upsertChain } = setupMocks({ appointed: [{ ...meriana, id: "dist-1" }] });
+    const result = await upsertClaimChecklistAction("camp-1", "doc-1", false);
+    expect(result).toEqual({ error: SPECIAL_UPLOADER_MESSAGES.manualCheckLocked });
+    expect(upsertChain.upsert).not.toHaveBeenCalled();
+  });
+
+  it("tetap mengizinkan centang manual bila pengunggah khususnya nonaktif", async () => {
+    setupMocks({ appointed: [{ ...meriana, is_active: false }] });
+    const result = await upsertClaimChecklistAction("camp-1", "doc-1", true);
+    expect(result).toEqual({ success: true });
+  });
+
+  it("tetap mengizinkan centang manual di SKP perusahaan di luar grup pengunggah khusus", async () => {
+    setupMocks({ appointed: [{ ...meriana, distributor_id: "company-z" }] });
+    const result = await upsertClaimChecklistAction("camp-1", "doc-1", true);
+    expect(result).toEqual({ success: true });
+  });
+
+  it("mengunci SKP anak perusahaan bila pengunggah khusus berasal dari induknya", async () => {
+    setupMocks({
+      appointed: [{ ...meriana, distributor_id: "company-induk" }],
+      campaign: {
+        id: "camp-1",
+        status: "ongoing",
+        distributor_id: "company-a",
+        distributor: { parent_distributor_id: "company-induk" },
+      } as never,
+    });
+    const result = await upsertClaimChecklistAction("camp-1", "doc-1", true);
+    expect(result).toEqual({ error: SPECIAL_UPLOADER_MESSAGES.manualCheckLocked });
   });
 });

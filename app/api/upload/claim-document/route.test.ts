@@ -14,12 +14,17 @@ vi.mock("@/lib/claim-checklist-sync", () => ({
 vi.mock("@/lib/claim-item-verifications", () => ({
   resetClaimItemToPending: vi.fn(),
 }));
+vi.mock("@/lib/claim-document-uploaders-data", () => ({
+  fetchAppointedUploadersByDocType: vi.fn(),
+}));
 
 import { POST } from "./route";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { compressImageIfNeeded } from "@/lib/image-compress";
 import { markChecklistFulfilled } from "@/lib/claim-checklist-sync";
 import { resetClaimItemToPending } from "@/lib/claim-item-verifications";
+import { fetchAppointedUploadersByDocType } from "@/lib/claim-document-uploaders-data";
+import { SPECIAL_UPLOADER_MESSAGES } from "@/lib/claim-document-uploaders";
 
 // -------------------------------------------------------
 // Mock builder helpers
@@ -63,6 +68,7 @@ function setupMocks(
     insertError: { message: string } | null;
     uploadError: { message: string } | null;
     verificationItem: { id: string; status: string } | null;
+    appointed: { id: string; role: string; is_active: boolean; distributor_id: string | null }[];
   }> = {}
 ) {
   const {
@@ -75,6 +81,7 @@ function setupMocks(
     insertError = null,
     uploadError = null,
     verificationItem = { id: "item-1", status: "revision_requested" },
+    appointed = [],
   } = opts;
 
   const usersChain = makeSelectChain({
@@ -99,11 +106,17 @@ function setupMocks(
 
   const storageUpload = vi.fn().mockResolvedValue({ error: uploadError });
   const storageRemove = vi.fn().mockResolvedValue({});
+  // Klien service-role: dipakai untuk menulis baris file bila pelakunya admin.
+  const adminFilesInsertChain = makeInsertChain({ data: insertedFile, error: insertError });
   const adminClient = {
     storage: {
       from: vi.fn().mockReturnValue({ upload: storageUpload, remove: storageRemove }),
     },
+    from: vi.fn().mockReturnValue(adminFilesInsertChain),
   };
+  (fetchAppointedUploadersByDocType as ReturnType<typeof vi.fn>).mockResolvedValue(
+    new Map(appointed.length > 0 ? [["doc-1", appointed]] : [])
+  );
 
   (createClient as ReturnType<typeof vi.fn>).mockResolvedValue(supabase);
   (createAdminClient as ReturnType<typeof vi.fn>).mockReturnValue(adminClient);
@@ -120,6 +133,7 @@ function setupMocks(
     storageUpload,
     storageRemove,
     filesInsertChain,
+    adminFilesInsertChain,
     verificationChain,
   };
 }
@@ -421,5 +435,119 @@ describe("POST /api/upload/claim-document — SKP induk nasional (SKP Nasional F
     expect(json.error).toContain("SKP Nasional tidak menerima");
     expect(storageUpload).not.toHaveBeenCalled();
     expect(filesInsertChain.insert).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/upload/claim-document — item terkunci (Pengunggah Khusus Fase 2)", () => {
+  // Akun yang login di semua tes = "dist-1" (perusahaan company-a).
+  const meriana = { id: "meriana", role: "distributor", is_active: true, distributor_id: "company-a" };
+
+  it("menolak akun distributor lain mengunggah item terkunci, dengan pesan menyebut Pusat", async () => {
+    const { storageUpload, filesInsertChain } = setupMocks({ appointed: [meriana] });
+
+    const res = await POST(makeRequest());
+    const json = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(json.error).toBe(SPECIAL_UPLOADER_MESSAGES.uploadedByPusat);
+    expect(storageUpload).not.toHaveBeenCalled();
+    expect(filesInsertChain.insert).not.toHaveBeenCalled();
+    expect(markChecklistFulfilled).not.toHaveBeenCalled();
+  });
+
+  it("mengizinkan pengunggah khusus mengunggah item terkunci dan mencentang checklist atas namanya", async () => {
+    const { supabase, filesInsertChain } = setupMocks({ appointed: [{ ...meriana, id: "dist-1" }] });
+
+    const res = await POST(makeRequest());
+
+    expect(res.status).toBe(200);
+    expect(filesInsertChain.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ uploaded_by: "dist-1", document_type_id: "doc-1" })
+    );
+    expect(markChecklistFulfilled).toHaveBeenCalledWith(supabase, {
+      campaignId: "camp-1",
+      actorId: "dist-1",
+      documentTypeId: "doc-1",
+    });
+  });
+
+  it("mengizinkan pengunggah khusus dari perusahaan induk menurut aturan efektif", async () => {
+    setupMocks({
+      userDistributorId: "company-a",
+      appointed: [{ ...meriana, id: "dist-1", distributor_id: "company-induk" }],
+      campaign: {
+        id: "camp-1",
+        status: "ongoing",
+        distributor_id: "company-a",
+        distributor: { parent_distributor_id: "company-induk" },
+      } as never,
+    });
+
+    const res = await POST(makeRequest());
+
+    expect(res.status).toBe(200);
+  });
+
+  it("mengembalikan item ke aturan lama bila satu-satunya pengunggah khusus nonaktif", async () => {
+    setupMocks({ appointed: [{ ...meriana, is_active: false }] });
+
+    const res = await POST(makeRequest());
+
+    expect(res.status).toBe(200);
+  });
+
+  it("tidak memengaruhi SKP perusahaan di luar grup pengunggah khusus", async () => {
+    setupMocks({ appointed: [{ ...meriana, distributor_id: "company-z" }] });
+
+    const res = await POST(makeRequest());
+
+    expect(res.status).toBe(200);
+  });
+
+  it("mengizinkan admin mengunggah item terkunci lewat klien sistem", async () => {
+    const { adminClient, adminFilesInsertChain, filesInsertChain } = setupMocks({
+      role: "admin",
+      userDistributorId: null,
+      appointed: [meriana],
+    });
+
+    const res = await POST(makeRequest());
+
+    expect(res.status).toBe(200);
+    expect(adminFilesInsertChain.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ uploaded_by: "dist-1", document_type_id: "doc-1" })
+    );
+    expect(filesInsertChain.insert).not.toHaveBeenCalled();
+    expect(markChecklistFulfilled).toHaveBeenCalledWith(adminClient, expect.anything());
+  });
+
+  it("tetap menolak admin untuk item yang tidak terkunci", async () => {
+    const { storageUpload } = setupMocks({ role: "admin", userDistributorId: null });
+
+    const res = await POST(makeRequest());
+    const json = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(json.error).toMatch(/distributor/i);
+    expect(storageUpload).not.toHaveBeenCalled();
+  });
+
+  it("menolak role internal lain walaupun item terkunci", async () => {
+    setupMocks({ role: "finance", userDistributorId: null, appointed: [meriana] });
+
+    const res = await POST(makeRequest());
+
+    expect(res.status).toBe(403);
+  });
+
+  it("pengunggah khusus tetap terikat jendela status yang ada", async () => {
+    setupMocks({
+      appointed: [{ ...meriana, id: "dist-1" }],
+      campaign: { id: "camp-1", status: "paid", distributor_id: "company-a" },
+    });
+
+    const res = await POST(makeRequest());
+
+    expect(res.status).toBe(400);
   });
 });

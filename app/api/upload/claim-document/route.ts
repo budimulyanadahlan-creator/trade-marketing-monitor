@@ -7,15 +7,26 @@ import {
   claimHolderActionError,
   distributorClaimActionError,
 } from "@/lib/distributor-campaign-guard";
+import {
+  effectiveSpecialUploaderIds,
+  specialDocumentUploadError,
+} from "@/lib/claim-document-uploaders";
+import { fetchAppointedUploadersByDocType } from "@/lib/claim-document-uploaders-data";
 import { nationalParentActivityError } from "@/lib/national-skp";
 import { UPLOAD_MAX_LABEL, UPLOAD_MAX_SIZE } from "@/lib/upload-limits";
 import type { CampaignStatus } from "@/types/database";
 
 const ALLOWED_TYPES = ["application/pdf", "image/jpeg", "image/jpg", "image/png"];
 const EDITABLE_STATUSES: CampaignStatus[] = ["approved", "ongoing"];
+const DISTRIBUTOR_ONLY_ERROR = "Hanya distributor yang dapat mengupload dokumen klaim";
 
 // Upload a claim document for one checklist item. Distributor-only —
 // mirrors CHECKLIST_EDITABLE_STATUSES in app/actions/claim-checklist.ts.
+//
+// Pengunggah Khusus Fase 2: jenis dokumen yang punya pengunggah khusus
+// efektif pada SKP ini "terkunci" — hanya akun yang ditunjuk yang boleh
+// mengunggahnya, plus admin/superadmin sebagai jalan terakhir (satu-satunya
+// kasus non-distributor boleh memakai endpoint ini).
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
 
@@ -36,11 +47,9 @@ export async function POST(request: NextRequest) {
   if (!profile?.is_active) {
     return NextResponse.json({ error: "Akun tidak aktif" }, { status: 403 });
   }
-  if (profile.role !== "distributor") {
-    return NextResponse.json(
-      { error: "Hanya distributor yang dapat mengupload dokumen klaim" },
-      { status: 403 }
-    );
+  const isAdmin = profile.role === "admin" || profile.role === "superadmin";
+  if (profile.role !== "distributor" && !isAdmin) {
+    return NextResponse.json({ error: DISTRIBUTOR_ONLY_ERROR }, { status: 403 });
   }
 
   const formData = await request.formData();
@@ -77,7 +86,7 @@ export async function POST(request: NextRequest) {
   const { data: campaign } = await supabase
     .from("campaigns")
     .select(
-      "id, status, distributor_id, region_id, claim_submitted_by, is_national, parent_campaign_id, claim_owner_id"
+      "id, status, distributor_id, region_id, claim_submitted_by, is_national, parent_campaign_id, claim_owner_id, distributor:distributors(parent_distributor_id)"
     )
     .eq("id", campaignId)
     .single();
@@ -113,6 +122,34 @@ export async function POST(request: NextRequest) {
   if (guardError) {
     return NextResponse.json({ error: guardError }, { status: 403 });
   }
+
+  // Item terkunci: hanya pengunggah khusus efektif (atau admin). Daftar
+  // efektif kosong → aturan lama, dan admin kembali tidak punya akses.
+  const adminClient = createAdminClient();
+  const appointed = await fetchAppointedUploadersByDocType(adminClient, [documentTypeId]);
+  const distributorParent = (
+    campaign as unknown as { distributor?: { parent_distributor_id: string | null } | null }
+  ).distributor;
+  const effectiveUploaderIds = effectiveSpecialUploaderIds(
+    {
+      distributor_id: campaign.distributor_id ?? null,
+      distributor_parent_id: distributorParent?.parent_distributor_id ?? null,
+    },
+    appointed.get(documentTypeId) ?? []
+  );
+  if (isAdmin && effectiveUploaderIds.length === 0) {
+    return NextResponse.json({ error: DISTRIBUTOR_ONLY_ERROR }, { status: 403 });
+  }
+  const specialError = specialDocumentUploadError(
+    { id: user.id, role: profile.role },
+    effectiveUploaderIds
+  );
+  if (specialError) {
+    return NextResponse.json({ error: specialError }, { status: 403 });
+  }
+  // Admin tidak punya policy RLS tulis untuk file/checklist klaim; setelah
+  // lolos pengaman di atas, tulisannya lewat klien sistem.
+  const writeClient = isAdmin ? adminClient : supabase;
 
   // Phase 3 (Loop Revisi): once a claim is submitted, re-upload is only
   // allowed for the one item finance sent back for revision — everything
@@ -182,7 +219,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: `Ukuran file maksimal ${UPLOAD_MAX_LABEL}.` }, { status: 400 });
   }
 
-  const adminClient = createAdminClient();
   const safeFileName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").replace(/_+/g, "_");
   // Re-encoded images always land on disk as .jpg, regardless of original extension.
   const storageFileName =
@@ -202,7 +238,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: uploadError.message }, { status: 500 });
   }
 
-  const { data: fileRecord, error: dbError } = await supabase
+  const { data: fileRecord, error: dbError } = await writeClient
     .from("campaign_files")
     .insert({
       campaign_id: campaignId,
@@ -224,7 +260,7 @@ export async function POST(request: NextRequest) {
 
   // Auto-check the checklist item. Best-effort: the file itself is already
   // saved, so a checklist sync failure shouldn't fail the whole upload.
-  await markChecklistFulfilled(supabase, {
+  await markChecklistFulfilled(writeClient, {
     campaignId,
     actorId: user.id,
     documentTypeId,

@@ -73,6 +73,41 @@ describe("ClaimChecklistSection", () => {
     expect(screen.getByText("oleh Budi Cabang")).toBeTruthy();
   });
 
+  // Pengunggah Khusus Fase 2 — item terkunci
+  const locked = (canUpload: boolean, withFile = false): ClaimDocument => ({
+    ...doc("a", withFile, withFile),
+    specialUpload: { locked: true, canUpload, canDeleteAny: false },
+  });
+
+  it("locked item for a branch account: no Upload button, locked checkbox, 'Diunggah oleh Pusat'", async () => {
+    render(section([locked(false), doc("b", false)]));
+
+    expect(screen.getByText("Diunggah oleh Pusat")).toBeTruthy();
+    expect(screen.getByText("menunggu Pusat")).toBeTruthy();
+    expect(checkbox("a").disabled).toBe(true);
+    // Hanya item "b" (tidak terkunci) yang punya tombol Upload.
+    expect(screen.getAllByRole("button", { name: /Upload/ })).toHaveLength(1);
+
+    await act(async () => fireEvent.click(checkbox("a")));
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("locked item for a branch account still shows the file uploaded by Pusat", () => {
+    render(section([locked(false, true)]));
+
+    expect(screen.getByText("bukti.jpg")).toBeTruthy();
+    expect(screen.queryByText("menunggu Pusat")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Upload/ })).toBeNull();
+  });
+
+  it("locked item for the special uploader: Upload button, checkbox still locked", () => {
+    render(section([locked(true)]));
+
+    expect(screen.getByRole("button", { name: /Upload/ })).toBeTruthy();
+    expect(checkbox("a").disabled).toBe(true);
+    expect(screen.queryByText("Diunggah oleh Pusat")).toBeNull();
+  });
+
   it("reverts the toggle when saving fails", async () => {
     upsert.mockResolvedValue({ error: "Gagal" });
     render(section([doc("a", false)]));

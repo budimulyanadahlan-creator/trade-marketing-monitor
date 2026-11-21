@@ -130,3 +130,160 @@ describe("planSpecialUploaderChanges", () => {
     expect(plan).toEqual({ toAdd: [], toRemove: ["a"] });
   });
 });
+
+// ============================================================
+// Fase 2 — pengunggah khusus efektif & item terkunci
+// ============================================================
+
+import {
+  effectiveSpecialUploaderIds,
+  specialDocumentAccess,
+  specialDocumentDeleteOverride,
+  specialDocumentManualCheckError,
+  specialDocumentUploadError,
+  type AppointedUploader,
+} from "./claim-document-uploaders";
+
+const MMS = "mms";
+const LAIN = "lain";
+
+function appointed(overrides: Partial<AppointedUploader> = {}): AppointedUploader {
+  return { id: "meriana", role: "distributor", is_active: true, distributor_id: EDM, ...overrides };
+}
+
+const skpEdm = { distributor_id: EDM, distributor_parent_id: null };
+const skpMms = { distributor_id: MMS, distributor_parent_id: EDM };
+const skpLain = { distributor_id: LAIN, distributor_parent_id: null };
+
+describe("effectiveSpecialUploaderIds", () => {
+  it("counts an appointee from the SKP's own company", () => {
+    expect(effectiveSpecialUploaderIds(skpEdm, [appointed()])).toEqual(["meriana"]);
+  });
+
+  it("counts an appointee from the SKP company's parent", () => {
+    expect(effectiveSpecialUploaderIds(skpMms, [appointed()])).toEqual(["meriana"]);
+  });
+
+  it("does not count an appointee from an unrelated company (luar grup)", () => {
+    expect(effectiveSpecialUploaderIds(skpLain, [appointed()])).toEqual([]);
+  });
+
+  it("does not count a subsidiary's appointee on the parent company's SKP", () => {
+    expect(effectiveSpecialUploaderIds(skpEdm, [appointed({ distributor_id: MMS })])).toEqual([]);
+  });
+
+  it("never counts a deactivated appointee", () => {
+    expect(effectiveSpecialUploaderIds(skpEdm, [appointed({ is_active: false })])).toEqual([]);
+  });
+
+  it("never counts an appointee that is no longer a distributor", () => {
+    expect(effectiveSpecialUploaderIds(skpEdm, [appointed({ role: "user" })])).toEqual([]);
+  });
+
+  it("is empty for an SKP without a company", () => {
+    expect(
+      effectiveSpecialUploaderIds({ distributor_id: null }, [appointed({ distributor_id: null })])
+    ).toEqual([]);
+  });
+
+  it("keeps only the active appointees when several are appointed", () => {
+    expect(
+      effectiveSpecialUploaderIds(skpEdm, [
+        appointed({ id: "a", is_active: false }),
+        appointed({ id: "b" }),
+        appointed({ id: "c", distributor_id: LAIN }),
+      ])
+    ).toEqual(["b"]);
+  });
+});
+
+describe("specialDocumentUploadError", () => {
+  const cabang = { id: "cabang-1", role: "distributor" };
+
+  it("is null when the item is not locked — the existing rules decide", () => {
+    expect(specialDocumentUploadError(cabang, [])).toBeNull();
+  });
+
+  it("allows an effective special uploader", () => {
+    expect(specialDocumentUploadError({ id: "meriana", role: "distributor" }, ["meriana"])).toBeNull();
+  });
+
+  it("rejects any other distributor account with a message naming Pusat", () => {
+    expect(specialDocumentUploadError(cabang, ["meriana"])).toBe(
+      SPECIAL_UPLOADER_MESSAGES.uploadedByPusat
+    );
+    expect(SPECIAL_UPLOADER_MESSAGES.uploadedByPusat).toMatch(/Pusat/);
+  });
+
+  it("always allows admin and superadmin", () => {
+    expect(specialDocumentUploadError({ id: "x", role: "admin" }, ["meriana"])).toBeNull();
+    expect(specialDocumentUploadError({ id: "x", role: "superadmin" }, ["meriana"])).toBeNull();
+  });
+
+  it("rejects other internal roles on a locked item", () => {
+    expect(specialDocumentUploadError({ id: "x", role: "finance" }, ["meriana"])).toBe(
+      SPECIAL_UPLOADER_MESSAGES.uploadedByPusat
+    );
+  });
+});
+
+describe("specialDocumentManualCheckError", () => {
+  it("rejects a manual check on a locked item for everyone, the uploader included", () => {
+    expect(specialDocumentManualCheckError(["meriana"])).toBe(
+      SPECIAL_UPLOADER_MESSAGES.manualCheckLocked
+    );
+  });
+
+  it("allows a manual check on an item that is not locked", () => {
+    expect(specialDocumentManualCheckError([])).toBeNull();
+  });
+});
+
+describe("specialDocumentDeleteOverride", () => {
+  it("lets admin/superadmin delete someone else's file on a locked item", () => {
+    expect(specialDocumentDeleteOverride({ id: "x", role: "admin" }, ["meriana"])).toBe(true);
+    expect(specialDocumentDeleteOverride({ id: "x", role: "superadmin" }, ["meriana"])).toBe(true);
+  });
+
+  it("does not change the delete rule for items that are not locked", () => {
+    expect(specialDocumentDeleteOverride({ id: "x", role: "admin" }, [])).toBe(false);
+  });
+
+  it("gives distributors no override — only their own file, by the existing rule", () => {
+    expect(specialDocumentDeleteOverride({ id: "meriana", role: "distributor" }, ["meriana"])).toBe(false);
+  });
+});
+
+describe("specialDocumentAccess", () => {
+  it("reports an unlocked item", () => {
+    expect(specialDocumentAccess({ id: "cabang-1", role: "distributor" }, [])).toEqual({
+      locked: false,
+      canUpload: false,
+      canDeleteAny: false,
+    });
+  });
+
+  it("reports a locked item for a branch account", () => {
+    expect(specialDocumentAccess({ id: "cabang-1", role: "distributor" }, ["meriana"])).toEqual({
+      locked: true,
+      canUpload: false,
+      canDeleteAny: false,
+    });
+  });
+
+  it("reports a locked item for the special uploader", () => {
+    expect(specialDocumentAccess({ id: "meriana", role: "distributor" }, ["meriana"])).toEqual({
+      locked: true,
+      canUpload: true,
+      canDeleteAny: false,
+    });
+  });
+
+  it("reports a locked item for admin", () => {
+    expect(specialDocumentAccess({ id: "x", role: "admin" }, ["meriana"])).toEqual({
+      locked: true,
+      canUpload: true,
+      canDeleteAny: true,
+    });
+  });
+});

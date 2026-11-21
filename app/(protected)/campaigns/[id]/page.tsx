@@ -16,6 +16,13 @@ import {
   nationalBudgetSummary,
   type NationalBudgetSummary,
 } from "@/lib/national-skp";
+import {
+  effectiveSpecialUploaderIds,
+  specialDocumentAccess,
+  type AppointedUploader,
+  type SpecialDocumentAccess,
+} from "@/lib/claim-document-uploaders";
+import { fetchAppointedUploadersByDocType } from "@/lib/claim-document-uploaders-data";
 import { CampaignDetailClient, type ChildOwnerOption } from "./campaign-detail-client";
 import type { CampaignRow, CampaignFileRow, ApprovalHistoryRow, RealizationRow, DistributorReceiptRow, ClaimEventRow, ClaimItemStatus, UserRole, CampaignStatus, DistributorScope } from "@/types/database";
 
@@ -47,6 +54,11 @@ export type ClaimDocument = {
   isFulfilled: boolean;
   files: ClaimDocumentFile[];
   verification: ClaimItemVerificationInfo | null;
+  /**
+   * Pengunggah Khusus Fase 2: terisi bila jenis dokumen ini punya pengunggah
+   * khusus efektif pada SKP ini ("terkunci"), dilihat dari akun yang login.
+   */
+  specialUpload?: SpecialDocumentAccess;
 };
 
 // Info budget AA untuk approver: dihitung server-side saat halaman dimuat.
@@ -525,6 +537,7 @@ export default async function CampaignDetailPage({ params }: Props) {
     { data: itemsRaw },
     { data: requirementsRaw },
     { data: checklistsRaw },
+    appointedByDocType,
   ] = await Promise.all([
     wantsItemVerifications
       ? supabase
@@ -551,6 +564,14 @@ export default async function CampaignDetailPage({ params }: Props) {
           .select("document_type_id, is_fulfilled")
           .eq("campaign_id", id)
       : Promise.resolve({ data: [] as ChecklistRow[] }),
+    // Pengunggah Khusus Fase 2: semua penunjukan (tabel kecil) — klien sistem,
+    // karena distributor tidak selalu boleh membaca baris akun lain. Gagal
+    // baca hanya memengaruhi tampilan; server tetap menegakkan aturannya.
+    wantsClaimRequirements
+      ? fetchAppointedUploadersByDocType(createAdminClient()).catch(
+          () => new Map<string, AppointedUploader[]>()
+        )
+      : Promise.resolve(new Map<string, AppointedUploader[]>()),
   ]);
 
   for (const row of (itemsRaw ?? []) as unknown as ClaimItemRow[]) {
@@ -613,13 +634,25 @@ export default async function CampaignDetailPage({ params }: Props) {
       if (list.length > 0) list[list.length - 1].isLatest = true;
     }
 
-    claimDocuments = docs.map((d) => ({
-      documentTypeId: d.documentTypeId,
-      name: d.name,
-      isFulfilled: fulfilledMap.get(d.documentTypeId) ?? false,
-      files: claimFilesByDocType.get(d.documentTypeId) ?? [],
-      verification: verificationByDocType.get(d.documentTypeId) ?? null,
-    }));
+    const uploaderCampaign = {
+      distributor_id: campaign.distributor_id ?? null,
+      distributor_parent_id: campaign.distributor?.parent_distributor_id ?? null,
+    };
+
+    claimDocuments = docs.map((d) => {
+      const special = specialDocumentAccess(
+        { id: user.id, role: userRole },
+        effectiveSpecialUploaderIds(uploaderCampaign, appointedByDocType.get(d.documentTypeId) ?? [])
+      );
+      return {
+        documentTypeId: d.documentTypeId,
+        name: d.name,
+        isFulfilled: fulfilledMap.get(d.documentTypeId) ?? false,
+        files: claimFilesByDocType.get(d.documentTypeId) ?? [],
+        verification: verificationByDocType.get(d.documentTypeId) ?? null,
+        ...(special.locked ? { specialUpload: special } : {}),
+      };
+    });
   }
 
   // Budget AA untuk approver: sisa terkini + selisih jika campaign melebihi.
