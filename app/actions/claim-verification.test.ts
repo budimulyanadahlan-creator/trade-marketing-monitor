@@ -11,12 +11,17 @@ vi.mock("@/lib/distributor-notification-recipients", () => ({
 vi.mock("@/lib/email", () => ({
   sendClaimRevisionRequestedEmail: vi.fn(),
 }));
+vi.mock("@/lib/claim-document-uploaders-data", () => ({
+  fetchAppointedUploadersByDocType: vi.fn(),
+}));
 
 import { acceptClaimItemAction, requestClaimItemRevisionAction } from "./claim-verification";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { sendClaimRevisionRequestedEmail } from "@/lib/email";
 import { getDistributorNotificationRecipients } from "@/lib/distributor-notification-recipients";
+import { fetchAppointedUploadersByDocType } from "@/lib/claim-document-uploaders-data";
+import { SPECIAL_UPLOADER_MESSAGES } from "@/lib/claim-document-uploaders";
 
 // Fase 11: penerima email distributor ditentukan modul penerima (diuji
 // tersendiri); di sini cukup dipastikan aksi memakainya dengan tahap
@@ -24,7 +29,22 @@ import { getDistributorNotificationRecipients } from "@/lib/distributor-notifica
 const DIST_RECIPIENT = { id: "dist-user-1", email: "distuser1@example.com", name: "Dist User One" };
 beforeEach(() => {
   vi.mocked(getDistributorNotificationRecipients).mockResolvedValue([DIST_RECIPIENT]);
+  // Default: tidak ada pengunggah khusus → tidak ada item terkunci.
+  vi.mocked(fetchAppointedUploadersByDocType).mockResolvedValue(new Map());
 });
+
+// Pengunggah Khusus Fase 5: "doc-1" ditunjuk ke akun Pusat perusahaan
+// distributorId → item itu terkunci di SKP perusahaan tsb. dan anaknya.
+function appointUploader(distributorId = "dist-co-1", isActive = true) {
+  vi.mocked(fetchAppointedUploadersByDocType).mockResolvedValue(
+    new Map([
+      [
+        "doc-1",
+        [{ id: "meriana", role: "distributor" as const, is_active: isActive, distributor_id: distributorId }],
+      ],
+    ])
+  );
+}
 
 function makeQueryChain(data: unknown) {
   return {
@@ -54,18 +74,28 @@ type SetupOptions = {
   userId?: string | null;
   role?: string;
   isActive?: boolean;
-  campaign?: { id: string; status: string; name?: string; distributor_id?: string | null } | null;
+  campaign?: {
+    id: string;
+    status: string;
+    name?: string;
+    distributor_id?: string | null;
+    distributor?: { parent_distributor_id: string | null } | null;
+  } | null;
   item?:
     | {
         id: string;
         campaign_id: string;
         item_type: "document" | "amount";
+        document_type_id?: string | null;
         claim_document_types: { name: string } | null;
       }
     | null;
   updateError?: { message: string } | null;
   distributorUsers?: { id: string; full_name: string }[];
   authUsers?: { id: string; email: string | undefined }[];
+  /** Jumlah file jenis dokumen item itu di SKP (dibaca lewat klien sistem). */
+  fileCount?: number;
+  fileCountError?: { message: string } | null;
 };
 
 function setupMocks({
@@ -77,9 +107,12 @@ function setupMocks({
     id: "item-1",
     campaign_id: "camp-1",
     item_type: "document",
+    document_type_id: "doc-1",
     claim_document_types: { name: "Invoice" },
   },
   updateError = null,
+  fileCount = 0,
+  fileCountError = null,
   distributorUsers = [{ id: "dist-user-1", full_name: "Dist User One" }],
   authUsers = [{ id: "dist-user-1", email: "distuser1@example.com" }],
 }: SetupOptions = {}) {
@@ -105,9 +138,15 @@ function setupMocks({
   distributorUsersChain.select = vi.fn().mockReturnValue(distributorUsersChain);
   distributorUsersChain.eq = vi.fn().mockReturnValue(distributorUsersChain);
 
+  // select(..., { count, head }).eq().eq() → { count, error }
+  const filesChain: Record<string, unknown> = { count: fileCount, error: fileCountError };
+  filesChain.select = vi.fn().mockReturnValue(filesChain);
+  filesChain.eq = vi.fn().mockReturnValue(filesChain);
+
   const mockAdminClient = {
     from: vi.fn().mockImplementation((table: string) => {
       if (table === "users") return distributorUsersChain;
+      if (table === "campaign_files") return filesChain;
       return {};
     }),
     auth: {
@@ -120,7 +159,7 @@ function setupMocks({
   vi.mocked(createClient).mockResolvedValue(mockClient as never);
   vi.mocked(createAdminClient).mockReturnValue(mockAdminClient as never);
 
-  return { itemsChain, claimEventsChain, mockAdminClient };
+  return { itemsChain, claimEventsChain, mockAdminClient, filesChain };
 }
 
 describe("acceptClaimItemAction", () => {
@@ -223,6 +262,109 @@ describe("acceptClaimItemAction", () => {
     setupMocks();
     await acceptClaimItemAction("camp-1", "item-1");
     expect(sendClaimRevisionRequestedEmail).not.toHaveBeenCalled();
+  });
+});
+
+describe("acceptClaimItemAction — item terkunci (Pengunggah Khusus Fase 5)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("rejects Accept on a locked document item that has no file yet", async () => {
+    appointUploader();
+    const { itemsChain, claimEventsChain, filesChain } = setupMocks({ fileCount: 0 });
+
+    const result = await acceptClaimItemAction("camp-1", "item-1");
+
+    expect(result).toEqual({ error: SPECIAL_UPLOADER_MESSAGES.awaitingPusat });
+    expect(itemsChain.update).not.toHaveBeenCalled();
+    expect(claimEventsChain.insert).not.toHaveBeenCalled();
+    expect(filesChain.eq).toHaveBeenCalledWith("campaign_id", "camp-1");
+    expect(filesChain.eq).toHaveBeenCalledWith("document_type_id", "doc-1");
+  });
+
+  it("accepts a locked item once a file exists", async () => {
+    appointUploader();
+    const { itemsChain } = setupMocks({ fileCount: 1 });
+
+    const result = await acceptClaimItemAction("camp-1", "item-1");
+
+    expect(result).toEqual({ success: true });
+    expect(itemsChain.update).toHaveBeenCalledWith(expect.objectContaining({ status: "accepted" }));
+  });
+
+  it("locks through the parent company: uploader of the induk, SKP of the anak perusahaan", async () => {
+    appointUploader("edm");
+    setupMocks({
+      campaign: {
+        id: "camp-1",
+        status: "claim_submitted",
+        name: "Promo A",
+        distributor_id: "mms",
+        distributor: { parent_distributor_id: "edm" },
+      },
+    });
+
+    const result = await acceptClaimItemAction("camp-1", "item-1");
+    expect(result).toEqual({ error: SPECIAL_UPLOADER_MESSAGES.awaitingPusat });
+  });
+
+  it("admin is held to the same rule", async () => {
+    appointUploader();
+    setupMocks({ userId: "admin-1", role: "admin" });
+    const result = await acceptClaimItemAction("camp-1", "item-1");
+    expect(result).toEqual({ error: SPECIAL_UPLOADER_MESSAGES.awaitingPusat });
+  });
+
+  it("unlocked item without a file is still accepted (old rule unchanged)", async () => {
+    const { filesChain } = setupMocks({ fileCount: 0 });
+
+    const result = await acceptClaimItemAction("camp-1", "item-1");
+
+    expect(result).toEqual({ success: true });
+    expect(filesChain.select).not.toHaveBeenCalled();
+  });
+
+  it("not locked when the only appointed uploader is inactive, or belongs to another group", async () => {
+    appointUploader("dist-co-1", false);
+    setupMocks();
+    expect(await acceptClaimItemAction("camp-1", "item-1")).toEqual({ success: true });
+
+    appointUploader("grup-lain");
+    setupMocks();
+    expect(await acceptClaimItemAction("camp-1", "item-1")).toEqual({ success: true });
+  });
+
+  it("the amount item is never subject to the locked-document rule", async () => {
+    appointUploader();
+    setupMocks({
+      item: { id: "item-2", campaign_id: "camp-1", item_type: "amount", document_type_id: null, claim_document_types: null },
+    });
+
+    expect(await acceptClaimItemAction("camp-1", "item-2")).toEqual({ success: true });
+    expect(fetchAppointedUploadersByDocType).not.toHaveBeenCalled();
+  });
+
+  it("Minta Revisi stays allowed on a locked item without a file", async () => {
+    appointUploader();
+    const { itemsChain } = setupMocks({ fileCount: 0 });
+
+    const result = await requestClaimItemRevisionAction("camp-1", "item-1", "Surat belum ada");
+
+    expect(result).toEqual({ success: true });
+    expect(itemsChain.update).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "revision_requested" })
+    );
+  });
+
+  it("fails closed when the file count cannot be read", async () => {
+    appointUploader();
+    const { itemsChain } = setupMocks({ fileCountError: { message: "db down" } });
+
+    const result = await acceptClaimItemAction("camp-1", "item-1");
+
+    expect(result).toEqual({ error: "db down" });
+    expect(itemsChain.update).not.toHaveBeenCalled();
   });
 });
 

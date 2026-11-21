@@ -6,6 +6,7 @@ import {
   isActiveSpecialUploader,
   isSpecialUploaderCandidate,
   planSpecialUploaderChanges,
+  specialDocumentAcceptError,
   specialDocumentWindowError,
   specialUploaderReachError,
   type SpecialUploaderAccount,
@@ -374,5 +375,23 @@ describe("specialDocumentWindowError — jendela status item terkunci (Fase 4)",
         SPECIAL_UPLOADER_MESSAGES.statusClosed
       );
     }
+  });
+});
+
+describe("specialDocumentAcceptError — Accept Finance atas item terkunci (Fase 5)", () => {
+  it("rejects Accept on a locked item with no file", () => {
+    expect(specialDocumentAcceptError(["meriana"], 0)).toBe(
+      SPECIAL_UPLOADER_MESSAGES.awaitingPusat
+    );
+  });
+
+  it("allows Accept on a locked item once a file exists (also a legacy branch upload)", () => {
+    expect(specialDocumentAcceptError(["meriana"], 1)).toBeNull();
+    expect(specialDocumentAcceptError(["meriana"], 3)).toBeNull();
+  });
+
+  it("has no opinion on an unlocked item, with or without a file", () => {
+    expect(specialDocumentAcceptError([], 0)).toBeNull();
+    expect(specialDocumentAcceptError([], 2)).toBeNull();
   });
 });

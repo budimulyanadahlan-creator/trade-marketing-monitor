@@ -10,7 +10,8 @@
  * dihitung). Fase 2: "pengunggah khusus efektif" per SKP dan keputusan
  * upload / hapus / centang manual untuk item terkunci. Fase 3: jangkauan
  * lintas perusahaan — SKP anak perusahaan dan klaim turunan SKP Nasional.
- * Fase 4: jendela status item terkunci sesudah klaim diajukan.
+ * Fase 4: jendela status item terkunci sesudah klaim diajukan. Fase 5:
+ * Accept Finance atas item terkunci.
  *
  * Murni, tanpa I/O — pemanggil mengambil baris akun dari database lalu
  * meneruskannya ke sini. Trigger database
@@ -39,6 +40,8 @@ export const SPECIAL_UPLOADER_MESSAGES = {
     "Dokumen ini sudah di-Accept Finance dan tidak dapat diubah lagi.",
   statusClosed:
     "Dokumen ini hanya dapat diunggah atau dihapus saat SKP berstatus Disetujui, Berjalan, atau Klaim Diajukan.",
+  awaitingPusat:
+    "Dokumen ini masih ditunggu dari Pusat — belum ada file yang diunggah, jadi belum dapat di-Accept.",
 } as const;
 
 export type SpecialUploaderAccount = {
@@ -266,6 +269,29 @@ export function specialDocumentWindowError(
     return itemStatus === "accepted" ? SPECIAL_UPLOADER_MESSAGES.itemAccepted : null;
   }
   return SPECIAL_UPLOADER_MESSAGES.statusClosed;
+}
+
+// ============================================================
+// Verifikasi Finance (Fase 5)
+//
+// Item terkunci tidak bisa dicentang manual dan tidak menahan Submit Klaim,
+// jadi klaim bisa sampai ke Finance dengan item itu masih kosong. Finance
+// tidak boleh meng-Accept-nya sebelum filenya ada — file siapa pun dihitung,
+// termasuk unggahan lama cabang. Minta Revisi tetap boleh kapan saja, dan
+// aturan Accept item tidak terkunci tidak diubah.
+// ============================================================
+
+/**
+ * Pesan penolakan Accept untuk item dokumen terkunci yang belum punya file,
+ * atau null jika modul ini tidak menolak. `fileCount` = jumlah file jenis
+ * dokumen itu di SKP.
+ */
+export function specialDocumentAcceptError(
+  effectiveUploaderIds: string[],
+  fileCount: number
+): string | null {
+  if (effectiveUploaderIds.length === 0) return null;
+  return fileCount > 0 ? null : SPECIAL_UPLOADER_MESSAGES.awaitingPusat;
 }
 
 /** Ringkasan untuk tampilan satu baris dokumen klaim. */

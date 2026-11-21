@@ -760,12 +760,19 @@ function ClaimItemVerificationControls({
   itemLabel,
   verification,
   canVerify,
+  awaitingPusat = false,
 }: {
   campaignId: string;
   itemId: string;
   itemLabel: string;
   verification: ClaimItemVerificationInfo;
   canVerify: boolean;
+  /**
+   * Pengunggah Khusus Fase 5: item dokumen terkunci yang belum ada filenya —
+   * berlabel "Menunggu dari Pusat" dan tidak bisa di-Accept (server menolak
+   * juga). Minta Revisi tetap boleh.
+   */
+  awaitingPusat?: boolean;
 }) {
   const router = useRouter();
   const [dialogMode, setDialogMode] = useState<"accept" | "revision" | null>(null);
@@ -788,6 +795,12 @@ function ClaimItemVerificationControls({
   return (
     <div className="flex flex-col gap-1 items-end flex-shrink-0">
       <div className="flex items-center gap-2 flex-wrap justify-end">
+        {awaitingPusat && (
+          <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium whitespace-nowrap text-sky-400 bg-sky-500/10 border-sky-500/30">
+            <Clock className="h-3 w-3" />
+            Menunggu dari Pusat
+          </span>
+        )}
         <ClaimItemStatusBadge status={verification.status} />
         {canVerify && (
           <div className="flex items-center gap-1">
@@ -797,6 +810,12 @@ function ClaimItemVerificationControls({
               variant="outline"
               className="h-6 px-2 text-[11px] border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10"
               onClick={() => setDialogMode("accept")}
+              disabled={awaitingPusat}
+              title={
+                awaitingPusat
+                  ? "Dokumen ini masih ditunggu dari Pusat — belum ada file untuk di-Accept"
+                  : undefined
+              }
             >
               Terima
             </Button>
@@ -1088,6 +1107,16 @@ export function ClaimChecklistSection({
           const canDeleteFile = (f: ClaimDocument["files"][number]) =>
             (canActAsDistributor && isEditable && f.uploadedBy === userId) ||
             (lockedRowActive && (!!special?.canDeleteAny || f.uploadedBy === userId));
+          // Fase 5: bagi Finance/admin, item terkunci yang belum ada filenya
+          // "Menunggu dari Pusat" — bukan keterlambatan cabang — dan belum
+          // bisa di-Accept. Tampilan cabang (keterangan "menunggu Pusat" di
+          // samping nama dokumen) tidak berubah.
+          const awaitingPusat =
+            locked &&
+            !hasFiles &&
+            !isDistributor &&
+            !!doc.verification &&
+            doc.verification.status !== "accepted";
 
           return (
             <div
@@ -1133,7 +1162,7 @@ export function ClaimChecklistSection({
                     Diunggah oleh Pusat
                   </span>
                 )}
-                {locked && !mayUploadLocked && !fulfilled && (
+                {locked && !mayUploadLocked && !fulfilled && !awaitingPusat && (
                   <span className="text-[10px] rounded-full px-1.5 py-0.5 border whitespace-nowrap text-amber-400 border-amber-500/30 bg-amber-500/10">
                     menunggu Pusat
                   </span>
@@ -1159,6 +1188,7 @@ export function ClaimChecklistSection({
                   itemLabel={doc.name}
                   verification={doc.verification}
                   canVerify={canVerifyItems}
+                  awaitingPusat={awaitingPusat}
                 />
               )}
               </div>

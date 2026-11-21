@@ -247,3 +247,76 @@ describe("ClaimChecklistSection — item terkunci sesudah klaim diajukan", () =>
     expect(uploadButtons()).toHaveLength(1);
   });
 });
+
+// Pengunggah Khusus Fase 5 — panel verifikasi Finance untuk item terkunci.
+describe("ClaimChecklistSection — verifikasi Finance atas item terkunci", () => {
+  const forRole = (
+    documents: ClaimDocument[],
+    userRole: "finance" | "admin" | "distributor" = "finance"
+  ) => (
+    <ClaimChecklistSection
+      campaignId="camp-1"
+      campaignStatus="claim_submitted"
+      userRole={userRole}
+      userId="user-1"
+      documents={documents}
+      claimAmount={null}
+      claimAmountVerification={null}
+    />
+  );
+  const item = (
+    isLocked: boolean,
+    withFile: boolean,
+    status: "pending" | "accepted" | "revision_requested" = "pending"
+  ): ClaimDocument => ({
+    ...doc("a", withFile, withFile),
+    ...(isLocked
+      ? { specialUpload: { locked: true, canUpload: false, canDeleteAny: false } }
+      : {}),
+    verification: { id: "item-a", status, note: null, actorName: null, decidedAt: null },
+  });
+  const accept = () => screen.getByRole("button", { name: "Terima" }) as HTMLButtonElement;
+  const revisi = () => screen.getByRole("button", { name: "Minta Revisi" }) as HTMLButtonElement;
+
+  it("locked item without a file: 'Menunggu dari Pusat', Accept disabled, Minta Revisi still enabled", () => {
+    render(forRole([item(true, false)]));
+
+    expect(screen.getByText("Menunggu dari Pusat")).toBeTruthy();
+    expect(accept().disabled).toBe(true);
+    expect(revisi().disabled).toBe(false);
+  });
+
+  it("locked item with a file: Accept enabled, no waiting label, uploader name shown", () => {
+    render(forRole([item(true, true)]));
+
+    expect(screen.queryByText("Menunggu dari Pusat")).toBeNull();
+    expect(accept().disabled).toBe(false);
+    expect(screen.getByText(/oleh Budi Cabang/)).toBeTruthy();
+  });
+
+  it("unlocked item without a file keeps the old rule: Accept enabled, no label", () => {
+    render(forRole([item(false, false)]));
+
+    expect(screen.queryByText("Menunggu dari Pusat")).toBeNull();
+    expect(accept().disabled).toBe(false);
+  });
+
+  it("admin gets the same disabled Accept on an empty locked item", () => {
+    render(
+      forRole(
+        [{ ...item(true, false), specialUpload: { locked: true, canUpload: true, canDeleteAny: true } }],
+        "admin"
+      )
+    );
+
+    expect(screen.getByText("Menunggu dari Pusat")).toBeTruthy();
+    expect(accept().disabled).toBe(true);
+  });
+
+  it("the branch view is unchanged: 'menunggu Pusat' next to the document, no Finance label", () => {
+    render(forRole([item(true, false)], "distributor"));
+
+    expect(screen.queryByText("Menunggu dari Pusat")).toBeNull();
+    expect(screen.getByText("menunggu Pusat")).toBeTruthy();
+  });
+});

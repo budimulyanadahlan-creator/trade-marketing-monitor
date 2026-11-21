@@ -6,6 +6,11 @@ import { z } from "zod";
 import { sendClaimRevisionRequestedEmail } from "@/lib/email";
 import { getDistributorNotificationRecipients } from "@/lib/distributor-notification-recipients";
 import { CLAIM_AMOUNT_ITEM_LABEL } from "@/lib/claim-item-verifications";
+import {
+  effectiveSpecialUploaderIds,
+  specialDocumentAcceptError,
+} from "@/lib/claim-document-uploaders";
+import { fetchAppointedUploadersByDocType } from "@/lib/claim-document-uploaders-data";
 import type { ClaimItemStatus } from "@/types/database";
 
 async function requireActiveUser() {
@@ -45,7 +50,7 @@ async function decideClaimItem(
 
     const { data: campaign } = await supabase
       .from("campaigns")
-      .select("id, status, name, distributor_id")
+      .select("id, status, name, distributor_id, distributor:distributors(parent_distributor_id)")
       .eq("id", campaignId)
       .single();
 
@@ -57,12 +62,26 @@ async function decideClaimItem(
 
     const { data: item } = await supabase
       .from("claim_item_verifications")
-      .select("id, campaign_id, item_type, claim_document_types(name)")
+      .select("id, campaign_id, item_type, document_type_id, claim_document_types(name)")
       .eq("id", itemId)
       .single();
 
     if (!item || item.campaign_id !== campaignId) {
       return { error: "Item verifikasi tidak ditemukan" };
+    }
+
+    // Pengunggah Khusus Fase 5: item dokumen terkunci tidak bisa di-Accept
+    // sebelum filenya ada. Minta Revisi dan item lain tidak terpengaruh.
+    if (status === "accepted" && item.item_type === "document" && item.document_type_id) {
+      const lockedError = await lockedDocumentAcceptError({
+        campaignId,
+        documentTypeId: item.document_type_id,
+        distributorId: campaign.distributor_id ?? null,
+        distributorParentId:
+          (campaign as unknown as { distributor?: { parent_distributor_id: string | null } | null })
+            .distributor?.parent_distributor_id ?? null,
+      });
+      if (lockedError) return { error: lockedError };
     }
 
     const decidedAt = new Date().toISOString();
@@ -120,6 +139,37 @@ async function decideClaimItem(
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Terjadi kesalahan" };
   }
+}
+
+/**
+ * Pesan penolakan Accept bila jenis dokumen ini terkunci pada SKP ini
+ * (punya pengunggah khusus efektif) dan belum ada filenya; null jika boleh.
+ * Aturannya di lib/claim-document-uploaders.ts. Penunjukan dan jumlah file
+ * dibaca lewat klien sistem — ini pencarian otorisasi, tidak boleh
+ * bergantung pada apa yang kebetulan terlihat lewat RLS.
+ */
+async function lockedDocumentAcceptError(opts: {
+  campaignId: string;
+  documentTypeId: string;
+  distributorId: string | null;
+  distributorParentId: string | null;
+}): Promise<string | null> {
+  const admin = createAdminClient();
+  const appointed = await fetchAppointedUploadersByDocType(admin, [opts.documentTypeId]);
+  const effectiveUploaderIds = effectiveSpecialUploaderIds(
+    { distributor_id: opts.distributorId, distributor_parent_id: opts.distributorParentId },
+    appointed.get(opts.documentTypeId) ?? []
+  );
+  if (effectiveUploaderIds.length === 0) return null;
+
+  const { count, error } = await admin
+    .from("campaign_files")
+    .select("id", { count: "exact", head: true })
+    .eq("campaign_id", opts.campaignId)
+    .eq("document_type_id", opts.documentTypeId);
+  if (error) return error.message;
+
+  return specialDocumentAcceptError(effectiveUploaderIds, count ?? 0);
 }
 
 async function notifyClaimRevisionRequested(opts: {
