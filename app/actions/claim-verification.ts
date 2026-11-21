@@ -50,7 +50,9 @@ async function decideClaimItem(
 
     const { data: campaign } = await supabase
       .from("campaigns")
-      .select("id, status, name, distributor_id, distributor:distributors(parent_distributor_id)")
+      .select(
+        "id, status, name, skp_number, distributor_id, distributor:distributors(name, parent_distributor_id), region:regions(name)"
+      )
       .eq("id", campaignId)
       .single();
 
@@ -70,16 +72,22 @@ async function decideClaimItem(
       return { error: "Item verifikasi tidak ditemukan" };
     }
 
+    const joined = campaign as unknown as {
+      skp_number?: string | null;
+      distributor?: { name?: string | null; parent_distributor_id: string | null } | null;
+      region?: { name?: string | null } | null;
+    };
+    const distributorParentId = joined.distributor?.parent_distributor_id ?? null;
+    const documentTypeId = item.item_type === "document" ? (item.document_type_id ?? null) : null;
+
     // Pengunggah Khusus Fase 5: item dokumen terkunci tidak bisa di-Accept
     // sebelum filenya ada. Minta Revisi dan item lain tidak terpengaruh.
-    if (status === "accepted" && item.item_type === "document" && item.document_type_id) {
+    if (status === "accepted" && documentTypeId) {
       const lockedError = await lockedDocumentAcceptError({
         campaignId,
-        documentTypeId: item.document_type_id,
+        documentTypeId,
         distributorId: campaign.distributor_id ?? null,
-        distributorParentId:
-          (campaign as unknown as { distributor?: { parent_distributor_id: string | null } | null })
-            .distributor?.parent_distributor_id ?? null,
+        distributorParentId,
       });
       if (lockedError) return { error: lockedError };
     }
@@ -126,7 +134,12 @@ async function decideClaimItem(
         await notifyClaimRevisionRequested({
           campaignId,
           campaignName: campaign.name,
+          skpNumber: joined.skp_number ?? null,
           distributorId: campaign.distributor_id,
+          distributorParentId,
+          distributorName: joined.distributor?.name ?? null,
+          regionName: joined.region?.name ?? null,
+          documentTypeId,
           itemLabel,
           note: note ?? "",
         });
@@ -155,11 +168,7 @@ async function lockedDocumentAcceptError(opts: {
   distributorParentId: string | null;
 }): Promise<string | null> {
   const admin = createAdminClient();
-  const appointed = await fetchAppointedUploadersByDocType(admin, [opts.documentTypeId]);
-  const effectiveUploaderIds = effectiveSpecialUploaderIds(
-    { distributor_id: opts.distributorId, distributor_parent_id: opts.distributorParentId },
-    appointed.get(opts.documentTypeId) ?? []
-  );
+  const effectiveUploaderIds = await fetchEffectiveUploaderIds(admin, opts);
   if (effectiveUploaderIds.length === 0) return null;
 
   const { count, error } = await admin
@@ -172,20 +181,53 @@ async function lockedDocumentAcceptError(opts: {
   return specialDocumentAcceptError(effectiveUploaderIds, count ?? 0);
 }
 
+/** Pengunggah khusus efektif sebuah jenis dokumen pada sebuah SKP (klien sistem). */
+async function fetchEffectiveUploaderIds(
+  admin: ReturnType<typeof createAdminClient>,
+  opts: { documentTypeId: string; distributorId: string | null; distributorParentId: string | null }
+): Promise<string[]> {
+  const appointed = await fetchAppointedUploadersByDocType(admin, [opts.documentTypeId]);
+  return effectiveSpecialUploaderIds(
+    { distributor_id: opts.distributorId, distributor_parent_id: opts.distributorParentId },
+    appointed.get(opts.documentTypeId) ?? []
+  );
+}
+
 async function notifyClaimRevisionRequested(opts: {
   campaignId: string;
   campaignName: string;
+  skpNumber: string | null;
   distributorId: string | null;
+  distributorParentId: string | null;
+  distributorName: string | null;
+  regionName: string | null;
+  /** Jenis dokumen item yang direvisi; null untuk nominal klaim. */
+  documentTypeId: string | null;
   itemLabel: string;
   note: string;
 }) {
   if (!opts.distributorId) return;
+  const admin = createAdminClient();
 
-  // Fase 11: pemegang klaim + Pusat perusahaan SKP + Pusat induk.
+  // Pengunggah Khusus Fase 6: revisi item dokumen terkunci ditujukan ke
+  // pengunggah khusus efektifnya, bukan pemegang klaim (yang tidak bisa
+  // mengunggah dokumen itu). Bila pencarian ini gagal, email tidak dikirim
+  // sama sekali daripada salah alamat — pemanggil menangkap error-nya.
+  const specialUploaderIds = opts.documentTypeId
+    ? await fetchEffectiveUploaderIds(admin, {
+        documentTypeId: opts.documentTypeId,
+        distributorId: opts.distributorId,
+        distributorParentId: opts.distributorParentId,
+      })
+    : [];
+
+  // Fase 11: pemegang klaim + Pusat perusahaan SKP + Pusat induk; item
+  // terkunci: pengunggah khusus menggantikan pemegang klaim.
   const recipients = await getDistributorNotificationRecipients(
-    createAdminClient(),
+    admin,
     opts.campaignId,
-    "after_claim"
+    "after_claim",
+    { specialUploaderIds }
   );
   if (recipients.length === 0) return;
 
@@ -193,6 +235,9 @@ async function notifyClaimRevisionRequested(opts: {
     to: recipients,
     campaignId: opts.campaignId,
     campaignName: opts.campaignName,
+    skpNumber: opts.skpNumber,
+    distributorName: opts.distributorName,
+    regionName: opts.regionName,
     itemLabel: opts.itemLabel,
     note: opts.note,
   });

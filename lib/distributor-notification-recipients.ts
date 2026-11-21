@@ -17,6 +17,12 @@
  *   tahap apa pun. Aturan Cabang seregion tidak dipakai — cabang lain tidak
  *   melihat turunan itu.
  *
+ * - **Revisi item dokumen terkunci** (Pengunggah Khusus Fase 6): pengunggah
+ *   khusus efektif jenis dokumen itu + akun Pusat perusahaan SKP + akun Pusat
+ *   induk. Pemegang klaim / pemilik klaim turunan / Cabang seregion TIDAK
+ *   dikirimi — mereka tidak bisa menindaklanjuti dokumen itu — kecuali ia
+ *   sendiri termasuk kelompok tadi.
+ *
  * Akun nonaktif dan non-distributor tidak pernah menjadi penerima. Scope null
  * (akun lama) diperlakukan sebagai Cabang, sama seperti modul akses.
  */
@@ -46,11 +52,22 @@ export type NotificationCampaign = {
   claim_owner_id?: string | null;
 };
 
+export type NotificationRecipientOptions = {
+  /**
+   * Pengunggah khusus efektif jenis dokumen yang diminta revisi
+   * (effectiveSpecialUploaderIds). Tidak kosong = item terkunci: mereka
+   * menggantikan pemegang klaim sebagai penerima. Kosong / tidak diisi =
+   * aturan biasa.
+   */
+  specialUploaderIds?: string[];
+};
+
 /** Murni: id penerima tanpa duplikat, urut sesuai daftar kandidat. */
 export function resolveDistributorRecipientIds(
   campaign: NotificationCampaign,
   candidates: NotificationCandidate[],
-  stage: NotificationStage
+  stage: NotificationStage,
+  opts: NotificationRecipientOptions = {}
 ): string[] {
   const company = campaign.distributor_id;
   if (!company) return [];
@@ -72,12 +89,19 @@ export function resolveDistributorRecipientIds(
   const holder = owner ?? campaign.claim_submitted_by;
   const useHolder = !!owner || (stage === "after_claim" && !!holder);
 
+  const specialUploaders = new Set(opts.specialUploaderIds ?? []);
+  const locked = specialUploaders.size > 0;
+
   const ids = new Set<string>();
   for (const c of eligible) {
     const include =
       isPusatOf(c, company) ||
       isPusatOf(c, parent) ||
-      (useHolder ? c.id === holder && c.distributor_id === company : isCabangInRegion(c));
+      (locked
+        ? specialUploaders.has(c.id)
+        : useHolder
+          ? c.id === holder && c.distributor_id === company
+          : isCabangInRegion(c));
     if (include) ids.add(c.id);
   }
   return [...ids];
@@ -96,7 +120,7 @@ export async function getDistributorNotificationRecipients(
   adminClient: AdminClient,
   campaignId: string,
   stage: NotificationStage,
-  opts: { holderOverride?: string | null } = {}
+  opts: { holderOverride?: string | null } & NotificationRecipientOptions = {}
 ): Promise<EmailRecipient[]> {
   const { data: campaign } = await adminClient
     .from("campaigns")
@@ -127,7 +151,9 @@ export async function getDistributorNotificationRecipients(
   if (!users || users.length === 0) return [];
 
   const recipientIds = new Set(
-    resolveDistributorRecipientIds(target, users as NotificationCandidate[], stage)
+    resolveDistributorRecipientIds(target, users as NotificationCandidate[], stage, {
+      specialUploaderIds: opts.specialUploaderIds,
+    })
   );
   if (recipientIds.size === 0) return [];
 

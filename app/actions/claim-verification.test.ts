@@ -79,7 +79,9 @@ type SetupOptions = {
     status: string;
     name?: string;
     distributor_id?: string | null;
-    distributor?: { parent_distributor_id: string | null } | null;
+    skp_number?: string | null;
+    distributor?: { name?: string; parent_distributor_id: string | null } | null;
+    region?: { name: string } | null;
   } | null;
   item?:
     | {
@@ -448,7 +450,32 @@ describe("requestClaimItemRevisionAction", () => {
     expect(getDistributorNotificationRecipients).toHaveBeenCalledWith(
       expect.anything(),
       "camp-1",
-      "after_claim"
+      "after_claim",
+      { specialUploaderIds: [] }
+    );
+  });
+
+  it("email mentions the SKP number, company, and region", async () => {
+    setupMocks({
+      campaign: {
+        id: "camp-1",
+        status: "claim_submitted",
+        name: "Promo A",
+        distributor_id: "dist-co-1",
+        skp_number: "SKP/2026/001",
+        distributor: { name: "Esham Dima", parent_distributor_id: null },
+        region: { name: "West & Central Java" },
+      },
+    });
+
+    await requestClaimItemRevisionAction("camp-1", "item-1", "Kurang jelas");
+
+    expect(sendClaimRevisionRequestedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skpNumber: "SKP/2026/001",
+        distributorName: "Esham Dima",
+        regionName: "West & Central Java",
+      })
     );
   });
 
@@ -480,5 +507,78 @@ describe("requestClaimItemRevisionAction", () => {
 
     const result = await requestClaimItemRevisionAction("camp-1", "item-1", "Kurang jelas");
     expect(result).toEqual({ success: true });
+  });
+});
+
+describe("requestClaimItemRevisionAction — item terkunci (Pengunggah Khusus Fase 6)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const recipientOpts = () => vi.mocked(getDistributorNotificationRecipients).mock.calls[0]?.[3];
+
+  it("revision on a locked document item routes the email to the effective special uploaders", async () => {
+    appointUploader();
+    setupMocks();
+
+    await requestClaimItemRevisionAction("camp-1", "item-1", "Tanda tangan kurang");
+
+    expect(recipientOpts()).toEqual({ specialUploaderIds: ["meriana"] });
+    expect(fetchAppointedUploadersByDocType).toHaveBeenCalledWith(expect.anything(), ["doc-1"]);
+    expect(sendClaimRevisionRequestedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ itemLabel: "Invoice", note: "Tanda tangan kurang", to: [DIST_RECIPIENT] })
+    );
+  });
+
+  it("locks through the parent company on an anak-perusahaan SKP", async () => {
+    appointUploader("edm");
+    setupMocks({
+      campaign: {
+        id: "camp-1",
+        status: "claim_submitted",
+        name: "Promo A",
+        distributor_id: "mms",
+        distributor: { parent_distributor_id: "edm" },
+      },
+    });
+
+    await requestClaimItemRevisionAction("camp-1", "item-1", "Kurang jelas");
+
+    expect(recipientOpts()).toEqual({ specialUploaderIds: ["meriana"] });
+  });
+
+  it("inactive or out-of-group uploader → old recipients", async () => {
+    appointUploader("dist-co-1", false);
+    setupMocks();
+    await requestClaimItemRevisionAction("camp-1", "item-1", "Kurang jelas");
+    expect(recipientOpts()).toEqual({ specialUploaderIds: [] });
+
+    vi.clearAllMocks();
+    appointUploader("grup-lain");
+    setupMocks();
+    await requestClaimItemRevisionAction("camp-1", "item-1", "Kurang jelas");
+    expect(recipientOpts()).toEqual({ specialUploaderIds: [] });
+  });
+
+  it("revision on the amount item keeps the old recipients and never looks up uploaders", async () => {
+    appointUploader();
+    setupMocks({
+      item: { id: "item-2", campaign_id: "camp-1", item_type: "amount", document_type_id: null, claim_document_types: null },
+    });
+
+    await requestClaimItemRevisionAction("camp-1", "item-2", "Nominal tidak sesuai");
+
+    expect(recipientOpts()).toEqual({ specialUploaderIds: [] });
+    expect(fetchAppointedUploadersByDocType).not.toHaveBeenCalled();
+  });
+
+  it("revision still succeeds when the uploader lookup fails; no email goes to the wrong people", async () => {
+    setupMocks();
+    vi.mocked(fetchAppointedUploadersByDocType).mockRejectedValueOnce(new Error("db down"));
+
+    const result = await requestClaimItemRevisionAction("camp-1", "item-1", "Kurang jelas");
+
+    expect(result).toEqual({ success: true });
+    expect(sendClaimRevisionRequestedEmail).not.toHaveBeenCalled();
   });
 });

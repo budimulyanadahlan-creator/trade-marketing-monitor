@@ -234,3 +234,106 @@ describe("resolveDistributorRecipientIds — klaim turunan SKP nasional (Fase 4)
     );
   });
 });
+
+describe("resolveDistributorRecipientIds — item dokumen terkunci (Pengunggah Khusus Fase 6)", () => {
+  // "meriana" = akun Pusat EDM kedua, ditunjuk sebagai pengunggah khusus.
+  const withMeriana = [...candidates, user("meriana", EDM, "pusat", null)];
+  const locked = (ids: string[]) => ({ specialUploaderIds: ids });
+
+  it("SKP EDM → pengunggah khusus + Pusat EDM; pemegang klaim cabang tidak dikirimi", () => {
+    const campaign: NotificationCampaign = {
+      distributor_id: EDM,
+      distributor_parent_id: null,
+      region_id: WCJ,
+      claim_submitted_by: "edm-cabang-wcj",
+    };
+    expect(
+      sorted(resolveDistributorRecipientIds(campaign, withMeriana, "after_claim", locked(["meriana"])))
+    ).toEqual(sorted(["meriana", "edm-pusat"]));
+  });
+
+  it("SKP MMS → pengunggah khusus induk + Pusat MMS + Pusat EDM, tanpa pemegang klaim MMS", () => {
+    const campaign: NotificationCampaign = {
+      distributor_id: MMS,
+      distributor_parent_id: EDM,
+      region_id: WCJ,
+      claim_submitted_by: "mms-cabang-wcj",
+    };
+    expect(
+      sorted(resolveDistributorRecipientIds(campaign, withMeriana, "after_claim", locked(["meriana"])))
+    ).toEqual(sorted(["meriana", "mms-pusat", "edm-pusat"]));
+  });
+
+  it("klaim turunan SKP nasional → pemilik klaim tidak dikirimi", () => {
+    const turunan: NotificationCampaign = {
+      distributor_id: BIR,
+      distributor_parent_id: EDM,
+      region_id: WCJ,
+      claim_submitted_by: "bir-cabang-wcj",
+      claim_owner_id: "bir-cabang-wcj",
+    };
+    expect(
+      sorted(resolveDistributorRecipientIds(turunan, withMeriana, "after_claim", locked(["meriana"])))
+    ).toEqual(sorted(["meriana", "bir-pusat", "edm-pusat"]));
+  });
+
+  it("pemegang klaim yang juga Pusat atau pengunggah khusus tetap menerima, sekali saja", () => {
+    const campaign: NotificationCampaign = {
+      distributor_id: EDM,
+      distributor_parent_id: null,
+      region_id: WCJ,
+      claim_submitted_by: "meriana",
+    };
+    expect(
+      sorted(resolveDistributorRecipientIds(campaign, withMeriana, "after_claim", locked(["meriana"])))
+    ).toEqual(sorted(["meriana", "edm-pusat"]));
+
+    const milikPusat = { ...campaign, claim_submitted_by: "edm-pusat" };
+    expect(
+      sorted(resolveDistributorRecipientIds(milikPusat, withMeriana, "after_claim", locked(["meriana"])))
+    ).toEqual(sorted(["meriana", "edm-pusat"]));
+  });
+
+  it("klaim tanpa pemegang tercatat → Cabang seregion tidak dipakai sebagai pengganti", () => {
+    const campaign: NotificationCampaign = {
+      distributor_id: EDM,
+      distributor_parent_id: null,
+      region_id: WCJ,
+      claim_submitted_by: null,
+    };
+    expect(
+      sorted(resolveDistributorRecipientIds(campaign, withMeriana, "after_claim", locked(["meriana"])))
+    ).toEqual(sorted(["meriana", "edm-pusat"]));
+  });
+
+  it("beberapa pengunggah khusus → semuanya; yang nonaktif atau bukan kandidat dilewati", () => {
+    const campaign: NotificationCampaign = {
+      distributor_id: EDM,
+      distributor_parent_id: null,
+      region_id: WCJ,
+      claim_submitted_by: "edm-cabang-wcj",
+    };
+    const list = [
+      ...withMeriana,
+      user("cadangan", EDM, "pusat", null),
+      user("nonaktif", EDM, "pusat", null, { is_active: false }),
+    ];
+    expect(
+      sorted(
+        resolveDistributorRecipientIds(campaign, list, "after_claim", locked(["meriana", "cadangan", "nonaktif", "hilang"]))
+      )
+    ).toEqual(sorted(["meriana", "cadangan", "edm-pusat"]));
+  });
+
+  it("daftar pengunggah khusus kosong (item tidak terkunci) → penerima lama", () => {
+    const campaign: NotificationCampaign = {
+      distributor_id: MMS,
+      distributor_parent_id: EDM,
+      region_id: WCJ,
+      claim_submitted_by: "mms-cabang-wcj",
+    };
+    expect(
+      sorted(resolveDistributorRecipientIds(campaign, withMeriana, "after_claim", locked([])))
+    ).toEqual(sorted(["mms-cabang-wcj", "mms-pusat", "edm-pusat", "meriana"]));
+  });
+});

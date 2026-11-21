@@ -235,6 +235,10 @@ export interface ClaimRevisionRequestedEmailOptions {
   campaignId: string;
   itemLabel: string;
   note: string;
+  /** Opsional — baris yang kosong tidak ditampilkan. */
+  skpNumber?: string | null;
+  distributorName?: string | null;
+  regionName?: string | null;
 }
 
 export async function sendClaimRevisionRequestedEmail(
@@ -268,6 +272,9 @@ export async function sendClaimRevisionRequestedEmail(
           recipientName: name,
           campaignName: opts.campaignName,
           campaignUrl,
+          skpNumber: opts.skpNumber ?? null,
+          distributorName: opts.distributorName ?? null,
+          regionName: opts.regionName ?? null,
           itemLabel: opts.itemLabel,
           note: opts.note,
         }),
@@ -763,7 +770,23 @@ function buildClaimRevisionRequestedHtml(opts: {
   itemLabel: string;
   note: string;
   campaignUrl: string;
+  skpNumber: string | null;
+  distributorName: string | null;
+  regionName: string | null;
 }) {
+  const detailRow = (label: string, value: string | null) =>
+    value
+      ? `<tr>
+                  <td style="padding:12px 16px;background:#f9fafb;border-bottom:1px solid #e5e7eb;font-weight:600;color:#374151;font-size:14px;">${label}</td>
+                  <td style="padding:12px 16px;border-bottom:1px solid #e5e7eb;color:#111827;font-size:14px;">${value}</td>
+                </tr>`
+      : "";
+  const detailRows = [
+    detailRow("No. SKP", opts.skpNumber),
+    detailRow("Perusahaan", opts.distributorName),
+    detailRow("Region", opts.regionName),
+  ].join("");
+
   return `<!DOCTYPE html>
 <html lang="id">
 <head>
@@ -794,6 +817,7 @@ function buildClaimRevisionRequestedHtml(opts: {
                   <td style="padding:12px 16px;background:#f9fafb;border-bottom:1px solid #e5e7eb;font-weight:600;color:#374151;width:40%;font-size:14px;">Nama Campaign</td>
                   <td style="padding:12px 16px;border-bottom:1px solid #e5e7eb;color:#111827;font-size:14px;">${opts.campaignName}</td>
                 </tr>
+                ${detailRows}
                 <tr>
                   <td style="padding:12px 16px;background:#f9fafb;border-bottom:1px solid #e5e7eb;font-weight:600;color:#374151;font-size:14px;">Item Direvisi</td>
                   <td style="padding:12px 16px;border-bottom:1px solid #e5e7eb;color:#111827;font-size:14px;">${opts.itemLabel}</td>

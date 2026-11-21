@@ -239,6 +239,29 @@ describe("sendClaimRevisionRequestedEmail", () => {
     expect(call.html).toContain("File buram, upload ulang yang lebih jelas");
   });
 
+  it("includes the SKP number, company, and region when given", async () => {
+    await sendClaimRevisionRequestedEmail({
+      ...opts,
+      skpNumber: "SKP/2026/001",
+      distributorName: "Mitra Monas Sejahtera",
+      regionName: "East Java Bali",
+    });
+
+    const html = mockSend.mock.calls[0][0].html as string;
+    expect(html).toContain("SKP/2026/001");
+    expect(html).toContain("Mitra Monas Sejahtera");
+    expect(html).toContain("East Java Bali");
+  });
+
+  it("omits the SKP number, company, and region rows when not given", async () => {
+    await sendClaimRevisionRequestedEmail(opts);
+
+    const html = mockSend.mock.calls[0][0].html as string;
+    expect(html).not.toContain("No. SKP");
+    expect(html).not.toContain("Perusahaan");
+    expect(html).not.toContain("Region");
+  });
+
   it("continues sending to other recipients when one fails", async () => {
     const twoRecipients = [
       { email: "dist1@example.com", name: "Distributor One" },
