@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { z } from "zod";
 import { distributorParentError } from "@/lib/distributor-parent";
+import { planSpecialUploaderChanges } from "@/lib/claim-document-uploaders";
+import type { DistributorScope, UserRole } from "@/types/database";
 
 async function requireAdmin() {
   const supabase = await createClient();
@@ -27,7 +29,7 @@ async function requireAdmin() {
     throw new Error("Forbidden");
   }
 
-  return { supabase };
+  return { supabase, userId: user.id };
 }
 
 // ============================================================
@@ -875,6 +877,8 @@ const claimDocumentTypeSchema = z.object({
   sort_order: z.coerce.number().int().min(1, "Urutan harus lebih dari 0"),
 });
 
+const uploaderIdsSchema = z.array(z.string().uuid("Akun pengunggah khusus tidak valid"));
+
 export type SaveClaimDocumentTypeState = { error?: string; success?: boolean };
 
 export async function saveClaimDocumentTypeAction(
@@ -882,7 +886,7 @@ export async function saveClaimDocumentTypeAction(
   formData: FormData
 ): Promise<SaveClaimDocumentTypeState> {
   try {
-    const { supabase } = await requireAdmin();
+    const { supabase, userId } = await requireAdmin();
 
     const parsed = claimDocumentTypeSchema.safeParse({
       id: formData.get("id") || undefined,
@@ -896,12 +900,89 @@ export async function saveClaimDocumentTypeAction(
 
     const { id, ...data } = parsed.data;
 
+    // Pengunggah khusus (plans/prd-pengunggah-khusus-dokumen-klaim.md): hanya
+    // disinkronkan bila form membawa field-nya. Divalidasi sebelum ada yang
+    // ditulis, supaya penolakan tidak meninggalkan perubahan setengah jalan.
+    let uploaderPlan: { toAdd: string[]; toRemove: string[] } | null = null;
+    if (formData.get("uploaders_included")) {
+      const parsedIds = uploaderIdsSchema.safeParse(formData.getAll("uploader_ids"));
+      if (!parsedIds.success) {
+        return { error: parsedIds.error.issues[0]?.message ?? "Input tidak valid" };
+      }
+
+      let currentIds: string[] = [];
+      if (id) {
+        const { data: current, error } = await supabase
+          .from("claim_document_type_uploaders")
+          .select("user_id")
+          .eq("document_type_id", id);
+        if (error) return { error: error.message };
+        currentIds = (current ?? []).map((r) => r.user_id);
+      }
+
+      const newIds = parsedIds.data.filter((uid) => !currentIds.includes(uid));
+      let accounts: {
+        id: string;
+        role: UserRole;
+        is_active: boolean;
+        distributor_id: string | null;
+        distributor_scope: DistributorScope | null;
+      }[] = [];
+      if (newIds.length > 0) {
+        const { data: rows, error } = await supabase
+          .from("users")
+          .select("id, role, is_active, distributor_id, distributor_scope")
+          .in("id", newIds);
+        if (error) return { error: error.message };
+        accounts = rows ?? [];
+      }
+
+      const plan = planSpecialUploaderChanges({
+        currentIds,
+        selectedIds: parsedIds.data,
+        accounts,
+      });
+      if ("error" in plan) return { error: plan.error };
+      uploaderPlan = plan;
+    }
+
+    let documentTypeId = id;
     if (id) {
       const { error } = await supabase.from("claim_document_types").update(data).eq("id", id);
       if (error) return { error: error.message };
+    } else if (uploaderPlan && uploaderPlan.toAdd.length > 0) {
+      const { data: created, error } = await supabase
+        .from("claim_document_types")
+        .insert(data)
+        .select("id")
+        .single();
+      if (error || !created) return { error: error?.message ?? "Gagal menyimpan dokumen." };
+      documentTypeId = created.id;
     } else {
       const { error } = await supabase.from("claim_document_types").insert(data);
       if (error) return { error: error.message };
+    }
+
+    if (uploaderPlan && documentTypeId) {
+      if (uploaderPlan.toRemove.length > 0) {
+        const { error } = await supabase
+          .from("claim_document_type_uploaders")
+          .delete()
+          .eq("document_type_id", documentTypeId)
+          .in("user_id", uploaderPlan.toRemove);
+        if (error) return { error: error.message };
+      }
+      if (uploaderPlan.toAdd.length > 0) {
+        const targetId = documentTypeId;
+        const { error } = await supabase.from("claim_document_type_uploaders").insert(
+          uploaderPlan.toAdd.map((uid) => ({
+            document_type_id: targetId,
+            user_id: uid,
+            created_by: userId,
+          }))
+        );
+        if (error) return { error: error.message };
+      }
     }
 
     revalidatePath("/admin/master-data/claim-requirements");

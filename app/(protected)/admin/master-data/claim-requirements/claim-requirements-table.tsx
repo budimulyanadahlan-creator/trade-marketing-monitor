@@ -25,21 +25,48 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { AlertCircle, Loader2, Pencil, Plus, Settings, Trash2 } from "lucide-react";
+import { AlertCircle, AlertTriangle, Loader2, Pencil, Plus, Settings, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import type { ClaimDocumentTypeRow, ClaimRequirementRow, PromotionCategoryRow } from "@/types/database";
+import {
+  SPECIAL_UPLOADER_MESSAGES,
+  allSpecialUploadersInactive,
+  isActiveSpecialUploader,
+  isSpecialUploaderCandidate,
+  type SpecialUploaderAccount,
+} from "@/lib/claim-document-uploaders";
+
+/** Akun yang bisa atau sudah ditunjuk sebagai pengunggah khusus. */
+export type UploaderAccount = SpecialUploaderAccount & {
+  full_name: string;
+  company_name: string | null;
+};
+
+function accountLabel(account: UploaderAccount) {
+  return account.company_name ? `${account.full_name} · ${account.company_name}` : account.full_name;
+}
 
 // ─── Document Type Dialog ───────────────────────────────────────────────────
 
 function DocumentTypeDialog({
   docType,
   nextSortOrder,
+  appointedIds,
+  uploaderAccounts,
   trigger,
 }: {
   docType: ClaimDocumentTypeRow | null;
   nextSortOrder: number;
+  appointedIds: string[];
+  uploaderAccounts: UploaderAccount[];
   trigger: React.ReactNode;
 }) {
+  // Pilihan: akun distributor aktif bercakupan Pusat, ditambah akun yang sudah
+  // ditunjuk tetapi tidak lagi memenuhi syarat (agar bisa dicabut).
+  const appointed = new Set(appointedIds);
+  const choices = uploaderAccounts.filter(
+    (a) => isSpecialUploaderCandidate(a) || appointed.has(a.id)
+  );
   const isEdit = docType !== null;
   const [open, setOpen] = useState(false);
   const [state, formAction, isPending] = useActionState(saveClaimDocumentTypeAction, {});
@@ -92,6 +119,42 @@ function DocumentTypeDialog({
               required
               disabled={isPending}
             />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Pengunggah khusus</Label>
+            <p className="text-xs text-slate-400">
+              Jika diisi, hanya akun terpilih yang mengunggah dokumen ini untuk perusahaannya dan
+              anak perusahaannya. Kosongkan agar cabang mengunggah sendiri.
+            </p>
+            <input type="hidden" name="uploaders_included" value="1" />
+            {choices.length === 0 ? (
+              <p className="rounded-lg border border-white/8 px-3 py-2 text-sm text-slate-500">
+                Belum ada akun distributor aktif bercakupan Pusat.
+              </p>
+            ) : (
+              <div className="max-h-48 space-y-1.5 overflow-y-auto pr-1">
+                {choices.map((account) => (
+                  <label
+                    key={account.id}
+                    className="flex cursor-pointer items-center gap-3 rounded-lg border border-white/8 px-3 py-2 transition-colors hover:bg-white/4"
+                  >
+                    <input
+                      type="checkbox"
+                      name="uploader_ids"
+                      value={account.id}
+                      defaultChecked={appointed.has(account.id)}
+                      disabled={isPending}
+                      className="h-4 w-4 rounded border-slate-600 bg-slate-800 accent-emerald-500"
+                    />
+                    <span className="text-sm text-slate-200">{accountLabel(account)}</span>
+                    {!isActiveSpecialUploader(account) && (
+                      <span className="ml-auto text-xs text-amber-400">nonaktif</span>
+                    )}
+                  </label>
+                ))}
+              </div>
+            )}
           </div>
 
           <DialogFooter className="pt-2">
@@ -286,14 +349,22 @@ export function ClaimRequirementsTable({
   documentTypes,
   categories,
   requirements,
+  uploaders,
+  uploaderAccounts,
 }: {
   documentTypes: ClaimDocumentTypeRow[];
   categories: PromotionCategoryRow[];
   requirements: ClaimRequirementRow[];
+  uploaders: { document_type_id: string; user_id: string }[];
+  uploaderAccounts: UploaderAccount[];
 }) {
   const nextSortOrder = documentTypes.length > 0
     ? Math.max(...documentTypes.map((d) => d.sort_order)) + 1
     : 1;
+
+  const accountById = new Map(uploaderAccounts.map((a) => [a.id, a]));
+  const appointedIdsOf = (documentTypeId: string) =>
+    uploaders.filter((u) => u.document_type_id === documentTypeId).map((u) => u.user_id);
 
   return (
     <div className="space-y-10">
@@ -311,6 +382,8 @@ export function ClaimRequirementsTable({
           <DocumentTypeDialog
             docType={null}
             nextSortOrder={nextSortOrder}
+            appointedIds={[]}
+            uploaderAccounts={uploaderAccounts}
             trigger={
               <Button size="sm">
                 <Plus className="h-4 w-4" />
@@ -326,20 +399,50 @@ export function ClaimRequirementsTable({
               <TableRow className="border-white/8 hover:bg-transparent">
                 <TableHead className="w-16">Urutan</TableHead>
                 <TableHead>Nama Dokumen</TableHead>
+                <TableHead>Pengunggah khusus</TableHead>
                 <TableHead className="text-right">Aksi</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {documentTypes.length > 0 ? (
-                documentTypes.map((dt) => (
+                documentTypes.map((dt) => {
+                  const appointedIds = appointedIdsOf(dt.id);
+                  const appointed = appointedIds
+                    .map((id) => accountById.get(id))
+                    .filter((a): a is UploaderAccount => a !== undefined);
+                  return (
                   <TableRow key={dt.id}>
                     <TableCell className="text-slate-400 text-sm">{dt.sort_order}</TableCell>
                     <TableCell className="font-medium">{dt.name}</TableCell>
+                    <TableCell className="text-sm">
+                      {appointed.length === 0 ? (
+                        <span className="text-slate-500">—</span>
+                      ) : (
+                        <div className="space-y-1">
+                          {appointed.map((account) => (
+                            <div key={account.id} className="text-slate-200">
+                              {accountLabel(account)}
+                              {!isActiveSpecialUploader(account) && (
+                                <span className="ml-2 text-xs text-amber-400">nonaktif</span>
+                              )}
+                            </div>
+                          ))}
+                          {allSpecialUploadersInactive(appointed) && (
+                            <div className="flex items-start gap-1.5 text-xs text-amber-400">
+                              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+                              <span>{SPECIAL_UPLOADER_MESSAGES.allInactive}</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
                         <DocumentTypeDialog
                           docType={dt}
                           nextSortOrder={nextSortOrder}
+                          appointedIds={appointedIds}
+                          uploaderAccounts={uploaderAccounts}
                           trigger={
                             <Button variant="outline" size="sm">
                               <Pencil className="h-3 w-3" />
@@ -351,10 +454,11 @@ export function ClaimRequirementsTable({
                       </div>
                     </TableCell>
                   </TableRow>
-                ))
+                  );
+                })
               ) : (
                 <TableRow>
-                  <TableCell colSpan={3} className="text-center py-12 text-slate-500">
+                  <TableCell colSpan={4} className="text-center py-12 text-slate-500">
                     Belum ada tipe dokumen. Tambah dokumen pertama Anda.
                   </TableCell>
                 </TableRow>

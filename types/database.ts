@@ -248,6 +248,15 @@ export type ClaimDocumentTypeRow = {
   created_at: string;
 };
 
+// Penunjukan pengunggah khusus sebuah jenis dokumen klaim (migrasi 082).
+export type ClaimDocumentTypeUploaderRow = {
+  id: string;
+  document_type_id: string;
+  user_id: string;
+  created_by: string | null;
+  created_at: string;
+};
+
 export type ClaimRequirementRow = {
   id: string;
   promotion_category_id: string;
@@ -995,6 +1004,40 @@ export type Database = {
         Insert: { id?: string; name: string; sort_order: number; created_at?: string };
         Update: Partial<Omit<ClaimDocumentTypeRow, "id" | "created_at">>;
         Relationships: [];
+      };
+      claim_document_type_uploaders: {
+        Row: ClaimDocumentTypeUploaderRow;
+        Insert: {
+          id?: string;
+          document_type_id: string;
+          user_id: string;
+          created_by?: string | null;
+          created_at?: string;
+        };
+        Update: never;
+        Relationships: [
+          {
+            foreignKeyName: "claim_document_type_uploaders_document_type_id_fkey";
+            columns: ["document_type_id"];
+            isOneToOne: false;
+            referencedRelation: "claim_document_types";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "claim_document_type_uploaders_user_id_fkey";
+            columns: ["user_id"];
+            isOneToOne: false;
+            referencedRelation: "users";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "claim_document_type_uploaders_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "users";
+            referencedColumns: ["id"];
+          }
+        ];
       };
       claim_requirements: {
         Row: ClaimRequirementRow;
