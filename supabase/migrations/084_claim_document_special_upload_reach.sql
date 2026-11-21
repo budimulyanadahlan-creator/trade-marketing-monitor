@@ -23,6 +23,9 @@
 --      hanya bisa melihat SKP-nya, selama is_fulfilled = "ada file jenis itu"
 --      (centang otomatis sesudah upload / lepas sesudah hapus). Baris dokumen
 --      lain di SKP itu tetap menuntut 'act'.
+--   4. campaign_files_insert (003): dibatasi ke lampiran SKP biasa, agar
+--      pemilik klaim turunan (pembuat barisnya) tidak bisa menambah dokumen
+--      klaim lewat policy pembuat SKP dan melewati aturan item terkunci.
 --
 -- Tidak berubah:
 --   - Policy lihat SKP / file / checklist: pengunggah khusus sudah bisa melihat
@@ -188,6 +191,31 @@ create policy "distributor_claim_checklists_update" on public.distributor_claim_
           distributor_claim_checklists.campaign_id, distributor_claim_checklists.document_type_id
         )
       )
+    )
+  );
+
+-- ============================================================
+-- 4. campaign_files_insert (003) — hanya lampiran SKP biasa
+-- ============================================================
+-- Policy lama mengizinkan PEMBUAT SKP menambah file apa pun. Klaim turunan
+-- SKP Nasional dibuat atas nama pemiliknya (created_by = claim_owner_id, 075),
+-- sehingga pemilik bisa menambah file DOKUMEN KLAIM lewat policy ini dan
+-- melewati semua syarat campaign_files_insert_distributor: item terkunci,
+-- jendela status, dan pemegang klaim. Dokumen klaim (document_type_id terisi)
+-- kini hanya lewat campaign_files_insert_distributor; lampiran SKP biasa
+-- (document_type_id null — satu-satunya yang ditulis aplikasi lewat policy
+-- ini, app/api/upload) tidak berubah.
+
+drop policy if exists "campaign_files_insert" on public.campaign_files;
+create policy "campaign_files_insert" on public.campaign_files
+  for insert to authenticated
+  with check (
+    uploaded_by = (select auth.uid())
+    and document_type_id is null
+    and exists (
+      select 1 from public.campaigns c
+      where c.id = campaign_files.campaign_id
+        and c.created_by = (select auth.uid())
     )
   );
 
