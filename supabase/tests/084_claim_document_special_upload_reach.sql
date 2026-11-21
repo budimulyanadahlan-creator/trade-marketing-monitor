@@ -303,7 +303,8 @@ begin
     begin
       insert into public.campaign_files (campaign_id, file_name, file_url, file_type, file_size, uploaded_by, document_type_id)
       values (v_nat, 'tes.pdf', 'tes/084-c1.pdf', 'application/pdf', 1, v_pusat, v_doc);
-    exception when insufficient_privilege then v_caught := true;
+    -- Ditolak RLS, atau lebih dulu oleh trigger reject_national_parent_activity (074).
+    exception when insufficient_privilege or check_violation then v_caught := true;
     end;
     if not v_caught then reset role; raise exception 'GAGAL: upload dokumen klaim ke SKP induk nasional harus ditolak'; end if;
   else
