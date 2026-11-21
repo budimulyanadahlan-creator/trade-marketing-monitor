@@ -61,6 +61,7 @@ import {
   isClaimHolderLocked,
   type DistributorCampaignAccess,
 } from "@/lib/distributor-campaign-guard";
+import { specialDocumentWindowError } from "@/lib/claim-document-uploaders";
 import { BudgetProgress } from "@/components/budget-progress";
 import {
   addRealizationAction,
@@ -954,7 +955,6 @@ export function ClaimChecklistSection({
     campaignStatus === "claim_submitted";
   // Admin/superadmin: jalan terakhir untuk item terkunci (pengunggah khusus).
   const isAdminActor = userRole === "admin" || userRole === "superadmin";
-  const statusEditable = CHECKLIST_EDITABLE_STATUSES.includes(campaignStatus);
 
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
   // Optimistic toggles only; the server value (doc.isFulfilled) is the
@@ -1069,8 +1069,19 @@ export function ClaimChecklistSection({
           // terkunci ini aktif bagi pengunggah khususnya walaupun seluruh aksi
           // lain tersembunyi karena ia hanya bisa melihat SKP-nya (`canAct`
           // false: SKP anak perusahaan / klaim turunan milik akun lain).
+          // Fase 4: jendela status item terkunci — Disetujui / Berjalan, dan
+          // Klaim Diajukan selama item ini belum di-Accept Finance (tanpa
+          // kunci pemegang klaim).
           const lockedRowActive =
-            locked && mayUploadLocked && (isDistributor || isAdminActor) && statusEditable;
+            locked &&
+            mayUploadLocked &&
+            (isDistributor || isAdminActor) &&
+            specialDocumentWindowError(campaignStatus, doc.verification?.status ?? null) === null;
+          const revisionOpen =
+            canReupload ||
+            (lockedRowActive &&
+              campaignStatus === "claim_submitted" &&
+              doc.verification?.status === "revision_requested");
           const canUpload = locked
             ? lockedRowActive || canReupload
             : (canActAsDistributor && isEditable) || canReupload;
@@ -1152,7 +1163,7 @@ export function ClaimChecklistSection({
               )}
               </div>
 
-              {canReupload && (
+              {revisionOpen && (
                 <p className="mt-2 ml-7 text-[11px] text-amber-400">
                   Finance meminta revisi — upload ulang dokumen ini.
                 </p>

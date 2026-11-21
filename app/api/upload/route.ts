@@ -5,6 +5,7 @@ import { CLAIM_HOLDER_MESSAGES, claimFileDeleteError } from "@/lib/distributor-c
 import {
   effectiveSpecialUploaderIds,
   specialDocumentDeleteOverride,
+  specialDocumentWindowError,
 } from "@/lib/claim-document-uploaders";
 import { fetchAppointedUploadersByDocType } from "@/lib/claim-document-uploaders-data";
 import { UPLOAD_MAX_LABEL, UPLOAD_MAX_SIZE } from "@/lib/upload-limits";
@@ -165,25 +166,24 @@ export async function DELETE(request: NextRequest) {
     // Pengunggah Khusus Fase 2: admin/superadmin boleh menghapus file item
     // TERKUNCI milik akun lain (jalan terakhir). Selain itu aturan lama:
     // hanya pengunggahnya sendiri.
-    let adminOverride = false;
-    if (!isOwnFile && actorIsAdmin && campaign) {
+    let effectiveUploaderIds: string[] = [];
+    if (campaign) {
       const appointed = await fetchAppointedUploadersByDocType(adminClient, [
         fileRecord.document_type_id,
       ]);
       const distributorParent = (
         campaign as unknown as { distributor?: { parent_distributor_id: string | null } | null }
       ).distributor;
-      adminOverride = specialDocumentDeleteOverride(
-        actor,
-        effectiveSpecialUploaderIds(
-          {
-            distributor_id: campaign.distributor_id ?? null,
-            distributor_parent_id: distributorParent?.parent_distributor_id ?? null,
-          },
-          appointed.get(fileRecord.document_type_id) ?? []
-        )
+      effectiveUploaderIds = effectiveSpecialUploaderIds(
+        {
+          distributor_id: campaign.distributor_id ?? null,
+          distributor_parent_id: distributorParent?.parent_distributor_id ?? null,
+        },
+        appointed.get(fileRecord.document_type_id) ?? []
       );
     }
+    const adminOverride =
+      !isOwnFile && specialDocumentDeleteOverride(actor, effectiveUploaderIds);
 
     // File hanya bisa dihapus oleh pengunggahnya (Fase 9 — rekan satu
     // perusahaan bisa melihat file ini lewat RLS, jadi beri alasan yang jelas).
@@ -195,7 +195,31 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: "SKP tidak ditemukan" }, { status: 404 });
     }
 
-    if (!adminOverride) {
+    // Pengunggah Khusus Fase 4: pengunggah khusus efektif (file miliknya) dan
+    // admin memakai jendela status item terkunci — sesudah klaim diajukan
+    // tetap boleh selama item belum Accept, tanpa kunci pemegang klaim. File
+    // lama unggahan akun lain (cabang) tetap mengikuti aturan hapus lama.
+    const usesSpecialWindow =
+      effectiveUploaderIds.length > 0 &&
+      (actorIsAdmin || effectiveUploaderIds.includes(user.id));
+
+    if (usesSpecialWindow) {
+      let itemStatus: string | null = null;
+      if (campaign.status === "claim_submitted") {
+        const { data: item } = await supabase
+          .from("claim_item_verifications")
+          .select("id, status")
+          .eq("campaign_id", fileRecord.campaign_id)
+          .eq("item_type", "document")
+          .eq("document_type_id", fileRecord.document_type_id)
+          .maybeSingle();
+        itemStatus = item?.status ?? null;
+      }
+      const windowError = specialDocumentWindowError(campaign.status, itemStatus);
+      if (windowError) {
+        return NextResponse.json({ error: windowError }, { status: 400 });
+      }
+    } else {
       // Selama klaim diajukan, pengunggah harus pemegang klaim.
       const deleteError = claimFileDeleteError(
         actor,
@@ -205,13 +229,13 @@ export async function DELETE(request: NextRequest) {
       if (deleteError) {
         return NextResponse.json({ error: deleteError }, { status: 403 });
       }
-    }
 
-    if (!CLAIM_DOCUMENT_EDITABLE_STATUSES.includes(campaign.status as CampaignStatus)) {
-      return NextResponse.json(
-        { error: "Dokumen klaim hanya dapat dihapus saat SKP berstatus Approved atau Ongoing" },
-        { status: 400 }
-      );
+      if (!CLAIM_DOCUMENT_EDITABLE_STATUSES.includes(campaign.status as CampaignStatus)) {
+        return NextResponse.json(
+          { error: "Dokumen klaim hanya dapat dihapus saat SKP berstatus Approved atau Ongoing" },
+          { status: 400 }
+        );
+      }
     }
   } else if (!isOwnFile) {
     return NextResponse.json({ error: CLAIM_HOLDER_MESSAGES.notUploader }, { status: 403 });

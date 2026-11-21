@@ -166,3 +166,84 @@ describe("ClaimChecklistSection — pengunggah khusus dengan akses hanya lihat",
     expect(screen.getByText("Diunggah oleh Pusat")).toBeTruthy();
   });
 });
+
+// Pengunggah Khusus Fase 4 — sesudah klaim diajukan: pengunggah khusus tetap
+// bisa mengunggah / mengganti / menghapus selama item belum Accept.
+describe("ClaimChecklistSection — item terkunci sesudah klaim diajukan", () => {
+  const submitted = (
+    documents: ClaimDocument[],
+    campaignStatus: "claim_submitted" | "claim_verified" = "claim_submitted",
+    canAct = false
+  ) => (
+    <ClaimChecklistSection
+      campaignId="camp-1"
+      campaignStatus={campaignStatus}
+      userRole="distributor"
+      userId="dist-1"
+      documents={documents}
+      claimAmount={null}
+      claimAmountVerification={null}
+      canAct={canAct}
+    />
+  );
+  const lockedDoc = (
+    canUpload: boolean,
+    status: "pending" | "accepted" | "revision_requested" | null,
+    withFile = false
+  ): ClaimDocument => ({
+    ...doc("a", withFile, withFile),
+    specialUpload: { locked: true, canUpload, canDeleteAny: false },
+    verification: status
+      ? { id: "item-a", status, note: null, actorName: null, decidedAt: null }
+      : null,
+  });
+  const uploadButtons = () => screen.queryAllByRole("button", { name: /Upload/ });
+
+  it("special uploader keeps Upload while the item is pending, empty, or sent back for revision", () => {
+    for (const status of ["pending", "revision_requested", null] as const) {
+      render(submitted([lockedDoc(true, status)]));
+      expect(uploadButtons()).toHaveLength(1);
+      cleanup();
+    }
+  });
+
+  it("special uploader can delete their own file while the item is not accepted", () => {
+    render(submitted([lockedDoc(true, "accepted", true)]));
+    const whenAccepted = screen.queryAllByRole("button").length;
+    cleanup();
+
+    render(submitted([lockedDoc(true, "pending", true)]));
+    // Upload + hapus file miliknya.
+    expect(screen.queryAllByRole("button").length).toBe(whenAccepted + 2);
+  });
+
+  it("locks the row once Finance accepted the item, and after the claim is verified", () => {
+    render(submitted([lockedDoc(true, "accepted", true)]));
+    expect(uploadButtons()).toHaveLength(0);
+    cleanup();
+
+    render(submitted([lockedDoc(true, "pending", true)], "claim_verified"));
+    expect(uploadButtons()).toHaveLength(0);
+  });
+
+  it("the branch claim holder gets no Upload on a locked item, even when revision is requested", () => {
+    render(submitted([lockedDoc(false, "revision_requested")], "claim_submitted", true));
+
+    expect(uploadButtons()).toHaveLength(0);
+    expect(screen.getByText("Diunggah oleh Pusat")).toBeTruthy();
+  });
+
+  it("unlocked items keep the old rule: re-upload only while revision is requested", () => {
+    const plain = (status: "pending" | "revision_requested"): ClaimDocument => ({
+      ...doc("b", false),
+      verification: { id: "item-b", status, note: null, actorName: null, decidedAt: null },
+    });
+
+    render(submitted([plain("pending")], "claim_submitted", true));
+    expect(uploadButtons()).toHaveLength(0);
+    cleanup();
+
+    render(submitted([plain("revision_requested")], "claim_submitted", true));
+    expect(uploadButtons()).toHaveLength(1);
+  });
+});

@@ -11,6 +11,7 @@ import {
 import {
   effectiveSpecialUploaderIds,
   specialDocumentUploadError,
+  specialDocumentWindowError,
   specialUploaderReachError,
 } from "@/lib/claim-document-uploaders";
 import { fetchAppointedUploadersByDocType } from "@/lib/claim-document-uploaders-data";
@@ -34,6 +35,10 @@ const DISTRIBUTOR_ONLY_ERROR = "Hanya distributor yang dapat mengupload dokumen 
 // turunan SKP Nasional milik akun lain, walau akses SKP-nya hanya lihat.
 // Tulisannya tetap lewat klien akun itu sendiri — policy RLS migrasi 084
 // yang membukakan jalan untuk file dan checklist dokumen terkuncinya.
+//
+// Fase 4: untuk item terkunci, jendela statusnya Disetujui / Berjalan, dan
+// Klaim Diajukan selama item verifikasinya belum Accept (migrasi 085). Item
+// tidak terkunci tetap memakai aturan lama (pemegang klaim, saat revisi).
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
 
@@ -176,18 +181,41 @@ export async function POST(request: NextRequest) {
   // allowed for the one item finance sent back for revision — everything
   // else (accepted or still-pending items) stays locked until Approve or
   // Batalkan Pengajuan.
-  const isRevisionUpload = campaign.status === "claim_submitted";
+  const isClaimSubmitted = campaign.status === "claim_submitted";
+  // Pengunggah Khusus Fase 4: siapa pun yang lolos sampai sini untuk item
+  // TERKUNCI adalah pengunggah khusus efektif atau admin. Mereka memakai
+  // jendela status sendiri — sesudah klaim diajukan tetap boleh selama item
+  // belum Accept, tanpa kunci pemegang klaim.
+  const isLockedItem = effectiveUploaderIds.length > 0;
+  // true = upload ini memperbaiki item yang diminta revisi → kembali pending.
+  let isRevisionUpload = false;
 
-  if (!EDITABLE_STATUSES.includes(campaign.status as CampaignStatus) && !isRevisionUpload) {
+  if (isLockedItem) {
+    let itemStatus: string | null = null;
+    if (isClaimSubmitted) {
+      const { data: item } = await supabase
+        .from("claim_item_verifications")
+        .select("id, status")
+        .eq("campaign_id", campaignId)
+        .eq("item_type", "document")
+        .eq("document_type_id", documentTypeId)
+        .maybeSingle();
+      itemStatus = item?.status ?? null;
+    }
+    const windowError = specialDocumentWindowError(campaign.status, itemStatus);
+    if (windowError) {
+      return NextResponse.json({ error: windowError }, { status: 400 });
+    }
+    isRevisionUpload = isClaimSubmitted && itemStatus === "revision_requested";
+  } else if (!EDITABLE_STATUSES.includes(campaign.status as CampaignStatus) && !isClaimSubmitted) {
     return NextResponse.json(
       {
         error: "Dokumen klaim hanya dapat diupload saat SKP berstatus Approved atau Ongoing",
       },
       { status: 400 }
     );
-  }
-
-  if (isRevisionUpload) {
+  } else if (isClaimSubmitted) {
+    isRevisionUpload = true;
     // Fase 9: upload revisi hanya untuk pemegang klaim.
     const holderError = claimHolderActionError(
       { id: user.id, role: profile.role },

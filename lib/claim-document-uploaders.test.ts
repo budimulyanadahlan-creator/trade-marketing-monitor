@@ -6,6 +6,7 @@ import {
   isActiveSpecialUploader,
   isSpecialUploaderCandidate,
   planSpecialUploaderChanges,
+  specialDocumentWindowError,
   specialUploaderReachError,
   type SpecialUploaderAccount,
 } from "./claim-document-uploaders";
@@ -345,5 +346,33 @@ describe("specialDocumentAccess — jangkauan (Fase 3)", () => {
 
   it("admin always reaches", () => {
     expect(specialDocumentAccess({ id: "x", role: "admin" }, ["meriana"], "apa pun").canUpload).toBe(true);
+  });
+});
+
+describe("specialDocumentWindowError — jendela status item terkunci (Fase 4)", () => {
+  it("open while the SKP is Disetujui / Berjalan, whatever the item status", () => {
+    expect(specialDocumentWindowError("approved", null)).toBeNull();
+    expect(specialDocumentWindowError("ongoing", null)).toBeNull();
+  });
+
+  it("open after Submit Klaim while the item is not yet accepted", () => {
+    // masih kosong / belum ada baris verifikasi, menunggu diperiksa, diminta revisi
+    expect(specialDocumentWindowError("claim_submitted", null)).toBeNull();
+    expect(specialDocumentWindowError("claim_submitted", "pending")).toBeNull();
+    expect(specialDocumentWindowError("claim_submitted", "revision_requested")).toBeNull();
+  });
+
+  it("closed once Finance accepted the item", () => {
+    expect(specialDocumentWindowError("claim_submitted", "accepted")).toBe(
+      SPECIAL_UPLOADER_MESSAGES.itemAccepted
+    );
+  });
+
+  it("closed for every status after Klaim Diajukan, and before Disetujui", () => {
+    for (const status of ["claim_verified", "ready_to_pay", "paid", "completed", "draft", "cancelled"]) {
+      expect(specialDocumentWindowError(status, "pending")).toBe(
+        SPECIAL_UPLOADER_MESSAGES.statusClosed
+      );
+    }
   });
 });

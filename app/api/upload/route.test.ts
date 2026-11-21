@@ -36,9 +36,14 @@ function setupMocks(
   opts: {
     role?: string;
     appointed?: { id: string; role: string; is_active: boolean; distributor_id: string | null }[];
+    verificationItem?: { id: string; status: string } | null;
   } = {}
 ) {
   const filesChain = makeSelectChain({ data: fileRecord });
+  // Baris claim_item_verifications dokumen itu — hanya dibaca untuk item
+  // terkunci saat Klaim Diajukan (Fase 4).
+  const verificationChain = makeSelectChain({ data: null });
+  verificationChain.maybeSingle = vi.fn().mockResolvedValue({ data: opts.verificationItem ?? null });
   const campaignsChain = makeSelectChain({ data: campaign });
   const usersChain = makeSelectChain({ data: { role: opts.role ?? "distributor" } });
   const supabase = {
@@ -47,6 +52,7 @@ function setupMocks(
       if (table === "campaign_files") return filesChain;
       if (table === "campaigns") return campaignsChain;
       if (table === "users") return usersChain;
+      if (table === "claim_item_verifications") return verificationChain;
       return filesChain;
     }),
   };
@@ -324,6 +330,104 @@ describe("DELETE /api/upload — jangkauan lintas perusahaan (Pengunggah Khusus 
     const { storageRemove } = setupMocks(ownFile, { ...skpAnak, status: "cancelled" }, {
       appointed: [pengunggah],
     });
+
+    const res = await DELETE(makeRequest("file-1"));
+
+    expect(res.status).toBe(400);
+    expect(storageRemove).not.toHaveBeenCalled();
+  });
+});
+
+describe("DELETE /api/upload — sesudah klaim diajukan (Pengunggah Khusus Fase 4)", () => {
+  // "dist-1" = pengunggah khusus; klaim dipegang akun cabang ("cabang-1").
+  const pengunggah = { id: "dist-1", role: "distributor", is_active: true, distributor_id: "company-a" };
+  const ownFile = {
+    file_url: "path/to/surat.pdf",
+    uploaded_by: "dist-1",
+    campaign_id: "camp-1",
+    document_type_id: "doc-1",
+  };
+  const diajukan = { status: "claim_submitted", claim_submitted_by: "cabang-1", distributor_id: "company-a" };
+
+  it("pengunggah khusus (bukan pemegang klaim) menghapus filenya selama item belum Accept", async () => {
+    for (const itemStatus of ["pending", "revision_requested", null]) {
+      const { storageRemove } = setupMocks(ownFile, diajukan, {
+        appointed: [pengunggah],
+        verificationItem: itemStatus ? { id: "item-1", status: itemStatus } : null,
+      });
+
+      const res = await DELETE(makeRequest("file-1"));
+
+      expect(res.status).toBe(200);
+      expect(storageRemove).toHaveBeenCalled();
+      expect(syncChecklistAfterFileDelete).toHaveBeenCalled();
+    }
+  });
+
+  it("menolak hapus setelah Finance Accept, dengan pesan jelas", async () => {
+    const { storageRemove } = setupMocks(ownFile, diajukan, {
+      appointed: [pengunggah],
+      verificationItem: { id: "item-1", status: "accepted" },
+    });
+
+    const res = await DELETE(makeRequest("file-1"));
+    const json = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(json.error).toMatch(/Accept/);
+    expect(storageRemove).not.toHaveBeenCalled();
+  });
+
+  it("menolak hapus pada status sesudah Klaim Diajukan", async () => {
+    for (const status of ["claim_verified", "ready_to_pay", "paid", "completed"]) {
+      const { storageRemove } = setupMocks(ownFile, { ...diajukan, status }, { appointed: [pengunggah] });
+
+      const res = await DELETE(makeRequest("file-1"));
+
+      expect(res.status).toBe(400);
+      expect(storageRemove).not.toHaveBeenCalled();
+    }
+  });
+
+  it("admin menghapus file item terkunci sesudah klaim diajukan selama belum Accept", async () => {
+    const fileMeriana = { ...ownFile, uploaded_by: "meriana" };
+    const appointed = [{ ...pengunggah, id: "meriana" }];
+
+    setupMocks(fileMeriana, diajukan, {
+      role: "admin",
+      appointed,
+      verificationItem: { id: "item-1", status: "pending" },
+    });
+    expect((await DELETE(makeRequest("file-1"))).status).toBe(200);
+
+    setupMocks(fileMeriana, diajukan, {
+      role: "admin",
+      appointed,
+      verificationItem: { id: "item-1", status: "accepted" },
+    });
+    expect((await DELETE(makeRequest("file-1"))).status).toBe(400);
+  });
+
+  it("file lama unggahan cabang pada item terkunci mengikuti aturan hapus lama (terkunci sesudah submit)", async () => {
+    // "dist-1" = cabang pemegang klaim, bukan pengunggah khusus
+    const { storageRemove } = setupMocks(
+      ownFile,
+      { ...diajukan, claim_submitted_by: "dist-1" },
+      { appointed: [{ ...pengunggah, id: "meriana" }], verificationItem: { id: "item-1", status: "pending" } }
+    );
+
+    const res = await DELETE(makeRequest("file-1"));
+
+    expect(res.status).toBe(400);
+    expect(storageRemove).not.toHaveBeenCalled();
+  });
+
+  it("regresi: item tidak terkunci tetap tidak bisa dihapus sesudah klaim diajukan", async () => {
+    const { storageRemove } = setupMocks(
+      ownFile,
+      { ...diajukan, claim_submitted_by: "dist-1" },
+      { verificationItem: { id: "item-1", status: "revision_requested" } }
+    );
 
     const res = await DELETE(makeRequest("file-1"));
 

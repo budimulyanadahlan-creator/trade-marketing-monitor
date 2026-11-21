@@ -10,6 +10,7 @@
  * dihitung). Fase 2: "pengunggah khusus efektif" per SKP dan keputusan
  * upload / hapus / centang manual untuk item terkunci. Fase 3: jangkauan
  * lintas perusahaan — SKP anak perusahaan dan klaim turunan SKP Nasional.
+ * Fase 4: jendela status item terkunci sesudah klaim diajukan.
  *
  * Murni, tanpa I/O — pemanggil mengambil baris akun dari database lalu
  * meneruskannya ke sini. Trigger database
@@ -34,6 +35,10 @@ export const SPECIAL_UPLOADER_MESSAGES = {
     "Dokumen ini diunggah oleh Pusat — hanya pengunggah khusus yang ditunjuk yang dapat mengunggahnya.",
   manualCheckLocked:
     "Dokumen ini diunggah oleh Pusat — centangnya mengikuti file dan tidak dapat diubah manual.",
+  itemAccepted:
+    "Dokumen ini sudah di-Accept Finance dan tidak dapat diubah lagi.",
+  statusClosed:
+    "Dokumen ini hanya dapat diunggah atau dihapus saat SKP berstatus Disetujui, Berjalan, atau Klaim Diajukan.",
 } as const;
 
 export type SpecialUploaderAccount = {
@@ -230,6 +235,37 @@ export function specialUploaderReachError(
   }
   if (denial === null || SPECIAL_UPLOADER_REACHABLE_DENIALS.includes(denial)) return null;
   return DISTRIBUTOR_GUARD_MESSAGES[denial];
+}
+
+// ============================================================
+// Jendela status item terkunci (Fase 4)
+//
+// Bagi yang BOLEH mengunggah item terkunci (pengunggah khusus efektif, atau
+// admin/superadmin), upload / ganti / hapus file terbuka saat SKP Disetujui
+// atau Berjalan, dan saat Klaim Diajukan selama item verifikasi dokumen itu
+// BELUM Accept — masih kosong, menunggu diperiksa, maupun diminta revisi.
+// Kunci pemegang klaim tidak berlaku di sini. Begitu Finance Accept, atau
+// status SKP melewati Klaim Diajukan, item tertutup.
+//
+// Item tidak terkunci tidak memakai fungsi ini — aturan lama (hanya pemegang
+// klaim, hanya saat diminta revisi) tetap berlaku. Padanan RLS:
+// claim_document_special_upload_open (migrasi 085).
+// ============================================================
+
+/**
+ * Pesan penolakan upload / hapus file item terkunci menurut status, atau null
+ * jika jendelanya terbuka. `itemStatus` = status baris claim_item_verifications
+ * dokumen itu (null bila belum ada barisnya).
+ */
+export function specialDocumentWindowError(
+  campaignStatus: string | null | undefined,
+  itemStatus: string | null | undefined
+): string | null {
+  if (campaignStatus === "approved" || campaignStatus === "ongoing") return null;
+  if (campaignStatus === "claim_submitted") {
+    return itemStatus === "accepted" ? SPECIAL_UPLOADER_MESSAGES.itemAccepted : null;
+  }
+  return SPECIAL_UPLOADER_MESSAGES.statusClosed;
 }
 
 /** Ringkasan untuk tampilan satu baris dokumen klaim. */

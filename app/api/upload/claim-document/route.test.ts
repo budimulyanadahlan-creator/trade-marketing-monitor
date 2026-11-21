@@ -665,3 +665,134 @@ describe("POST /api/upload/claim-document — jangkauan lintas perusahaan (Pengu
     expect(json.error).toBe(DISTRIBUTOR_GUARD_MESSAGES.otherCompany);
   });
 });
+
+describe("POST /api/upload/claim-document — sesudah klaim diajukan (Pengunggah Khusus Fase 4)", () => {
+  // "dist-1" = pengunggah khusus; klaim dipegang akun cabang ("cabang-1").
+  const pengunggah = { id: "dist-1", role: "distributor", is_active: true, distributor_id: "company-a" };
+  const diajukan = {
+    id: "camp-1",
+    status: "claim_submitted",
+    distributor_id: "company-a",
+    claim_submitted_by: "cabang-1",
+  };
+
+  it("pengunggah khusus (bukan pemegang klaim) mengunggah item terkunci yang masih kosong", async () => {
+    const { storageUpload } = setupMocks({
+      appointed: [pengunggah],
+      campaign: diajukan,
+      verificationItem: { id: "item-1", status: "pending" },
+    });
+
+    const res = await POST(makeRequest());
+
+    expect(res.status).toBe(200);
+    expect(storageUpload).toHaveBeenCalled();
+    expect(markChecklistFulfilled).toHaveBeenCalled();
+    // menunggu diperiksa → status item tidak diubah
+    expect(resetClaimItemToPending).not.toHaveBeenCalled();
+  });
+
+  it("mengizinkan upload walau baris verifikasi dokumen itu belum ada", async () => {
+    setupMocks({ appointed: [pengunggah], campaign: diajukan, verificationItem: null });
+
+    const res = await POST(makeRequest());
+
+    expect(res.status).toBe(200);
+    expect(resetClaimItemToPending).not.toHaveBeenCalled();
+  });
+
+  it("upload saat diminta revisi mengembalikan item ke menunggu diperiksa", async () => {
+    setupMocks({
+      appointed: [pengunggah],
+      campaign: diajukan,
+      verificationItem: { id: "item-1", status: "revision_requested" },
+    });
+
+    const res = await POST(makeRequest());
+
+    expect(res.status).toBe(200);
+    expect(resetClaimItemToPending).toHaveBeenCalledWith(expect.anything(), "camp-1", {
+      itemType: "document",
+      documentTypeId: "doc-1",
+    });
+  });
+
+  it("menolak setelah Finance Accept, dengan pesan jelas", async () => {
+    const { storageUpload } = setupMocks({
+      appointed: [pengunggah],
+      campaign: diajukan,
+      verificationItem: { id: "item-1", status: "accepted" },
+    });
+
+    const res = await POST(makeRequest());
+    const json = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(json.error).toBe(SPECIAL_UPLOADER_MESSAGES.itemAccepted);
+    expect(storageUpload).not.toHaveBeenCalled();
+  });
+
+  it("menolak pada status terverifikasi, siap bayar, dibayar, dan selesai", async () => {
+    for (const status of ["claim_verified", "ready_to_pay", "paid", "completed"]) {
+      const { storageUpload } = setupMocks({
+        appointed: [pengunggah],
+        campaign: { ...diajukan, status },
+      });
+
+      const res = await POST(makeRequest());
+      const json = await res.json();
+
+      expect(res.status).toBe(400);
+      expect(json.error).toBe(SPECIAL_UPLOADER_MESSAGES.statusClosed);
+      expect(storageUpload).not.toHaveBeenCalled();
+    }
+  });
+
+  it("pemegang klaim cabang tetap ditolak untuk item terkunci, juga saat diminta revisi", async () => {
+    const { storageUpload } = setupMocks({
+      appointed: [{ ...pengunggah, id: "meriana" }],
+      campaign: { ...diajukan, claim_submitted_by: "dist-1" },
+      verificationItem: { id: "item-1", status: "revision_requested" },
+    });
+
+    const res = await POST(makeRequest());
+    const json = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(json.error).toBe(SPECIAL_UPLOADER_MESSAGES.uploadedByPusat);
+    expect(storageUpload).not.toHaveBeenCalled();
+  });
+
+  it("admin mengunggah item terkunci sesudah klaim diajukan selama belum Accept", async () => {
+    setupMocks({
+      role: "admin",
+      appointed: [{ ...pengunggah, id: "meriana" }],
+      campaign: diajukan,
+      verificationItem: { id: "item-1", status: "pending" },
+    });
+    expect((await POST(makeRequest())).status).toBe(200);
+
+    setupMocks({
+      role: "admin",
+      appointed: [{ ...pengunggah, id: "meriana" }],
+      campaign: diajukan,
+      verificationItem: { id: "item-1", status: "accepted" },
+    });
+    expect((await POST(makeRequest())).status).toBe(400);
+  });
+
+  it("regresi: item tidak terkunci tetap hanya untuk pemegang klaim saat diminta revisi", async () => {
+    // tidak ada penunjukan → aturan lama; "dist-1" bukan pemegang klaim
+    setupMocks({ campaign: diajukan, verificationItem: { id: "item-1", status: "revision_requested" } });
+    const bukanPemegang = await POST(makeRequest());
+    expect(bukanPemegang.status).toBe(403);
+    expect((await bukanPemegang.json()).error).toMatch(/pemegang klaim/i);
+
+    // pemegang klaim, item masih menunggu diperiksa → tetap terkunci
+    setupMocks({
+      campaign: { ...diajukan, claim_submitted_by: "dist-1" },
+      verificationItem: { id: "item-1", status: "pending" },
+    });
+    expect((await POST(makeRequest())).status).toBe(400);
+  });
+});
