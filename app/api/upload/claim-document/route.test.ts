@@ -25,6 +25,7 @@ import { markChecklistFulfilled } from "@/lib/claim-checklist-sync";
 import { resetClaimItemToPending } from "@/lib/claim-item-verifications";
 import { fetchAppointedUploadersByDocType } from "@/lib/claim-document-uploaders-data";
 import { SPECIAL_UPLOADER_MESSAGES } from "@/lib/claim-document-uploaders";
+import { DISTRIBUTOR_GUARD_MESSAGES } from "@/lib/distributor-campaign-guard";
 
 // -------------------------------------------------------
 // Mock builder helpers
@@ -549,5 +550,118 @@ describe("POST /api/upload/claim-document — item terkunci (Pengunggah Khusus F
     const res = await POST(makeRequest());
 
     expect(res.status).toBe(400);
+  });
+});
+
+describe("POST /api/upload/claim-document — jangkauan lintas perusahaan (Pengunggah Khusus Fase 3)", () => {
+  // Akun yang login = "dist-1", Pusat perusahaan induk ("induk"). SKP milik
+  // anak perusahaan ("anak") → akses SKP-nya hanya lihat.
+  const pengunggah = { id: "dist-1", role: "distributor", is_active: true, distributor_id: "induk" };
+  const skpAnak = {
+    id: "camp-1",
+    status: "ongoing",
+    distributor_id: "anak",
+    distributor: { parent_distributor_id: "induk" },
+  };
+  const turunan = { ...skpAnak, parent_campaign_id: "induk-nasional", claim_owner_id: "cabang-anak" };
+
+  it("pengunggah khusus induk mengunggah di SKP anak perusahaan yang hanya bisa ia lihat", async () => {
+    const { supabase, filesInsertChain } = setupMocks({
+      userDistributorId: "induk",
+      appointed: [pengunggah],
+      campaign: skpAnak as never,
+    });
+
+    const res = await POST(makeRequest());
+
+    expect(res.status).toBe(200);
+    expect(filesInsertChain.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ uploaded_by: "dist-1", document_type_id: "doc-1" })
+    );
+    // Checklist tercentang atas namanya walau ia tidak punya hak bertindak.
+    expect(markChecklistFulfilled).toHaveBeenCalledWith(supabase, {
+      campaignId: "camp-1",
+      actorId: "dist-1",
+      documentTypeId: "doc-1",
+    });
+  });
+
+  it("pengunggah khusus mengunggah di klaim turunan SKP Nasional milik akun lain", async () => {
+    setupMocks({ userDistributorId: "induk", appointed: [pengunggah], campaign: turunan as never });
+
+    const res = await POST(makeRequest());
+
+    expect(res.status).toBe(200);
+  });
+
+  it("menolak klaim turunan yang dibatalkan dengan pesan yang sudah ada", async () => {
+    const { storageUpload } = setupMocks({
+      userDistributorId: "induk",
+      appointed: [pengunggah],
+      campaign: { ...turunan, status: "cancelled" } as never,
+    });
+
+    const res = await POST(makeRequest());
+    const json = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(json.error).toBe(DISTRIBUTOR_GUARD_MESSAGES.claimCancelled);
+    expect(storageUpload).not.toHaveBeenCalled();
+  });
+
+  it("menolak dokumen lain (tidak terkunci) di SKP anak perusahaan — tetap hanya lihat", async () => {
+    const { storageUpload } = setupMocks({
+      userDistributorId: "induk",
+      appointed: [pengunggah],
+      campaign: skpAnak as never,
+    });
+
+    const res = await POST(makeRequest({ documentTypeId: "doc-lain" }));
+    const json = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(json.error).toBe(DISTRIBUTOR_GUARD_MESSAGES.parentViewOnly);
+    expect(storageUpload).not.toHaveBeenCalled();
+  });
+
+  it("menolak akun Pusat induk lain yang bukan pengunggah khusus", async () => {
+    setupMocks({
+      userDistributorId: "induk",
+      appointed: [{ ...pengunggah, id: "meriana" }],
+      campaign: skpAnak as never,
+    });
+
+    const res = await POST(makeRequest());
+
+    expect(res.status).toBe(403);
+  });
+
+  it("menolak pemilik klaim turunan mengunggah item terkunci miliknya sendiri", async () => {
+    const { storageUpload } = setupMocks({
+      userDistributorId: "anak",
+      appointed: [{ ...pengunggah, id: "meriana" }],
+      campaign: { ...turunan, claim_owner_id: "dist-1" } as never,
+    });
+
+    const res = await POST(makeRequest());
+    const json = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(json.error).toBe(SPECIAL_UPLOADER_MESSAGES.uploadedByPusat);
+    expect(storageUpload).not.toHaveBeenCalled();
+  });
+
+  it("menolak SKP perusahaan yang tidak terlihat walau akun ditunjuk", async () => {
+    setupMocks({
+      userDistributorId: "induk",
+      appointed: [pengunggah],
+      campaign: { id: "camp-1", status: "ongoing", distributor_id: "luar-grup" },
+    });
+
+    const res = await POST(makeRequest());
+    const json = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(json.error).toBe(DISTRIBUTOR_GUARD_MESSAGES.otherCompany);
   });
 });

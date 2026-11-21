@@ -935,7 +935,11 @@ export function ClaimChecklistSection({
   documents: ClaimDocument[];
   claimAmount: number | null;
   claimAmountVerification: ClaimItemVerificationInfo | null;
-  /** false = distributor hanya lihat (Pusat induk → SKP anak perusahaan). */
+  /**
+   * false = distributor hanya lihat (Pusat induk → SKP anak perusahaan).
+   * Baris dokumen terkunci tetap aktif bagi pengunggah khususnya
+   * (`specialUpload.canUpload`).
+   */
   canAct?: boolean;
 }) {
   const router = useRouter();
@@ -1061,16 +1065,18 @@ export function ClaimChecklistSection({
             campaignStatus === "claim_submitted" &&
             doc.verification?.status === "revision_requested" &&
             (!locked || mayUploadLocked);
+          // Fase 3: `mayUploadLocked` sudah memuat jangkauan SKP, jadi baris
+          // terkunci ini aktif bagi pengunggah khususnya walaupun seluruh aksi
+          // lain tersembunyi karena ia hanya bisa melihat SKP-nya (`canAct`
+          // false: SKP anak perusahaan / klaim turunan milik akun lain).
+          const lockedRowActive =
+            locked && mayUploadLocked && (isDistributor || isAdminActor) && statusEditable;
           const canUpload = locked
-            ? mayUploadLocked &&
-              (((canActAsDistributor || isAdminActor) && statusEditable) || canReupload)
+            ? lockedRowActive || canReupload
             : (canActAsDistributor && isEditable) || canReupload;
           const canDeleteFile = (f: ClaimDocument["files"][number]) =>
             (canActAsDistributor && isEditable && f.uploadedBy === userId) ||
-            (locked &&
-              isAdminActor &&
-              statusEditable &&
-              (!!special?.canDeleteAny || f.uploadedBy === userId));
+            (lockedRowActive && (!!special?.canDeleteAny || f.uploadedBy === userId));
 
           return (
             <div

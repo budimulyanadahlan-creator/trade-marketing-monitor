@@ -292,3 +292,42 @@ describe("DELETE /api/upload — item terkunci (Pengunggah Khusus Fase 2)", () =
     expect(res.status).toBe(400);
   });
 });
+
+describe("DELETE /api/upload — jangkauan lintas perusahaan (Pengunggah Khusus Fase 3)", () => {
+  // "dist-1" = pengunggah khusus dari perusahaan induk; SKP milik anak
+  // perusahaan, yang selebihnya hanya bisa ia lihat. Hapus file tidak pernah
+  // menuntut hak bertindak atas SKP — cukup pengunggahnya sendiri.
+  const pengunggah = { id: "dist-1", role: "distributor", is_active: true, distributor_id: "induk" };
+  const ownFile = {
+    file_url: "path/to/surat.pdf",
+    uploaded_by: "dist-1",
+    campaign_id: "camp-1",
+    document_type_id: "doc-1",
+  };
+  const skpAnak = { status: "ongoing", distributor_id: "anak", distributor: { parent_distributor_id: "induk" } };
+
+  it("pengunggah khusus menghapus filenya di SKP anak perusahaan; checklist disinkronkan atas namanya", async () => {
+    const { supabase, storageRemove } = setupMocks(ownFile, skpAnak, { appointed: [pengunggah] });
+
+    const res = await DELETE(makeRequest("file-1"));
+
+    expect(res.status).toBe(200);
+    expect(storageRemove).toHaveBeenCalled();
+    expect(syncChecklistAfterFileDelete).toHaveBeenCalledWith(supabase, {
+      campaignId: "camp-1",
+      actorId: "dist-1",
+      documentTypeId: "doc-1",
+    });
+  });
+
+  it("menolak hapus di klaim turunan yang sudah dibatalkan", async () => {
+    const { storageRemove } = setupMocks(ownFile, { ...skpAnak, status: "cancelled" }, {
+      appointed: [pengunggah],
+    });
+
+    const res = await DELETE(makeRequest("file-1"));
+
+    expect(res.status).toBe(400);
+    expect(storageRemove).not.toHaveBeenCalled();
+  });
+});

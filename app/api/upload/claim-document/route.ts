@@ -4,12 +4,14 @@ import { compressImageIfNeeded } from "@/lib/image-compress";
 import { markChecklistFulfilled } from "@/lib/claim-checklist-sync";
 import { resetClaimItemToPending } from "@/lib/claim-item-verifications";
 import {
+  DISTRIBUTOR_GUARD_MESSAGES,
   claimHolderActionError,
-  distributorClaimActionError,
+  distributorActionDenial,
 } from "@/lib/distributor-campaign-guard";
 import {
   effectiveSpecialUploaderIds,
   specialDocumentUploadError,
+  specialUploaderReachError,
 } from "@/lib/claim-document-uploaders";
 import { fetchAppointedUploadersByDocType } from "@/lib/claim-document-uploaders-data";
 import { nationalParentActivityError } from "@/lib/national-skp";
@@ -27,6 +29,11 @@ const DISTRIBUTOR_ONLY_ERROR = "Hanya distributor yang dapat mengupload dokumen 
 // efektif pada SKP ini "terkunci" — hanya akun yang ditunjuk yang boleh
 // mengunggahnya, plus admin/superadmin sebagai jalan terakhir (satu-satunya
 // kasus non-distributor boleh memakai endpoint ini).
+//
+// Fase 3: pengunggah khusus efektif menjangkau SKP anak perusahaan dan klaim
+// turunan SKP Nasional milik akun lain, walau akses SKP-nya hanya lihat.
+// Tulisannya tetap lewat klien akun itu sendiri — policy RLS migrasi 084
+// yang membukakan jalan untuk file dan checklist dokumen terkuncinya.
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
 
@@ -104,39 +111,53 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: nationalError }, { status: 403 });
   }
 
-  const guardError = distributorClaimActionError(
+  const distributorParentId =
+    (campaign as unknown as { distributor?: { parent_distributor_id: string | null } | null })
+      .distributor?.parent_distributor_id ?? null;
+
+  // Item terkunci: hanya pengunggah khusus efektif (atau admin). Daftar
+  // efektif kosong → aturan lama, dan admin kembali tidak punya akses.
+  const adminClient = createAdminClient();
+  const appointed = await fetchAppointedUploadersByDocType(adminClient, [documentTypeId]);
+  const effectiveUploaderIds = effectiveSpecialUploaderIds(
+    { distributor_id: campaign.distributor_id ?? null, distributor_parent_id: distributorParentId },
+    appointed.get(documentTypeId) ?? []
+  );
+
+  // Akses SKP. Aturan biasa: harus boleh bertindak. Pengunggah Khusus Fase 3:
+  // pengunggah khusus efektif dokumen INI juga menjangkau SKP yang hanya bisa
+  // ia lihat (anak perusahaan, klaim turunan milik akun lain) — untuk dokumen
+  // lain di SKP yang sama ia tetap ditolak.
+  const denial = distributorActionDenial(
+    {
+      distributor_id: campaign.distributor_id ?? null,
+      region_id: campaign.region_id ?? null,
+      distributor_parent_id: distributorParentId,
+      parent_campaign_id: campaign.parent_campaign_id ?? null,
+      claim_owner_id: campaign.claim_owner_id ?? null,
+      status: campaign.status,
+    },
     {
       id: user.id,
       role: profile.role,
       distributor_id: profile.distributor_id ?? null,
       distributor_scope: profile.distributor_scope ?? null,
       region_id: profile.region_id ?? null,
-    },
-    {
-      distributor_id: campaign.distributor_id ?? null,
-      region_id: campaign.region_id ?? null,
-      parent_campaign_id: campaign.parent_campaign_id ?? null,
-      claim_owner_id: campaign.claim_owner_id ?? null,
     }
   );
-  if (guardError) {
-    return NextResponse.json({ error: guardError }, { status: 403 });
+  const isSpecialUploader = !isAdmin && effectiveUploaderIds.includes(user.id);
+  const accessError = isSpecialUploader
+    ? specialUploaderReachError(denial, {
+        parent_campaign_id: campaign.parent_campaign_id ?? null,
+        status: campaign.status,
+      })
+    : denial
+      ? DISTRIBUTOR_GUARD_MESSAGES[denial]
+      : null;
+  if (accessError) {
+    return NextResponse.json({ error: accessError }, { status: 403 });
   }
 
-  // Item terkunci: hanya pengunggah khusus efektif (atau admin). Daftar
-  // efektif kosong → aturan lama, dan admin kembali tidak punya akses.
-  const adminClient = createAdminClient();
-  const appointed = await fetchAppointedUploadersByDocType(adminClient, [documentTypeId]);
-  const distributorParent = (
-    campaign as unknown as { distributor?: { parent_distributor_id: string | null } | null }
-  ).distributor;
-  const effectiveUploaderIds = effectiveSpecialUploaderIds(
-    {
-      distributor_id: campaign.distributor_id ?? null,
-      distributor_parent_id: distributorParent?.parent_distributor_id ?? null,
-    },
-    appointed.get(documentTypeId) ?? []
-  );
   if (isAdmin && effectiveUploaderIds.length === 0) {
     return NextResponse.json({ error: DISTRIBUTOR_ONLY_ERROR }, { status: 403 });
   }

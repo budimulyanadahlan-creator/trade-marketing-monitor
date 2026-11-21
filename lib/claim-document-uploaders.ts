@@ -8,7 +8,8 @@
  *
  * Fase 1: aturan penunjukan (siapa yang boleh ditunjuk, kapan penunjukan
  * dihitung). Fase 2: "pengunggah khusus efektif" per SKP dan keputusan
- * upload / hapus / centang manual untuk item terkunci.
+ * upload / hapus / centang manual untuk item terkunci. Fase 3: jangkauan
+ * lintas perusahaan — SKP anak perusahaan dan klaim turunan SKP Nasional.
  *
  * Murni, tanpa I/O — pemanggil mengambil baris akun dari database lalu
  * meneruskannya ke sini. Trigger database
@@ -18,6 +19,10 @@
  * item terkunci di lapis RLS.
  */
 
+import {
+  DISTRIBUTOR_GUARD_MESSAGES,
+  type DistributorGuardDenial,
+} from "@/lib/distributor-campaign-guard";
 import type { DistributorScope, UserRole } from "@/types/database";
 
 export const SPECIAL_UPLOADER_MESSAGES = {
@@ -187,24 +192,74 @@ export function specialDocumentDeleteOverride(
   return effectiveUploaderIds.length > 0 && isAdminRole(actor.role);
 }
 
+// ============================================================
+// Jangkauan lintas perusahaan (Fase 3)
+//
+// Pengunggah khusus efektif boleh mengunggah / menghapus dokumen terkuncinya
+// di SKP yang selebihnya HANYA BISA IA LIHAT: SKP anak perusahaan dan klaim
+// turunan SKP Nasional milik akun lain. Ia tidak mendapat aksi lain di sana —
+// modul akses distributor tidak diubah; hasilnya (alasan penolakan aksi)
+// menjadi masukan di sini.
+//
+// Tidak pernah: SKP induk nasional, klaim turunan yang dibatalkan, SKP yang
+// tidak terlihat (perusahaan / region lain, klaim milik akun lain tanpa hak
+// lihat). Padanan RLS: claim_document_special_upload_reach (migrasi 084).
+// ============================================================
+
+/** Alasan "hanya lihat" yang tidak menghalangi pengunggah khusus efektif. */
+const SPECIAL_UPLOADER_REACHABLE_DENIALS: readonly DistributorGuardDenial[] = [
+  "parentViewOnly",
+  "childClaimViewOnly",
+];
+
+/**
+ * Pesan penolakan bila pengunggah khusus efektif tidak menjangkau SKP ini,
+ * atau null jika terjangkau. `denial` = hasil distributorActionDenial untuk
+ * akun itu (dihitung dengan induk perusahaan SKP). Hanya untuk akun yang
+ * sudah dipastikan pengunggah khusus efektif; akun lain memakai aturan akses
+ * biasa.
+ */
+export function specialUploaderReachError(
+  denial: DistributorGuardDenial | null,
+  campaign: { parent_campaign_id?: string | null; status?: string | null }
+): string | null {
+  // Turunan yang dibatalkan: pusat non-pemilik tetap "hanya lihat klaim akun
+  // lain" menurut modul akses, jadi statusnya diperiksa di sini.
+  if (campaign.parent_campaign_id && campaign.status === "cancelled") {
+    return DISTRIBUTOR_GUARD_MESSAGES.claimCancelled;
+  }
+  if (denial === null || SPECIAL_UPLOADER_REACHABLE_DENIALS.includes(denial)) return null;
+  return DISTRIBUTOR_GUARD_MESSAGES[denial];
+}
+
 /** Ringkasan untuk tampilan satu baris dokumen klaim. */
 export type SpecialDocumentAccess = {
   /** Item punya pengunggah khusus efektif pada SKP ini. */
   locked: boolean;
-  /** Akun ini termasuk yang boleh mengunggah item terkunci. */
+  /**
+   * Akun ini termasuk yang boleh mengunggah item terkunci DAN menjangkau SKP
+   * ini — bisa true walaupun akses SKP-nya hanya lihat (Fase 3).
+   */
   canUpload: boolean;
   /** Akun ini boleh menghapus file siapa pun pada item terkunci (admin). */
   canDeleteAny: boolean;
 };
 
+/**
+ * `reachError` = hasil specialUploaderReachError untuk akun distributor ini
+ * (diabaikan untuk admin/superadmin, yang selalu menjangkau).
+ */
 export function specialDocumentAccess(
   actor: SpecialDocumentActor,
-  effectiveUploaderIds: string[]
+  effectiveUploaderIds: string[],
+  reachError: string | null = null
 ): SpecialDocumentAccess {
   const locked = effectiveUploaderIds.length > 0;
+  const reaches = isAdminRole(actor.role) || reachError === null;
   return {
     locked,
-    canUpload: locked && specialDocumentUploadError(actor, effectiveUploaderIds) === null,
+    canUpload:
+      locked && reaches && specialDocumentUploadError(actor, effectiveUploaderIds) === null,
     canDeleteAny: specialDocumentDeleteOverride(actor, effectiveUploaderIds),
   };
 }

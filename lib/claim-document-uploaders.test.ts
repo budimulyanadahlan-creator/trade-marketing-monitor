@@ -1,10 +1,12 @@
 import { describe, it, expect } from "vitest";
+import { DISTRIBUTOR_GUARD_MESSAGES } from "./distributor-campaign-guard";
 import {
   SPECIAL_UPLOADER_MESSAGES,
   allSpecialUploadersInactive,
   isActiveSpecialUploader,
   isSpecialUploaderCandidate,
   planSpecialUploaderChanges,
+  specialUploaderReachError,
   type SpecialUploaderAccount,
 } from "./claim-document-uploaders";
 
@@ -285,5 +287,63 @@ describe("specialDocumentAccess", () => {
       canUpload: true,
       canDeleteAny: true,
     });
+  });
+});
+
+// ============================================================
+// Fase 3 — jangkauan lintas perusahaan
+// ============================================================
+
+describe("specialUploaderReachError", () => {
+  it("allows an SKP the uploader may act on", () => {
+    expect(specialUploaderReachError(null, { status: "ongoing" })).toBeNull();
+  });
+
+  it("allows a subsidiary's SKP the uploader can only view", () => {
+    expect(specialUploaderReachError("parentViewOnly", { status: "approved" })).toBeNull();
+  });
+
+  it("allows another account's national child claim the uploader can only view", () => {
+    expect(
+      specialUploaderReachError("childClaimViewOnly", { parent_campaign_id: "induk", status: "ongoing" })
+    ).toBeNull();
+  });
+
+  it("never reaches a national parent SKP", () => {
+    expect(specialUploaderReachError("nationalViewOnly", { status: "approved" })).toBe(
+      DISTRIBUTOR_GUARD_MESSAGES.nationalViewOnly
+    );
+  });
+
+  it("never reaches a cancelled child claim, whether owned or only viewed", () => {
+    for (const denial of ["childClaimViewOnly", "claimCancelled"] as const) {
+      expect(
+        specialUploaderReachError(denial, { parent_campaign_id: "induk", status: "cancelled" })
+      ).toBe(DISTRIBUTOR_GUARD_MESSAGES.claimCancelled);
+    }
+  });
+
+  it("never reaches an SKP the uploader cannot see", () => {
+    expect(specialUploaderReachError("otherCompany", { status: "ongoing" })).toBe(
+      DISTRIBUTOR_GUARD_MESSAGES.otherCompany
+    );
+    expect(specialUploaderReachError("otherRegion", { status: "ongoing" })).toBe(
+      DISTRIBUTOR_GUARD_MESSAGES.otherRegion
+    );
+    expect(
+      specialUploaderReachError("notClaimOwner", { parent_campaign_id: "induk", status: "ongoing" })
+    ).toBe(DISTRIBUTOR_GUARD_MESSAGES.notClaimOwner);
+  });
+});
+
+describe("specialDocumentAccess — jangkauan (Fase 3)", () => {
+  it("hides Upload from the special uploader on an SKP out of reach", () => {
+    expect(
+      specialDocumentAccess({ id: "meriana", role: "distributor" }, ["meriana"], "di luar jangkauan")
+    ).toEqual({ locked: true, canUpload: false, canDeleteAny: false });
+  });
+
+  it("admin always reaches", () => {
+    expect(specialDocumentAccess({ id: "x", role: "admin" }, ["meriana"], "apa pun").canUpload).toBe(true);
   });
 });

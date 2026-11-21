@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { computeAARemainingBudget } from "@/lib/campaign-status";
 import {
+  distributorActionDenial,
   distributorCampaignAccess,
   isClaimHolderCandidate,
   type DistributorCampaignAccess,
@@ -19,6 +20,7 @@ import {
 import {
   effectiveSpecialUploaderIds,
   specialDocumentAccess,
+  specialUploaderReachError,
   type AppointedUploader,
   type SpecialDocumentAccess,
 } from "@/lib/claim-document-uploaders";
@@ -261,27 +263,34 @@ export default async function CampaignDetailPage({ params }: Props) {
   if (!campaignRaw) notFound();
   const campaign = campaignRaw as unknown as CampaignWithJoins;
 
+  const accessTarget = {
+    distributor_id: campaign.distributor_id ?? null,
+    region_id: campaign.region_id ?? null,
+    distributor_parent_id: campaign.distributor?.parent_distributor_id ?? null,
+    is_national: campaign.is_national,
+    parent_campaign_id: campaign.parent_campaign_id ?? null,
+    claim_owner_id: campaign.claim_owner_id ?? null,
+    status: campaign.status,
+  };
+  const accessViewer = {
+    id: user.id,
+    role: userRole,
+    distributor_id: userProfile?.distributor_id ?? null,
+    distributor_scope: (userProfile?.distributor_scope ?? null) as DistributorScope | null,
+    region_id: userProfile?.region_id ?? null,
+  };
   const distributorAccess: DistributorCampaignAccess =
+    userRole === "distributor" ? distributorCampaignAccess(accessTarget, accessViewer) : "act";
+  // Pengunggah Khusus Fase 3: pengunggah khusus efektif menjangkau SKP yang
+  // hanya bisa ia lihat (anak perusahaan, klaim turunan milik akun lain) untuk
+  // dokumen terkuncinya saja. null = terjangkau.
+  const specialUploaderReach =
     userRole === "distributor"
-      ? distributorCampaignAccess(
-          {
-            distributor_id: campaign.distributor_id ?? null,
-            region_id: campaign.region_id ?? null,
-            distributor_parent_id: campaign.distributor?.parent_distributor_id ?? null,
-            is_national: campaign.is_national,
-            parent_campaign_id: campaign.parent_campaign_id ?? null,
-            claim_owner_id: campaign.claim_owner_id ?? null,
-            status: campaign.status,
-          },
-          {
-            id: user.id,
-            role: userRole,
-            distributor_id: userProfile?.distributor_id ?? null,
-            distributor_scope: (userProfile?.distributor_scope ?? null) as DistributorScope | null,
-            region_id: userProfile?.region_id ?? null,
-          }
-        )
-      : "act";
+      ? specialUploaderReachError(distributorActionDenial(accessTarget, accessViewer), {
+          parent_campaign_id: campaign.parent_campaign_id ?? null,
+          status: campaign.status,
+        })
+      : null;
   // Pertahanan lapis kedua: jika RLS belum menyaring (misalnya migrasi belum
   // jalan), distributor yang tidak berhak tetap mendapat "tidak ditemukan".
   if (userRole === "distributor" && distributorAccess === null) notFound();
@@ -642,7 +651,8 @@ export default async function CampaignDetailPage({ params }: Props) {
     claimDocuments = docs.map((d) => {
       const special = specialDocumentAccess(
         { id: user.id, role: userRole },
-        effectiveSpecialUploaderIds(uploaderCampaign, appointedByDocType.get(d.documentTypeId) ?? [])
+        effectiveSpecialUploaderIds(uploaderCampaign, appointedByDocType.get(d.documentTypeId) ?? []),
+        specialUploaderReach
       );
       return {
         documentTypeId: d.documentTypeId,

@@ -118,3 +118,51 @@ describe("ClaimChecklistSection", () => {
     expect(screen.getByText("0/1 dokumen siap")).toBeTruthy();
   });
 });
+
+// Pengunggah Khusus Fase 3 — pengunggah khusus di SKP yang hanya bisa ia lihat
+// (SKP anak perusahaan / klaim turunan milik akun lain): canAct = false.
+describe("ClaimChecklistSection — pengunggah khusus dengan akses hanya lihat", () => {
+  const viewOnly = (documents: ClaimDocument[]) => (
+    <ClaimChecklistSection
+      campaignId="camp-1"
+      campaignStatus="ongoing"
+      userRole="distributor"
+      userId="dist-1"
+      documents={documents}
+      claimAmount={null}
+      claimAmountVerification={null}
+      canAct={false}
+    />
+  );
+  const lockedDoc = (canUpload: boolean, withFile = false): ClaimDocument => ({
+    ...doc("a", withFile, withFile),
+    specialUpload: { locked: true, canUpload, canDeleteAny: false },
+  });
+  const buttons = () => screen.queryAllByRole("button");
+
+  it("only the locked row is active: one Upload button, nothing for other documents", () => {
+    render(viewOnly([lockedDoc(true), doc("b", false)]));
+
+    expect(screen.getAllByRole("button", { name: /Upload/ })).toHaveLength(1);
+    expect(screen.queryByText("Diunggah oleh Pusat")).toBeNull();
+    // Tidak ada kotak centang yang bisa diubah di SKP hanya-lihat.
+    expect(document.querySelectorAll("input[type=checkbox]")).toHaveLength(0);
+  });
+
+  it("can delete their own file on the locked row", () => {
+    render(viewOnly([lockedDoc(false, true)]));
+    const withoutReach = buttons().length;
+    cleanup();
+
+    render(viewOnly([lockedDoc(true, true)]));
+    // Upload + hapus file miliknya.
+    expect(buttons().length).toBe(withoutReach + 2);
+  });
+
+  it("a view-only Pusat account that is not the special uploader gets no Upload at all", () => {
+    render(viewOnly([lockedDoc(false), doc("b", false)]));
+
+    expect(screen.queryByRole("button", { name: /Upload/ })).toBeNull();
+    expect(screen.getByText("Diunggah oleh Pusat")).toBeTruthy();
+  });
+});
